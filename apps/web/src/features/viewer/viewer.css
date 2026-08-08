@@ -1,0 +1,195 @@
+.viewer {
+  display: flex;
+  flex-direction: column;
+  height: calc(100vh - 2 * var(--s-6));
+  max-width: 1100px;
+  margin: 0 auto;
+  position: relative;
+}
+
+.viewer-splash {
+  display: grid;
+  place-content: center;
+  height: 50vh;
+  color: var(--ink-soft);
+}
+
+.viewer-head {
+  display: flex;
+  align-items: center;
+  gap: var(--s-3);
+  padding-bottom: var(--s-3);
+  border-bottom: 1px solid var(--rule);
+}
+
+.viewer-back {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  font-size: 13px;
+  color: var(--ink-soft);
+  flex-shrink: 0;
+}
+
+.viewer-title {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 500;
+}
+
+.viewer-tools {
+  display: flex;
+  gap: 2px;
+  flex-shrink: 0;
+}
+
+.icon-btn.active {
+  background: var(--accent-blue-wash);
+  color: var(--accent-blue-deep);
+}
+
+/* ── Stage ──────────────────────────────────────────────────── */
+
+.viewer-stage {
+  flex: 1;
+  display: grid;
+  place-items: center;
+  min-height: 0;
+  padding: var(--s-4) 0;
+}
+
+.viewer-page {
+  max-width: 100%;
+  max-height: 100%;
+  object-fit: contain;
+  border: 1px solid var(--rule);
+  background: #fff;
+}
+
+.viewer-text-fallback {
+  max-width: 60ch;
+  text-align: center;
+  color: var(--ink-soft);
+}
+.viewer-fallback-hint {
+  font-size: 13px;
+  color: var(--ink-faint);
+}
+
+/* ── Grid view ──────────────────────────────────────────────── */
+
+.viewer-grid {
+  flex: 1;
+  overflow-y: auto;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+  gap: var(--s-3);
+  padding: var(--s-4) 0;
+}
+
+.grid-cell {
+  position: relative;
+  border: 1px solid var(--rule);
+  border-radius: var(--radius-sm);
+  background: #fff;
+  padding: 0;
+  overflow: hidden;
+  aspect-ratio: 4 / 3;
+}
+.grid-cell img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+.grid-cell.current {
+  outline: 2px solid var(--accent-blue);
+}
+.grid-cell-no {
+  position: absolute;
+  bottom: 4px;
+  right: 6px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--ink-soft);
+  background: rgba(250, 247, 241, 0.9);
+  padding: 0 4px;
+  border-radius: 3px;
+}
+.grid-cell-text {
+  display: grid;
+  place-content: center;
+  height: 100%;
+  padding: var(--s-2);
+  font-size: 12px;
+  color: var(--ink-soft);
+}
+
+/* ── Speaker notes drawer ───────────────────────────────────── */
+
+.notes-drawer {
+  position: absolute;
+  right: 0;
+  top: 56px;
+  bottom: 56px;
+  width: min(320px, 85vw);
+  background: var(--surface-raised);
+  border: 1px solid var(--rule);
+  border-radius: var(--radius);
+  padding: var(--s-4);
+  overflow-y: auto;
+  box-shadow: 0 4px 16px rgba(28, 36, 52, 0.08);
+}
+.notes-drawer header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--ink-soft);
+  margin-bottom: var(--s-2);
+}
+.notes-drawer p {
+  margin: 0;
+  font-family: var(--font-reading);
+  white-space: pre-wrap;
+}
+
+/* ── Bottom nav ─────────────────────────────────────────────── */
+
+.viewer-nav {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--s-3);
+  padding-top: var(--s-3);
+  border-top: 1px solid var(--rule);
+}
+
+.page-jump {
+  display: flex;
+  align-items: baseline;
+  gap: var(--s-2);
+}
+
+.page-input {
+  width: 52px;
+  text-align: center;
+  border: 1px solid var(--rule);
+  border-radius: var(--radius-sm);
+  background: var(--surface-raised);
+  padding: 4px;
+}
+
+.page-total {
+  color: var(--ink-faint);
+  font-size: 13px;
+}
+
+@media (max-width: 767px) {
+  .viewer {
+    height: calc(100dvh - 2 * var(--s-4) - 64px);
+  }
+}

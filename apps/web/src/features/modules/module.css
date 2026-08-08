@@ -1,0 +1,90 @@
+.module-page {
+  max-width: 960px;
+  margin: 0 auto;
+}
+
+.module-head {
+  display: flex;
+  align-items: center;
+  gap: var(--s-4);
+  margin-bottom: var(--s-5);
+}
+
+.module-head h1 {
+  font-size: 24px;
+}
+
+/* ── Index-tab switcher (notebook metaphor) ─────────────────── */
+
+.tab-bar {
+  display: flex;
+  gap: 2px;
+  border-bottom: 1px solid var(--rule);
+  margin-bottom: var(--s-5);
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+.tab-bar::-webkit-scrollbar {
+  display: none;
+}
+
+.tab {
+  padding: var(--s-2) var(--s-4);
+  border: 1px solid transparent;
+  border-bottom: none;
+  border-radius: var(--radius-sm) var(--radius-sm) 0 0;
+  color: var(--ink-soft);
+  font-weight: 500;
+  white-space: nowrap;
+  position: relative;
+  top: 1px;
+}
+.tab:hover {
+  color: var(--ink);
+  text-decoration: none;
+}
+.tab.active {
+  background: var(--paper);
+  border-color: var(--rule);
+  color: var(--accent-blue-deep);
+  border-bottom: 1px solid var(--paper);
+}
+.tab.disabled {
+  color: var(--ink-faint);
+  cursor: default;
+  opacity: 0.6;
+}
+
+/* ── Overview ───────────────────────────────────────────────── */
+
+.module-overview {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-4);
+  max-width: 60ch;
+}
+
+.overview-stats {
+  margin: 0;
+  color: var(--ink-soft);
+}
+
+.overview-actions {
+  display: flex;
+  gap: var(--s-2);
+  flex-wrap: wrap;
+}
+
+.overview-hint {
+  margin: 0;
+  font-size: 13px;
+  color: var(--ink-faint);
+}
+
+@media (max-width: 767px) {
+  .tab {
+    min-height: var(--touch-target);
+    display: inline-flex;
+    align-items: center;
+  }
+}

@@ -1,13 +1,6 @@
 from fastapi import Depends, FastAPI
 from fastapi.testclient import TestClient
-from manabi_server.security import hash_password, require_csrf, verify_password
-
-
-def test_password_hash_roundtrip():
-    h = hash_password("correct horse battery staple")
-    assert h.startswith("$argon2id$")
-    assert verify_password(h, "correct horse battery staple")
-    assert not verify_password(h, "wrong password")
+from manabi_server.security import require_csrf
 
 
 def _csrf_app() -> TestClient:
@@ -32,6 +25,20 @@ def test_csrf_blocks_mutation_without_header():
 def test_csrf_allows_mutation_with_header():
     client = _csrf_app()
     r = client.post("/mutate", headers={"X-Requested-With": "fetch"})
+    assert r.status_code == 200
+
+
+def test_csrf_allows_same_origin_any_host():
+    """Same-origin requests pass for any tailnet hostname/IP."""
+    client = _csrf_app()
+    r = client.post(
+        "/mutate",
+        headers={
+            "X-Requested-With": "fetch",
+            "Origin": "http://phillmyeol:56690",
+            "Host": "phillmyeol:56690",
+        },
+    )
     assert r.status_code == 200
 
 

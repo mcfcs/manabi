@@ -4,7 +4,7 @@ manabi.local {
 	encode zstd gzip
 
 	handle /api/* {
-		reverse_proxy host.docker.internal:8000
+		reverse_proxy host.docker.internal:56690
 	}
 
 	handle {

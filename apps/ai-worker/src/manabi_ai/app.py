@@ -38,8 +38,11 @@ async def _ollama_one_token() -> dict:
             )
             r.raise_for_status()
             return {"ollama": "ok", "response": r.json().get("response", "").strip()}
+    except httpx.HTTPStatusError as exc:
+        detail = exc.response.text[:200]
+        return {"ollama": f"error {exc.response.status_code} from {settings.ollama_url}: {detail}"}
     except Exception as exc:  # noqa: BLE001 — degrade, don't fail the spine test
-        return {"ollama": f"unavailable: {type(exc).__name__}"}
+        return {"ollama": f"unreachable ({settings.ollama_url}): {type(exc).__name__}: {exc}"}
 
 
 @app.task(name="manabi_ai.tasks.echo", queue="gpu")

@@ -1,0 +1,69 @@
+.modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(28, 36, 52, 0.35);
+  display: grid;
+  place-items: center;
+  padding: var(--s-4);
+  z-index: 50;
+}
+
+.modal {
+  width: min(440px, 100%);
+  max-height: min(85vh, 640px);
+  overflow-y: auto;
+  background: var(--surface-raised);
+  border: 1px solid var(--rule);
+  border-radius: var(--radius);
+  padding: var(--s-5);
+}
+
+.modal-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: var(--s-4);
+}
+
+.modal-head h3 {
+  font-size: 18px;
+}
+
+.modal-close {
+  border: none;
+  background: none;
+  color: var(--ink-soft);
+  padding: var(--s-1);
+  border-radius: var(--radius-sm);
+}
+.modal-close:hover {
+  background: var(--surface);
+}
+
+.modal-form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-3);
+}
+
+.modal-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--s-2);
+  margin-top: var(--s-3);
+}
+
+.modal-danger-text {
+  color: var(--ink-soft);
+  margin: 0 0 var(--s-2);
+}
+
+.btn-danger {
+  background: var(--accent-red);
+  border-color: var(--accent-red);
+  color: #fff;
+  font-weight: 600;
+}
+.btn-danger:hover {
+  background: var(--accent-red-deep);
+}

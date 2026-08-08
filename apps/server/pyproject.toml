@@ -11,10 +11,14 @@ dependencies = [
     "asyncpg>=0.29",
     "psycopg[binary]>=3.1",
     "alembic>=1.13",
-    "argon2-cffi>=23.1",
-    "pydantic[email]>=2.7",
     "procrastinate>=3.9",
     "pydantic-settings>=2.3",
+    "docling>=2.118.1",
+    "pymupdf>=1.28.2",
+    "python-pptx>=1.0.2",
+    "pillow>=12.3.0",
+    "python-multipart>=0.0.32",
+    "python-docx>=1.2.0",
 ]
 
 [dependency-groups]

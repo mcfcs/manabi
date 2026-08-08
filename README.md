@@ -15,21 +15,26 @@ flashcards, and quizzes with a privately hosted LLM.
 
 See `docs/` for the full architecture plan, ADRs, and runbooks.
 
-## Development
+## Running
 
-```bash
-# 1. Database
-docker compose -f infra/compose.yaml up -d
+Single-user, no login — access control is the Tailscale boundary.
 
-# 2. Python (uv workspace)
-uv sync
-uv run --package manabi-server alembic -c apps/server/alembic.ini upgrade head
-uv run --package manabi-server uvicorn manabi_server.main:app --reload
-
-# 3. Web
-pnpm install
-pnpm --filter web dev
+```bat
+start-manabi.bat            :: starts everything (Docker, DB, migrations,
+                            ::   web build if needed, API + AI worker)
+start-manabi.bat --rebuild  :: same, but force a fresh web build
 ```
 
-Copy `.env.example` to `.env` and adjust. The AI node gets its own `.env`
-(see `infra/phillmyeol/`).
+Then open `http://localhost:56690` on this machine, or
+`http://<machine-name>:56690` from any device on the tailnet.
+
+First-time setup: install uv + pnpm, then `uv sync` and `pnpm install`.
+
+## Development (hot reload)
+
+```bash
+uv run --package manabi-server uvicorn manabi_server.main:app --reload --port 56690
+pnpm --filter web dev   # Vite on :5173, proxies /api to :56690
+```
+
+The AI node (phillmyeol) gets its own `.env` — see `infra/phillmyeol/`.

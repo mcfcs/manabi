@@ -1,0 +1,125 @@
+.materials {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-5);
+}
+
+.upload-zone {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--s-2);
+  padding: var(--s-6);
+  border: 1.5px dashed var(--rule);
+  border-radius: var(--radius);
+  color: var(--ink-soft);
+  text-align: center;
+}
+.upload-zone p {
+  margin: 0;
+}
+
+.link-btn {
+  border: none;
+  background: none;
+  color: var(--accent-blue);
+  padding: 0;
+  font: inherit;
+  text-decoration: underline;
+}
+
+.upload-status {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s-2);
+  font-size: 13px;
+}
+
+.spin {
+  animation: manabi-spin 1s linear infinite;
+}
+@keyframes manabi-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* ── Document list ──────────────────────────────────────────── */
+
+.doc-list {
+  display: flex;
+  flex-direction: column;
+}
+
+.doc-row {
+  display: flex;
+  align-items: center;
+  gap: var(--s-3);
+  padding: var(--s-3) var(--s-2);
+  border-bottom: 1px solid var(--rule);
+}
+.doc-row:first-child {
+  border-top: 1px solid var(--rule);
+}
+
+.doc-icon {
+  color: var(--ink-faint);
+  flex-shrink: 0;
+}
+
+.doc-link {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  color: var(--ink);
+}
+.doc-link:hover {
+  text-decoration: none;
+}
+a.doc-link:hover .doc-name {
+  color: var(--accent-blue-deep);
+}
+
+.doc-name {
+  font-weight: 500;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.doc-meta {
+  font-size: 12px;
+  color: var(--ink-faint);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 12px;
+  padding: 2px var(--s-2);
+  border-radius: var(--radius-sm);
+  flex-shrink: 0;
+}
+.chip.ready {
+  color: var(--accent-blue-deep);
+  background: var(--accent-blue-wash);
+}
+.chip.processing {
+  color: var(--ink-soft);
+  background: var(--surface);
+}
+.chip.failed {
+  color: var(--accent-red);
+  background: var(--accent-red-wash);
+}
+
+.doc-actions {
+  display: flex;
+  gap: 2px;
+  flex-shrink: 0;
+}

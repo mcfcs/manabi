@@ -5,14 +5,17 @@ import {
   Outlet,
 } from "@tanstack/react-router";
 
+import { CoursePage } from "../features/courses/CoursePage";
 import { HomePage } from "../features/courses/HomePage";
-import { AuthGate } from "./AuthGate";
+import { ModuleWorkspace } from "../features/modules/ModuleWorkspace";
+import { DocumentViewer } from "../features/viewer/DocumentViewer";
+import { AppGate } from "./AppGate";
 
 const rootRoute = createRootRoute({
   component: () => (
-    <AuthGate>
+    <AppGate>
       <Outlet />
-    </AuthGate>
+    </AppGate>
   ),
 });
 
@@ -22,7 +25,40 @@ const homeRoute = createRoute({
   component: HomePage,
 });
 
-const routeTree = rootRoute.addChildren([homeRoute]);
+const courseRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "/courses/$courseId",
+  component: CoursePage,
+});
+
+export type ModuleTab = "overview" | "materials" | "notes";
+
+const moduleRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "/courses/$courseId/modules/$moduleId",
+  component: ModuleWorkspace,
+  validateSearch: (search: Record<string, unknown>): { tab: ModuleTab } => ({
+    tab: (["overview", "materials", "notes"].includes(search.tab as string)
+      ? search.tab
+      : "overview") as ModuleTab,
+  }),
+});
+
+const documentRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "/documents/$documentId",
+  component: DocumentViewer,
+  validateSearch: (search: Record<string, unknown>): { page: number } => ({
+    page: Number(search.page) >= 1 ? Number(search.page) : 1,
+  }),
+});
+
+const routeTree = rootRoute.addChildren([
+  homeRoute,
+  courseRoute,
+  moduleRoute,
+  documentRoute,
+]);
 
 export const router = createRouter({ routeTree });
 

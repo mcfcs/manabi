@@ -118,6 +118,22 @@ button {
   font-size: 13px;
 }
 
+.splash {
+  min-height: 100%;
+  display: grid;
+  place-content: center;
+  gap: var(--s-4);
+  font-family: var(--font-display);
+  font-size: 40px;
+  color: var(--accent-red);
+}
+.splash p {
+  font-family: var(--font-ui);
+  font-size: 15px;
+  color: var(--ink-soft);
+  margin: 0;
+}
+
 /* Status dot for the AI node */
 .status-dot {
   display: inline-block;

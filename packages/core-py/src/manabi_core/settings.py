@@ -10,5 +10,5 @@ class CoreSettings(BaseSettings):
 
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
-    database_url: str = "postgresql+asyncpg://manabi:manabi@localhost:5433/manabi"
-    database_url_sync: str = "postgresql+psycopg://manabi:manabi@localhost:5433/manabi"
+    database_url: str = "postgresql+asyncpg://manabi:manabi@localhost:56661/manabi"
+    database_url_sync: str = "postgresql+psycopg://manabi:manabi@localhost:56661/manabi"

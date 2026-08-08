@@ -16,8 +16,9 @@ import procrastinate
 
 from manabi_server.config import get_settings
 
-# Task names are the contract between server (defer) and ai-worker (execute).
-ECHO_TASK = "manabi_ai.tasks.echo"
+# Task names are the contract between deferrer and worker.
+ECHO_TASK = "manabi_ai.tasks.echo"  # gpu queue (phillmyeol)
+PROCESS_DOCUMENT_TASK = "manabi_server.tasks.process_document"  # cpu queue (app server)
 
 _app: procrastinate.App | None = None
 _lock = threading.Lock()

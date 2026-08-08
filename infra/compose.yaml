@@ -7,8 +7,8 @@ services:
       POSTGRES_PASSWORD: manabi
       POSTGRES_DB: manabi
     ports:
-      # 5433 on the host: avoids clashing with any native Postgres on 5432
-      - "5433:5432"
+      # High host port: avoids clashing with native Postgres or other programs
+      - "56661:5432"
     volumes:
       - manabi-pgdata:/var/lib/postgresql/data
     healthcheck:
