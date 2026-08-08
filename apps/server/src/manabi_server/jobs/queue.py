@@ -18,7 +18,11 @@ from manabi_server.config import get_settings
 
 # Task names are the contract between deferrer and worker.
 ECHO_TASK = "manabi_ai.tasks.echo"  # gpu queue (phillmyeol)
+GENERATE_SUMMARY_TASK = "manabi_ai.tasks.generate_summary"  # gpu
+GENERATE_FLASHCARDS_TASK = "manabi_ai.tasks.generate_flashcards"  # gpu
+GENERATE_QUIZ_TASK = "manabi_ai.tasks.generate_quiz"  # gpu
 PROCESS_DOCUMENT_TASK = "manabi_server.tasks.process_document"  # cpu queue (app server)
+SCORE_SUPPORT_TASK = "manabi_server.tasks.score_support"  # cpu (needs local embed model)
 
 _app: procrastinate.App | None = None
 _lock = threading.Lock()

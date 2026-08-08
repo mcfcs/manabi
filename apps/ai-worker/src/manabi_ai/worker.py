@@ -11,6 +11,7 @@ import sys
 
 from sqlalchemy import text
 
+import manabi_ai.tasks_gen  # noqa: F401 — registers generation tasks
 from manabi_ai.app import app
 from manabi_ai.config import get_settings
 from manabi_ai.db import session_factory

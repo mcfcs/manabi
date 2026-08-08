@@ -4,7 +4,16 @@ from fastapi import FastAPI, HTTPException
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
-from manabi_server.api import courses, documents, health, jobs, modules, notes, user
+from manabi_server.api import (
+    artifacts,
+    courses,
+    documents,
+    health,
+    jobs,
+    modules,
+    notes,
+    user,
+)
 from manabi_server.config import get_settings
 
 app = FastAPI(title="Manabi", docs_url="/api/docs", openapi_url="/api/openapi.json")
@@ -16,6 +25,7 @@ app.include_router(courses.router)
 app.include_router(modules.router)
 app.include_router(documents.router)
 app.include_router(notes.router)
+app.include_router(artifacts.router)
 
 # Serve the built SPA (apps/web/dist) so one process on 0.0.0.0:56690 covers
 # API + website for every device on the tailnet. During `pnpm dev`, Vite

@@ -31,14 +31,22 @@ const courseRoute = createRoute({
   component: CoursePage,
 });
 
-export type ModuleTab = "overview" | "materials" | "notes";
+export type ModuleTab =
+  | "overview"
+  | "materials"
+  | "summary"
+  | "cards"
+  | "quiz"
+  | "notes";
+
+const MODULE_TABS = ["overview", "materials", "summary", "cards", "quiz", "notes"];
 
 const moduleRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "/courses/$courseId/modules/$moduleId",
   component: ModuleWorkspace,
   validateSearch: (search: Record<string, unknown>): { tab: ModuleTab } => ({
-    tab: (["overview", "materials", "notes"].includes(search.tab as string)
+    tab: (MODULE_TABS.includes(search.tab as string)
       ? search.tab
       : "overview") as ModuleTab,
   }),

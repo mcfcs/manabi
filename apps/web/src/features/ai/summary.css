@@ -1,0 +1,34 @@
+.summary-tab {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-4);
+}
+
+.summary-body {
+  max-width: 74ch;
+  font-family: var(--font-reading);
+  font-size: 16px;
+  line-height: 1.7;
+}
+
+.summary-body h2 {
+  font-size: 20px;
+  margin: var(--s-6) 0 var(--s-3);
+  padding-bottom: var(--s-1);
+  border-bottom: 1px solid var(--rule);
+}
+.summary-body section:first-child h2 {
+  margin-top: 0;
+}
+
+.summary-block {
+  margin-bottom: var(--s-4);
+}
+.summary-block p {
+  margin: 0 0 var(--s-1);
+}
+
+.summary-cites {
+  display: block;
+  line-height: 1.9;
+}

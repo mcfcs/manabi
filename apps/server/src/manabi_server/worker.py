@@ -16,8 +16,23 @@ os.environ.setdefault("TORCHDYNAMO_DISABLE", "1")
 from manabi_server.jobs.tasks import app  # noqa: E402
 
 
+def _startup_embedding_sweep() -> None:
+    """Backfill embeddings for any chunks created before this feature."""
+    from manabi_server.jobs.tasks import db_session
+    from manabi_server.processing.embedding import embed_missing_chunks_sync
+
+    try:
+        with db_session() as db:
+            n = embed_missing_chunks_sync(db)
+            if n:
+                logging.getLogger("manabi").info("backfilled %d chunk embeddings", n)
+    except Exception:  # noqa: BLE001 — sweep is best-effort; pipeline retries cover it
+        logging.getLogger("manabi").exception("embedding sweep failed")
+
+
 async def main() -> None:
     logging.basicConfig(level=logging.INFO)
+    await asyncio.to_thread(_startup_embedding_sweep)
     async with app.open_async():
         await app.run_worker_async(queues=["cpu"], concurrency=1)
 

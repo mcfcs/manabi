@@ -119,6 +119,7 @@ export interface DocumentOut {
   extract_status: ExtractStatus;
   error: string | null;
   page_count: number | null;
+  ai_included: boolean;
   job_id: number | null;
   progress_pct: number | null;
   progress_note: string | null;
@@ -147,4 +148,93 @@ export interface DeleteConsequences {
   modules?: number;
   documents: number;
   notes: number;
+}
+
+// ── AI artifacts ──────────────────────────────────────────────
+
+export type Staleness = "fresh" | "stale" | "incomplete";
+
+export interface CitationOut {
+  id: number;
+  item_ref: string;
+  chunk_id: number | null;
+  document_id: number | null;
+  document_title: string;
+  page_start: number | null;
+  page_end: number | null;
+  support_score: number | null;
+  status: "verified" | "weak" | "source_removed";
+}
+
+export interface JobRef {
+  job_id: number;
+}
+
+export interface SummaryBlock {
+  text: string;
+  chunk_ids: number[];
+}
+
+export interface SummarySection {
+  title: string;
+  blocks: SummaryBlock[];
+}
+
+export interface SummaryOut {
+  artifact_id: number;
+  title: string;
+  model_name: string;
+  generated_at: string;
+  staleness: Staleness;
+  sections: SummarySection[];
+  citations: Record<string, CitationOut[]>;
+}
+
+export interface CardOut {
+  id: number;
+  front: string;
+  back: string;
+  status: "active" | "suspended";
+  edited: boolean;
+  citations: CitationOut[];
+}
+
+export interface DeckOut {
+  artifact_id: number;
+  model_name: string;
+  generated_at: string;
+  staleness: Staleness;
+  cards: CardOut[];
+}
+
+export interface QuestionOut {
+  id: number;
+  ord: number;
+  qtype: "mcq" | "tf" | "short";
+  prompt: string;
+  options: string[] | null;
+  answer:
+    | { kind: "mcq"; correct_option: number }
+    | { kind: "tf"; value: boolean }
+    | { kind: "short"; text: string };
+  explanation: string | null;
+  citations: CitationOut[];
+}
+
+export interface QuizOut {
+  artifact_id: number;
+  title: string;
+  model_name: string;
+  generated_at: string;
+  scope_module_ids: number[];
+  questions: QuestionOut[];
+}
+
+export interface QuizListItem {
+  artifact_id: number;
+  title: string;
+  generated_at: string;
+  question_count: number;
+  attempt_count: number;
+  best_score: number | null;
 }

@@ -51,6 +51,7 @@ class DocumentOut(BaseModel):
     extract_status: ExtractStatus
     error: str | None
     page_count: int | None
+    ai_included: bool
     job_id: int | None = None
     progress_pct: int | None = None
     progress_note: str | None = None
@@ -74,6 +75,7 @@ def _doc_out(
         extract_status=doc.extract_status,
         error=doc.error,
         page_count=doc.page_count,
+        ai_included=doc.ai_included,
         job_id=job_id,
         progress_pct=progress[0] if progress else None,
         progress_note=progress[1] if progress else None,
@@ -295,6 +297,29 @@ async def retry_processing(
     job = await _enqueue_processing(db, user.id, doc)
     await db.commit()
     return _doc_out(doc, job.id)
+
+
+class DocumentPatch(BaseModel):
+    ai_included: bool
+
+
+@router.patch("/documents/{document_id}", dependencies=[Depends(require_csrf)])
+async def patch_document(
+    data: DocumentPatch,
+    doc: Document = Depends(_get_owned_document),
+    db: AsyncSession = Depends(get_db),
+) -> DocumentOut:
+    """Toggle whether this material feeds AI generation (summaries/cards/quizzes).
+
+    Enforced at the retrieval SQL layer (manabi_core.retrieval), not in prompts.
+    """
+    doc.ai_included = data.ai_included
+    module = (
+        await db.execute(select(Module).where(Module.id == doc.module_id))
+    ).scalar_one()
+    module.content_version += 1  # existing artifacts become stale/incomplete
+    await db.commit()
+    return _doc_out(doc)
 
 
 @router.delete("/documents/{document_id}", dependencies=[Depends(require_csrf)])

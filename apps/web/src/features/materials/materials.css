@@ -123,3 +123,26 @@ a.doc-link:hover .doc-name {
   gap: 2px;
   flex-shrink: 0;
 }
+
+/* AI include/exclude toggle */
+.ai-toggle {
+  color: var(--ink-faint);
+  position: relative;
+}
+.ai-toggle.on {
+  color: var(--accent-blue-deep);
+  background: var(--accent-blue-wash);
+}
+.ai-toggle:not(.on)::after {
+  content: "";
+  position: absolute;
+  width: 18px;
+  height: 1.5px;
+  background: var(--accent-red);
+  transform: rotate(-45deg);
+}
+
+.doc-row.ai-excluded .doc-link,
+.doc-row.ai-excluded .doc-icon {
+  opacity: 0.55;
+}

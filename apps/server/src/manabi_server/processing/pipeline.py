@@ -34,7 +34,7 @@ from manabi_server.storage import files
 
 log = logging.getLogger("manabi.pipeline")
 
-STAGES = ["structure", "render", "chunk"]
+STAGES = ["structure", "render", "chunk", "embed"]
 
 
 def _progress(db: Session, job: Job | None, pct: int, note: str) -> None:
@@ -71,9 +71,16 @@ def run_pipeline(db: Session, document_id: int, job_id: int | None) -> None:
             doc.extract_stage = "render"
             db.commit()
         if done < 3:
-            _progress(db, job, 85, "Creating chunks")
+            _progress(db, job, 80, "Creating chunks")
             _stage_chunk(db, doc)
             doc.extract_stage = "chunk"
+            db.commit()
+        if done < 4:
+            _progress(db, job, 92, "Indexing for retrieval")
+            from manabi_server.processing.embedding import embed_missing_chunks_sync
+
+            embed_missing_chunks_sync(db)
+            doc.extract_stage = "embed"
             db.commit()
 
         doc.extract_status = ExtractStatus.ready

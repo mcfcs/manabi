@@ -2,6 +2,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import {
   AlertCircle,
+  Brain,
   CheckCircle2,
   FileText,
   Loader2,
@@ -90,6 +91,13 @@ export function MaterialsTab({ moduleId }: { moduleId: string }) {
     },
   });
 
+  const toggleAi = useMutation({
+    mutationFn: (doc: DocumentOut) =>
+      api.patch(`/api/documents/${doc.id}`, { ai_included: !doc.ai_included }),
+    onSuccess: () =>
+      queryClient.invalidateQueries({ queryKey: ["documents", moduleId] }),
+  });
+
   function pickFiles(files: FileList | null) {
     if (!files) return;
     for (const file of Array.from(files)) upload.mutate(file);
@@ -139,7 +147,10 @@ export function MaterialsTab({ moduleId }: { moduleId: string }) {
 
       <div className="doc-list">
         {(docs.data ?? []).map((doc) => (
-          <div key={doc.id} className="doc-row">
+          <div
+            key={doc.id}
+            className={`doc-row${doc.ai_included ? "" : " ai-excluded"}`}
+          >
             <span className="doc-icon">
               {doc.kind === "pdf" ? (
                 <FileText size={18} strokeWidth={1.5} />
@@ -170,6 +181,22 @@ export function MaterialsTab({ moduleId }: { moduleId: string }) {
             )}
             <StatusChip doc={doc} />
             <div className="doc-actions">
+              <button
+                className={`icon-btn ai-toggle${doc.ai_included ? " on" : ""}`}
+                onClick={() => toggleAi.mutate(doc)}
+                aria-label={
+                  doc.ai_included
+                    ? "Included in AI generation — click to exclude"
+                    : "Excluded from AI generation — click to include"
+                }
+                title={
+                  doc.ai_included
+                    ? "AI: included (summaries, cards, quizzes use this file)"
+                    : "AI: excluded (this file is never used for generation)"
+                }
+              >
+                <Brain size={15} strokeWidth={1.5} />
+              </button>
               {doc.extract_status === "failed" && (
                 <button
                   className="icon-btn"

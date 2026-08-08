@@ -3,6 +3,9 @@ import { Link, useNavigate, useParams, useSearch } from "@tanstack/react-router"
 import { ChevronLeft } from "lucide-react";
 
 import { api, type ModuleDetail } from "../../lib/api";
+import { FlashcardsTab } from "../ai/FlashcardsTab";
+import { QuizTab } from "../ai/QuizTab";
+import { SummaryTab } from "../ai/SummaryTab";
 import { MaterialsTab } from "../materials/MaterialsTab";
 import { NotesTab } from "../notes/NotesTab";
 import "./module.css";
@@ -10,10 +13,11 @@ import "./module.css";
 const TABS = [
   { key: "overview", label: "Overview" },
   { key: "materials", label: "Materials" },
+  { key: "summary", label: "Summary" },
+  { key: "cards", label: "Cards" },
+  { key: "quiz", label: "Quiz" },
   { key: "notes", label: "Notes" },
 ] as const;
-
-const FUTURE_TABS = ["Summary", "Cards", "Quiz"];
 
 function Overview({ module }: { module: ModuleDetail }) {
   const navigate = useNavigate();
@@ -107,15 +111,13 @@ export function ModuleWorkspace() {
             {t.label}
           </Link>
         ))}
-        {FUTURE_TABS.map((label) => (
-          <span key={label} className="tab disabled" title="Next increment">
-            {label}
-          </span>
-        ))}
       </nav>
 
       {module && tab === "overview" && <Overview module={module} />}
       {module && tab === "materials" && <MaterialsTab moduleId={moduleId} />}
+      {module && tab === "summary" && <SummaryTab moduleId={moduleId} />}
+      {module && tab === "cards" && <FlashcardsTab moduleId={moduleId} />}
+      {module && tab === "quiz" && <QuizTab moduleId={moduleId} courseId={courseId} />}
       {module && tab === "notes" && <NotesTab moduleId={moduleId} />}
     </div>
   );

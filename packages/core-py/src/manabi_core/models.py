@@ -8,6 +8,7 @@ Provenance and module isolation live in this module; see docs/plan.
 import enum
 from datetime import datetime
 
+from pgvector.sqlalchemy import Vector
 from sqlalchemy import (
     JSON,
     BigInteger,
@@ -22,6 +23,8 @@ from sqlalchemy import (
 )
 from sqlalchemy.dialects.postgresql import ARRAY, JSONB
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
+
+EMBEDDING_DIM = 1024
 
 
 class Base(DeclarativeBase):
@@ -130,6 +133,8 @@ class Document(Base, TimestampMixin):
     extract_stage: Mapped[str | None] = mapped_column(String(32))
     error: Mapped[str | None] = mapped_column(Text)
     page_count: Mapped[int | None] = mapped_column()
+    # Per-material AI exclusion: enforced in retrieval SQL, not prompts
+    ai_included: Mapped[bool] = mapped_column(nullable=False, default=True)
     deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
     pages: Mapped[list["DocumentPage"]] = relationship(
@@ -210,6 +215,147 @@ class Chunk(Base, TimestampMixin):
     __table_args__ = (
         Index("ix_chunks_module_id", "module_id"),
         Index("ix_chunks_document_id", "document_id"),
+    )
+
+
+class ChunkEmbedding(Base):
+    __tablename__ = "chunk_embeddings"
+
+    chunk_id: Mapped[int] = mapped_column(
+        BigInteger, ForeignKey("chunks.id", ondelete="CASCADE"), primary_key=True
+    )
+    embedding: Mapped[list[float]] = mapped_column(Vector(EMBEDDING_DIM), nullable=False)
+    embedding_model: Mapped[str] = mapped_column(String(128), nullable=False)
+    embedded_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+
+class ArtifactType(enum.StrEnum):
+    summary = "summary"
+    flashcard_deck = "flashcard_deck"
+    quiz = "quiz"
+
+
+class Artifact(Base, TimestampMixin):
+    """An AI-generated study object. Lineage: artifact → citations →
+    chunks → pages → documents → modules → courses."""
+
+    __tablename__ = "artifacts"
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    module_id: Mapped[int] = mapped_column(
+        BigInteger, ForeignKey("modules.id", ondelete="CASCADE"), nullable=False
+    )
+    artifact_type: Mapped[ArtifactType] = mapped_column(
+        Enum(ArtifactType, name="artifact_type"), nullable=False
+    )
+    scope_module_ids: Mapped[list[int]] = mapped_column(ARRAY(BigInteger), nullable=False)
+    title: Mapped[str] = mapped_column(String(255), nullable=False)
+    content: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
+    model_name: Mapped[str] = mapped_column(String(128), nullable=False)
+    prompt_version: Mapped[str] = mapped_column(String(32), nullable=False)
+    source_chunk_ids: Mapped[list[int]] = mapped_column(ARRAY(BigInteger), nullable=False)
+    source_fingerprint: Mapped[str] = mapped_column(String(64), nullable=False)
+    module_version_at_gen: Mapped[int] = mapped_column(nullable=False)
+    job_id: Mapped[int | None] = mapped_column(
+        BigInteger, ForeignKey("jobs.id", ondelete="SET NULL")
+    )
+
+    __table_args__ = (Index("ix_artifacts_module_type", "module_id", "artifact_type"),)
+
+
+class FlashcardStatus(enum.StrEnum):
+    active = "active"
+    suspended = "suspended"
+
+
+class Flashcard(Base, TimestampMixin):
+    __tablename__ = "flashcards"
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    artifact_id: Mapped[int] = mapped_column(
+        BigInteger, ForeignKey("artifacts.id", ondelete="CASCADE"), nullable=False
+    )
+    ord: Mapped[int] = mapped_column(nullable=False, default=0)
+    front: Mapped[str] = mapped_column(Text, nullable=False)
+    back: Mapped[str] = mapped_column(Text, nullable=False)
+    edited: Mapped[bool] = mapped_column(nullable=False, default=False)
+    status: Mapped[FlashcardStatus] = mapped_column(
+        Enum(FlashcardStatus, name="flashcard_status"),
+        nullable=False,
+        default=FlashcardStatus.active,
+    )
+
+    __table_args__ = (Index("ix_flashcards_artifact_id", "artifact_id"),)
+
+
+class QuizQuestion(Base):
+    __tablename__ = "quiz_questions"
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    artifact_id: Mapped[int] = mapped_column(
+        BigInteger, ForeignKey("artifacts.id", ondelete="CASCADE"), nullable=False
+    )
+    ord: Mapped[int] = mapped_column(nullable=False, default=0)
+    qtype: Mapped[str] = mapped_column(String(16), nullable=False)  # mcq|tf|short
+    prompt: Mapped[str] = mapped_column(Text, nullable=False)
+    options: Mapped[list | None] = mapped_column(JSONB)  # mcq choices
+    answer: Mapped[dict] = mapped_column(JSONB, nullable=False)
+    explanation: Mapped[str | None] = mapped_column(Text)
+
+    __table_args__ = (Index("ix_quiz_questions_artifact_id", "artifact_id"),)
+
+
+class QuizAttempt(Base, TimestampMixin):
+    __tablename__ = "quiz_attempts"
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    artifact_id: Mapped[int] = mapped_column(
+        BigInteger, ForeignKey("artifacts.id", ondelete="CASCADE"), nullable=False
+    )
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    responses: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
+    score: Mapped[float | None] = mapped_column()
+
+    __table_args__ = (Index("ix_quiz_attempts_artifact_id", "artifact_id"),)
+
+
+class CitationStatus(enum.StrEnum):
+    verified = "verified"
+    weak = "weak"
+    source_removed = "source_removed"
+
+
+class Citation(Base):
+    """Provenance edge from an artifact item to a chunk. Denormalized doc
+    title/pages keep the label renderable after the chunk is deleted."""
+
+    __tablename__ = "citations"
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    artifact_id: Mapped[int] = mapped_column(
+        BigInteger, ForeignKey("artifacts.id", ondelete="CASCADE"), nullable=False
+    )
+    item_ref: Mapped[str] = mapped_column(String(64), nullable=False)  # 'sec:0:block:2'
+    chunk_id: Mapped[int | None] = mapped_column(
+        BigInteger, ForeignKey("chunks.id", ondelete="SET NULL")
+    )
+    document_id: Mapped[int | None] = mapped_column(BigInteger)
+    document_title: Mapped[str] = mapped_column(String(512), nullable=False)
+    page_start: Mapped[int | None] = mapped_column()
+    page_end: Mapped[int | None] = mapped_column()
+    quote_excerpt: Mapped[str | None] = mapped_column(Text)
+    support_score: Mapped[float | None] = mapped_column()
+    status: Mapped[CitationStatus] = mapped_column(
+        Enum(CitationStatus, name="citation_status"),
+        nullable=False,
+        default=CitationStatus.verified,
+    )
+
+    __table_args__ = (
+        Index("ix_citations_artifact_id", "artifact_id"),
+        Index("ix_citations_chunk_id", "chunk_id"),
     )
 
 
