@@ -1,0 +1,57 @@
+/* Manabi design tokens — "a fine study notebook".
+   Paper surfaces, ink typography, red = teacher's pen (actions, emphasis),
+   blue = structural ink (links, citations, selection). */
+
+:root {
+  /* Surfaces */
+  --paper: #faf7f1;
+  --surface: #f3eee4;
+  --surface-raised: #fffdf8;
+
+  /* Ink */
+  --ink: #1c2434;
+  --ink-soft: #4c556a;
+  --ink-faint: #8b92a3;
+  --rule: rgba(28, 36, 52, 0.12); /* hairline dividers */
+
+  /* Accents */
+  --accent-red: #c93a2e; /* actions, generate, emphasis, wrong */
+  --accent-red-deep: #a92e24;
+  --accent-red-wash: #f8e9e7;
+  --accent-blue: #28518f; /* links, citations, selected, correct */
+  --accent-blue-deep: #1e4076;
+  --accent-blue-wash: #e7edf6;
+
+  /* Semantic */
+  --stale: #b07d1f;
+  --stale-wash: #f6efdc;
+  --offline: #8b92a3;
+
+  /* Type */
+  --font-display: "Fraunces Variable", "Georgia", serif;
+  --font-ui: "Public Sans Variable", system-ui, sans-serif;
+  --font-reading: "Source Serif 4 Variable", "Georgia", serif;
+  --font-mono: "JetBrains Mono Variable", ui-monospace, monospace;
+
+  /* Scale (4px base) */
+  --s-1: 4px;
+  --s-2: 8px;
+  --s-3: 12px;
+  --s-4: 16px;
+  --s-5: 24px;
+  --s-6: 32px;
+  --s-7: 48px;
+  --s-8: 64px;
+
+  --radius: 6px;
+  --radius-sm: 4px;
+
+  /* Motion */
+  --ease: cubic-bezier(0.2, 0, 0, 1);
+  --t-fast: 150ms;
+  --t-med: 200ms;
+
+  /* Layout */
+  --rail-width: 216px;
+  --touch-target: 44px;
+}

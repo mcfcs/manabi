@@ -1,0 +1,35 @@
+services:
+  postgres:
+    image: pgvector/pgvector:pg16
+    container_name: manabi-postgres
+    environment:
+      POSTGRES_USER: manabi
+      POSTGRES_PASSWORD: manabi
+      POSTGRES_DB: manabi
+    ports:
+      # 5433 on the host: avoids clashing with any native Postgres on 5432
+      - "5433:5432"
+    volumes:
+      - manabi-pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U manabi -d manabi"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  # Production only — during dev, Vite serves the SPA and proxies /api.
+  caddy:
+    image: caddy:2-alpine
+    container_name: manabi-caddy
+    profiles: ["prod"]
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - ../apps/web/dist:/srv/web:ro
+      - manabi-caddy-data:/data
+
+volumes:
+  manabi-pgdata:
+  manabi-caddy-data:

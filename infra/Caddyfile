@@ -1,0 +1,15 @@
+# Manabi — production reverse proxy.
+# Replace manabi.local with the real hostname (Tailscale MagicDNS or LAN DNS).
+manabi.local {
+	encode zstd gzip
+
+	handle /api/* {
+		reverse_proxy host.docker.internal:8000
+	}
+
+	handle {
+		root * /srv/web
+		try_files {path} /index.html
+		file_server
+	}
+}
