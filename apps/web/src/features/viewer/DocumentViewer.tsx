@@ -5,6 +5,7 @@ import {
   ChevronRight,
   Download,
   GalleryVertical,
+  Highlighter,
   LayoutGrid,
   MessageSquareText,
   Square,
@@ -19,10 +20,17 @@ import {
   type ModuleDetail,
   type PageOut,
   type RegionOut,
+  type SummaryOut,
 } from "../../lib/api";
+import { countTermsPresent, highlightTerms } from "../../lib/highlight";
 import "./viewer.css";
 
 type ViewMode = "single" | "scroll" | "grid";
+
+function loadMode(): ViewMode {
+  const saved = localStorage.getItem("manabi-viewer-mode");
+  return saved === "single" || saved === "grid" ? saved : "scroll";
+}
 
 function PageImage({
   documentId,
@@ -63,15 +71,18 @@ function PageImage({
   );
 }
 
-function PageText({ page }: { page: PageOut }) {
+function PageText({ page, terms }: { page: PageOut; terms?: string[] }) {
   if (!page.text_html) {
     return <p className="viewer-fallback-hint">No extracted text for this page yet.</p>;
   }
+  const html = terms?.length
+    ? highlightTerms(page.text_html, terms)
+    : page.text_html;
   return (
     <div
       className="viewer-text-content"
       // sanitized server-side: escaped text with only b/i/p/br + margin style
-      dangerouslySetInnerHTML={{ __html: page.text_html }}
+      dangerouslySetInnerHTML={{ __html: html }}
     />
   );
 }
@@ -82,12 +93,18 @@ export function DocumentViewer() {
     from: "/documents/$documentId",
   });
   const navigate = useNavigate();
-  const [mode, setMode] = useState<ViewMode>("single");
+  const [mode, setModeState] = useState<ViewMode>(loadMode);
   const [showNotes, setShowNotes] = useState(false);
   const [showText, setShowText] = useState(false);
+  const [showMarks, setShowMarks] = useState(false);
   const [visiblePage, setVisiblePage] = useState(page);
   const touchStartX = useRef<number | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
+
+  function setMode(m: ViewMode) {
+    localStorage.setItem("manabi-viewer-mode", m);
+    setModeState(m);
+  }
 
   const doc = useQuery({
     queryKey: ["document", documentId],
@@ -99,6 +116,19 @@ export function DocumentViewer() {
     queryFn: () => api.get<ModuleDetail>(`/api/modules/${doc.data!.module_id}`),
     enabled: doc.data != null,
   });
+
+  // Module summary terms — for the "highlight key terms" audit view
+  const summary = useQuery({
+    queryKey: ["summary", String(doc.data?.module_id)],
+    queryFn: () =>
+      api.get<SummaryOut | null>(`/api/modules/${doc.data!.module_id}/summary`),
+    enabled: doc.data != null && showText,
+    staleTime: 60_000,
+  });
+  const termList = (summary.data?.key_terms ?? [])
+    .map((t) => t.term)
+    .concat((summary.data?.acronyms ?? []).map((a) => a.acronym));
+  const activeTerms = showMarks ? termList : undefined;
 
   // Precise per-citation regions, falling back to chunk-level for old links
   const regions = useQuery({
@@ -209,6 +239,16 @@ export function DocumentViewer() {
           >
             <Type size={17} strokeWidth={1.5} />
           </button>
+          {showText && termList.length > 0 && (
+            <button
+              className={`icon-btn${showMarks ? " active" : ""}`}
+              onClick={() => setShowMarks((v) => !v)}
+              aria-label="Highlight key terms"
+              title="Highlight the summary's key terms in the text — audit what the AI caught"
+            >
+              <Highlighter size={17} strokeWidth={1.5} />
+            </button>
+          )}
           <button
             className={`icon-btn${mode === "single" ? " active" : ""}`}
             onClick={() => setMode("single")}
@@ -242,17 +282,22 @@ export function DocumentViewer() {
         </div>
       </header>
 
+      {showMarks && showText && termList.length > 0 && (
+        <p className="term-legend">
+          {countTermsPresent(
+            d.pages.map((p) => (p.text_html ?? "").replace(/<[^>]*>/g, " ")).join(" "),
+            termList,
+          )}{" "}
+          of {termList.length} summary terms appear in this document's text
+        </p>
+      )}
+
       {mode === "grid" && (
         <div className="viewer-grid">
           {d.pages.map((p) => (
             <button
               key={p.page_no}
               className={`grid-cell${p.page_no === page ? " current" : ""}`}
-              style={
-                p.width && p.height
-                  ? { aspectRatio: `${p.width} / ${p.height}` }
-                  : undefined
-              }
               onClick={() => {
                 goTo(p.page_no);
                 setMode("single");
@@ -298,7 +343,7 @@ export function DocumentViewer() {
               </div>
               {showText && (
                 <div className="scroll-text">
-                  <PageText page={p} />
+                  <PageText page={p} terms={activeTerms} />
                 </div>
               )}
             </div>
@@ -322,7 +367,7 @@ export function DocumentViewer() {
               <h3 className="viewer-text-head">
                 Extracted text — {isSlides ? "slide" : "page"} {page}
               </h3>
-              <PageText page={current} />
+              <PageText page={current} terms={activeTerms} />
             </div>
           ) : current?.has_render ? (
             <PageImage documentId={documentId} page={current} regions={regionList} />

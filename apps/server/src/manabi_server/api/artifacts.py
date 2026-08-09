@@ -31,6 +31,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from manabi_server.api.modules import get_owned_module
 from manabi_server.db import get_db
 from manabi_server.jobs.queue import (
+    DEFINE_TERM_TASK,
     GENERATE_FLASHCARDS_TASK,
     GENERATE_QUIZ_TASK,
     GENERATE_SUMMARY_TASK,
@@ -194,7 +195,7 @@ async def generate_all(
     if config.flashcards_count:
         job = await _enqueue_generation(
             db, user, module, "generate_flashcards", GENERATE_FLASHCARDS_TASK,
-            module_id=module.id, count=max(4, min(30, config.flashcards_count)),
+            module_id=module.id, count=max(4, min(60, config.flashcards_count)),
         )
         jobs["flashcards"] = job.id
     if config.quiz_count:
@@ -335,6 +336,128 @@ async def get_artifact_version(
     return base
 
 
+# ── Summary term editing + AI find-in-material ───────────────────────────
+
+
+class TermIn(BaseModel):
+    term: str
+    definition: str
+    user_added: bool = True
+
+
+class AcronymIn(BaseModel):
+    acronym: str
+    meaning: str
+    user_added: bool = True
+
+
+class TermsPatch(BaseModel):
+    key_terms: list[TermIn] | None = None
+    acronyms: list[AcronymIn] | None = None
+
+
+@router.patch("/artifacts/{artifact_id}/terms", dependencies=[Depends(require_csrf)])
+async def patch_terms(
+    data: TermsPatch,
+    artifact: Artifact = Depends(_get_owned_artifact),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """Manual editing of a summary's key terms / acronyms. AI-generated
+    entries keep their citations; user entries carry user_added instead."""
+    if artifact.artifact_type != ArtifactType.summary:
+        raise HTTPException(status_code=422, detail="Not a summary artifact")
+    content = dict(artifact.content)
+    if data.key_terms is not None:
+        content["key_terms"] = [t.model_dump() for t in data.key_terms]
+    if data.acronyms is not None:
+        content["acronyms"] = [a.model_dump() for a in data.acronyms]
+    artifact.content = content
+    await db.commit()
+    return {"ok": True}
+
+
+class FindTermIn(BaseModel):
+    term: str
+
+
+@router.post(
+    "/artifacts/{artifact_id}/terms/find", dependencies=[Depends(require_csrf)]
+)
+async def find_term(
+    data: FindTermIn,
+    artifact: Artifact = Depends(_get_owned_artifact),
+    user: User = Depends(get_default_user),
+    db: AsyncSession = Depends(get_db),
+) -> JobRef:
+    """User names a missing term → retrieval decides honestly whether the
+    materials mention it; only then does the AI define it (with citations)."""
+    import asyncio
+
+    from manabi_core.retrieval import retrieve
+
+    from manabi_server.processing.embedding import embed_texts
+
+    if artifact.artifact_type != ArtifactType.summary:
+        raise HTTPException(status_code=422, detail="Not a summary artifact")
+    term = data.term.strip()
+    if not term:
+        raise HTTPException(status_code=422, detail="Term is empty")
+
+    scope = [int(m) for m in artifact.scope_module_ids]
+
+    # Gate on a LITERAL match first — vector search always returns nearest
+    # neighbors, so it can't tell "absent" from "related". Terms the user
+    # wants defined appear verbatim in real materials.
+    from sqlalchemy import text as sql_text
+
+    literal_hits = (
+        await db.execute(
+            sql_text(
+                """
+                SELECT count(*) FROM chunks c
+                JOIN documents d ON d.id = c.document_id
+                WHERE c.module_id = ANY(:scope) AND d.ai_included
+                  AND d.deleted_at IS NULL AND c.text ILIKE :pat
+                """
+            ),
+            {"scope": scope, "pat": f"%{term}%"},
+        )
+    ).scalar_one()
+    if literal_hits == 0:
+        raise HTTPException(
+            status_code=404,
+            detail=f"'{term}' was not found in this module's materials",
+        )
+
+    vec = (await asyncio.to_thread(embed_texts, [term], is_query=True))[0]
+    hits = await retrieve(db, scope, vec, term, k=6)
+    if not hits:
+        raise HTTPException(
+            status_code=404,
+            detail=f"'{term}' was not found in this module's materials",
+        )
+
+    job = Job(
+        user_id=user.id,
+        job_type="define_term",
+        queue=JobQueue.gpu,
+        payload={"term": term, "artifact_id": artifact.id},
+        module_id=artifact.module_id,
+    )
+    db.add(job)
+    await db.flush()
+    job.procrastinate_job_id = await defer_task(
+        DEFINE_TERM_TASK,
+        "gpu",
+        job_id=job.id,
+        artifact_id=artifact.id,
+        term=term,
+        chunk_ids=[h.id for h in hits],
+    )
+    await db.commit()
+    return JobRef(job_id=job.id)
+
+
 # ── Active generation jobs (resume after navigation/reload) ──────────────
 
 
@@ -359,7 +482,12 @@ async def active_jobs(
                 .where(
                     Job.module_id == module.id,
                     Job.job_type.in_(
-                        ["generate_summary", "generate_flashcards", "generate_quiz"]
+                        [
+                            "generate_summary",
+                            "generate_flashcards",
+                            "generate_quiz",
+                            "define_term",
+                        ]
                     ),
                     Job.status.in_([JobStatus.queued, JobStatus.running]),
                 )
@@ -507,7 +635,7 @@ async def generate_flashcards(
     user: User = Depends(get_default_user),
     db: AsyncSession = Depends(get_db),
 ) -> JobRef:
-    count = max(4, min(30, data.count))
+    count = 0 if data.count == 0 else max(4, min(60, data.count))
     job = await _enqueue_generation(
         db,
         user,

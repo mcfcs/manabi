@@ -91,6 +91,8 @@ export interface CourseOut {
   accent_color: string | null;
   position: number;
   module_count: number;
+  document_count: number;
+  card_count: number;
 }
 
 export interface ModuleOut {
@@ -101,12 +103,18 @@ export interface ModuleOut {
   content_version: number;
   document_count: number;
   has_note: boolean;
+  summary_state: "none" | "current" | "outdated";
+  card_count: number;
+  quiz_count: number;
 }
 
 export interface ModuleDetail extends ModuleOut {
   course_code: string;
   course_name: string;
   course_accent_color: string | null;
+  page_count: number;
+  best_quiz_score: number | null;
+  note_updated_at: string | null;
 }
 
 export type ExtractStatus = "pending" | "processing" | "ready" | "failed";
@@ -185,11 +193,14 @@ export interface SummarySection {
 export interface KeyTerm {
   term: string;
   definition: string;
+  user_added?: boolean;
+  found_by_ai?: boolean;
 }
 
 export interface Acronym {
   acronym: string;
   meaning: string;
+  user_added?: boolean;
 }
 
 export interface SummaryOut {
@@ -220,6 +231,30 @@ export interface ArtifactVersion {
   model_name: string;
   generated_at: string;
   item_count: number;
+}
+
+export interface ChatThreadOut {
+  id: number;
+  title: string;
+  created_at: string;
+}
+
+export interface ChatCitation {
+  chunk_id: number;
+  document_id: number;
+  document_title: string;
+  page_start: number;
+  page_end: number;
+}
+
+export interface ChatMessageOut {
+  id: number;
+  role: "user" | "assistant";
+  content: string;
+  grounded: boolean;
+  general_knowledge: boolean;
+  citations: ChatCitation[] | null;
+  created_at: string;
 }
 
 export interface RegionOut {

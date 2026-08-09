@@ -17,6 +17,8 @@ from manabi_server.storage import files
 
 BOLD_FLAG = 1 << 4  # PyMuPDF span flag bit for bold
 ITALIC_FLAG = 1 << 1
+MONO_FLAG = 1 << 3  # PyMuPDF: monospaced font
+_MONO_FONT = ("courier", "mono", "consolas", "typewriter")
 
 
 # Postgres text columns reject NUL; some PDF fonts leak NUL/control chars
@@ -27,8 +29,10 @@ def sanitize(text: str) -> str:
     return _CONTROL_CHARS.sub("", text)
 
 
-def _span_html(text: str, bold: bool, italic: bool) -> str:
+def _span_html(text: str, bold: bool, italic: bool, mono: bool = False) -> str:
     out = html.escape(sanitize(text))
+    if mono:
+        out = f"<code>{out}</code>"  # code samples keep their monospace look
     if bold:
         out = f"<b>{out}</b>"
     if italic:
@@ -66,10 +70,11 @@ def _pdf_page_html(page) -> str | None:
                 if not text.strip():
                     continue
                 flags = span.get("flags", 0)
-                font = span.get("font", "")
-                bold = bool(flags & BOLD_FLAG) or "bold" in font.lower()
-                italic = bool(flags & ITALIC_FLAG) or "italic" in font.lower()
-                spans.append(_span_html(text, bold, italic))
+                font = span.get("font", "").lower()
+                bold = bool(flags & BOLD_FLAG) or "bold" in font
+                italic = bool(flags & ITALIC_FLAG) or "italic" in font
+                mono = bool(flags & MONO_FLAG) or any(m in font for m in _MONO_FONT)
+                spans.append(_span_html(text, bold, italic, mono))
             if spans:
                 if block_x is None:
                     block_x = line["bbox"][0]
@@ -96,17 +101,33 @@ def _figure_markers(elements: list[DocElement]) -> str:
 
 
 def _elements_page_html(elements: list[DocElement]) -> str | None:
-    """OCR fallback: build from stored extraction (headings bold)."""
+    """OCR fallback: build from stored extraction. Headings render bold;
+    consecutive paragraph fragments are merged back into real paragraphs
+    (OCR splits sentences at line breaks and hyphens)."""
+    from manabi_server.processing.textmerge import merge_fragments
+
     parts: list[str] = []
+    paragraph_run: list[str] = []
+
+    def flush_run() -> None:
+        for para in merge_fragments(paragraph_run):
+            escaped = html.escape(para).replace("\n", "<br>")
+            parts.append(f"<p>{escaped}</p>")
+        paragraph_run.clear()
+
     for el in elements:
         text = sanitize(el.text_content or "").strip()
         if not text:
             continue
-        escaped = html.escape(text).replace("\n", "<br>")
         if el.element_type == "heading":
-            parts.append(f"<p><b>{escaped}</b></p>")
+            flush_run()
+            parts.append(f"<p><b>{html.escape(text)}</b></p>")
+        elif el.element_type in ("paragraph", "text", "caption"):
+            paragraph_run.append(text)
         else:
-            parts.append(f"<p>{escaped}</p>")
+            flush_run()
+            parts.append(f"<p>{html.escape(text).replace(chr(10), '<br>')}</p>")
+    flush_run()
     joined = "".join(parts)
     return joined if joined.strip() else None
 
@@ -123,7 +144,12 @@ def _pptx_pages_html(source_path) -> dict[int, str]:
                 continue
             for para in shape.text_frame.paragraphs:
                 spans = [
-                    _span_html(run.text, bool(run.font.bold), bool(run.font.italic))
+                    _span_html(
+                        run.text,
+                        bool(run.font.bold),
+                        bool(run.font.italic),
+                        any(m in (run.font.name or "").lower() for m in _MONO_FONT),
+                    )
                     for run in para.runs
                     if run.text.strip()
                 ]

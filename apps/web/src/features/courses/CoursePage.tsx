@@ -96,6 +96,11 @@ function ModuleRow({
             <span className="module-title">{module.title}</span>
             <span className="module-meta">
               <FileText size={13} strokeWidth={1.5} /> {module.document_count}
+              {module.card_count > 0 && ` · ${module.card_count} cards`}
+              {module.quiz_count > 0 &&
+                ` · ${module.quiz_count} quiz${module.quiz_count === 1 ? "" : "zes"}`}
+              {module.summary_state === "current" && " · summary ✓"}
+              {module.summary_state === "outdated" && " · summary stale"}
               {module.has_note && (
                 <>
                   {" · "}

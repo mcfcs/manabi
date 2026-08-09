@@ -179,6 +179,8 @@ export function HomePage() {
                 <span className="course-meta">
                   {course.module_count}{" "}
                   {course.module_count === 1 ? "module" : "modules"}
+                  {course.document_count > 0 && ` · ${course.document_count} docs`}
+                  {course.card_count > 0 && ` · ${course.card_count} cards`}
                   {course.term ? ` · ${course.term}` : ""}
                 </span>
               </div>

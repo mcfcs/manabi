@@ -37,9 +37,18 @@ export type ModuleTab =
   | "summary"
   | "cards"
   | "quiz"
+  | "chat"
   | "notes";
 
-const MODULE_TABS = ["overview", "materials", "summary", "cards", "quiz", "notes"];
+const MODULE_TABS = [
+  "overview",
+  "materials",
+  "summary",
+  "cards",
+  "quiz",
+  "chat",
+  "notes",
+];
 
 const moduleRoute = createRoute({
   getParentRoute: () => rootRoute,

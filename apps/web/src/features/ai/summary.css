@@ -125,3 +125,49 @@
   border-color: var(--accent-blue);
   color: var(--accent-blue-deep);
 }
+
+/* ── Terms manager ──────────────────────────────────────────── */
+
+.terms-manager {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-3);
+  padding: var(--s-4);
+  border: 1px solid var(--rule);
+  border-radius: var(--radius);
+  background: var(--surface-raised);
+  align-items: flex-start;
+}
+.terms-manager h3 {
+  font-size: 16px;
+}
+
+.terms-rows {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-2);
+  width: 100%;
+}
+
+.terms-row {
+  display: flex;
+  gap: var(--s-2);
+  align-items: center;
+}
+.terms-term {
+  flex: 0 0 200px;
+  min-height: 36px;
+}
+.terms-def {
+  flex: 1;
+  min-height: 36px;
+}
+
+.terms-find {
+  display: flex;
+  gap: var(--s-2);
+  width: 100%;
+}
+.terms-find .input {
+  min-height: 36px;
+}

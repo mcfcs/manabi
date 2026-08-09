@@ -6,6 +6,7 @@ from fastapi.staticfiles import StaticFiles
 
 from manabi_server.api import (
     artifacts,
+    chat,
     courses,
     documents,
     health,
@@ -26,14 +27,25 @@ app.include_router(modules.router)
 app.include_router(documents.router)
 app.include_router(notes.router)
 app.include_router(artifacts.router)
+app.include_router(chat.router)
 
 # Serve the built SPA (apps/web/dist) so one process on 0.0.0.0:56690 covers
 # API + website for every device on the tailnet. During `pnpm dev`, Vite
 # serves the SPA itself and proxies /api here instead.
 _web_dist = Path(get_settings().web_dist).resolve()
 
+
+class _HashedAssets(StaticFiles):
+    """Vite assets are content-hashed — cache them forever."""
+
+    def file_response(self, *args, **kwargs):
+        response = super().file_response(*args, **kwargs)
+        response.headers["Cache-Control"] = "public, max-age=31536000, immutable"
+        return response
+
+
 if (_web_dist / "assets").is_dir():
-    app.mount("/assets", StaticFiles(directory=_web_dist / "assets"), name="assets")
+    app.mount("/assets", _HashedAssets(directory=_web_dist / "assets"), name="assets")
 
 if (_web_dist / "index.html").is_file():
 
@@ -43,5 +55,9 @@ if (_web_dist / "index.html").is_file():
             raise HTTPException(status_code=404, detail="Not found")
         candidate = (_web_dist / full_path).resolve()
         if full_path and candidate.is_file() and candidate.is_relative_to(_web_dist):
-            return FileResponse(candidate)
-        return FileResponse(_web_dist / "index.html")
+            # top-level files (icons, manifest) may change between builds
+            return FileResponse(candidate, headers={"Cache-Control": "no-cache"})
+        # index.html must ALWAYS revalidate or users get a stale app shell
+        return FileResponse(
+            _web_dist / "index.html", headers={"Cache-Control": "no-cache"}
+        )

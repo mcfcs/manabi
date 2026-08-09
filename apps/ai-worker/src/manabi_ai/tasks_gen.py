@@ -33,6 +33,7 @@ from manabi_ai.db import session_factory
 from manabi_ai.ollama_client import GenerationError, generate_structured
 from manabi_ai.validators import (
     ResolvedItem,
+    dedup_cards,
     dedup_questions,
     match_element_ids,
     resolve_items,
@@ -147,6 +148,7 @@ async def _start(db: AsyncSession, job_id: int) -> Job:
 
 
 COVERAGE_TARGET = 0.9
+EXHAUSTIVE_CARD_CAP = 150
 
 
 @app.task(name="manabi_ai.tasks.generate_summary", queue="gpu", retry=1)
@@ -321,29 +323,101 @@ async def generate_flashcards(job_id: int, module_id: int, count: int = 12) -> N
                 await db.execute(select(Module).where(Module.id == module_id))
             ).scalar_one()
 
+            # ── Derived cards: exact term/acronym cards from the summary ──
+            summary = (
+                await db.execute(
+                    select(Artifact)
+                    .where(
+                        Artifact.module_id == module_id,
+                        Artifact.artifact_type == ArtifactType.summary,
+                    )
+                    .order_by(Artifact.id.desc())
+                    .limit(1)
+                )
+            ).scalar_one_or_none()
+            derived: list[tuple[str, str, str]] = []  # (front, back, summary item_ref)
+            summary_citations: dict[str, list[Citation]] = {}
+            if summary is not None:
+                for row in (
+                    (
+                        await db.execute(
+                            select(Citation).where(Citation.artifact_id == summary.id)
+                        )
+                    )
+                    .scalars()
+                    .all()
+                ):
+                    summary_citations.setdefault(row.item_ref, []).append(row)
+                for i, t in enumerate(summary.content.get("key_terms", [])):
+                    if t.get("term") and t.get("definition"):
+                        derived.append(
+                            (f"Define: {t['term']}", t["definition"], f"kt:{i}")
+                        )
+                for i, a in enumerate(summary.content.get("acronyms", [])):
+                    if a.get("acronym") and a.get("meaning"):
+                        derived.append(
+                            (
+                                f"What does {a['acronym']} stand for?",
+                                a["meaning"],
+                                f"ac:{i}",
+                            )
+                        )
+            # count == 0 → exhaustive mode: keep generating until the
+            # material runs dry (a round adds <3 new cards) with hard stops.
+            exhaustive = count == 0
+            if exhaustive:
+                count = EXHAUSTIVE_CARD_CAP
+            else:
+                # Leave at least a quarter of the deck for conceptual/
+                # enumeration/comparison cards — definitions alone aren't
+                # a study kit.
+                derived = derived[: max(0, count - max(4, count // 4))]
+
+            remaining = count - len(derived)
+            existing_fronts = [front for front, _, _ in derived]
             batches = batch_chunks(chunks)
-            per_batch = max(2, round(count / len(batches)))
             resolved_cards: list[ResolvedItem] = []
             dropped = 0
-            for bi, batch in enumerate(batches):
-                await _progress(
-                    db, job, 15 + int(60 * bi / len(batches)),
-                    f"Creating cards with {settings.generation_model}"
-                    + (f" ({bi + 1}/{len(batches)})" if len(batches) > 1 else ""),
-                )
-                ctx = build_context(batch, notes)
-                n = per_batch if bi < len(batches) - 1 else max(
-                    2, count - per_batch * (len(batches) - 1)
-                )
-                result = await generate_structured(
-                    prompts.FLASHCARDS_PROMPT.replace("{count}", str(n)),
-                    ctx.source_text,
-                    prompts.FLASHCARDS_SCHEMA,
-                    preview,
-                )
-                kept, d = resolve_items(result.get("cards", []), ctx.index_map, {module_id})
-                dropped += d
-                resolved_cards.extend(kept)
+            rounds = 0
+            max_rounds = 8 if exhaustive else 3
+            while remaining > len(resolved_cards) and rounds < max_rounds:
+                rounds += 1
+                added_this_round = 0
+                for batch in batches:
+                    need = remaining - len(resolved_cards)
+                    if need <= 0:
+                        break
+                    await _progress(
+                        db, job, 15 + min(60, 60 * rounds // max_rounds),
+                        f"Creating cards with {settings.generation_model}"
+                        f" ({len(derived) + len(resolved_cards)}"
+                        f"/{'∞' if exhaustive else count})",
+                    )
+                    ctx = build_context(batch, notes)
+                    fronts_note = "\n".join(f"- {f}" for f in existing_fronts[-60:]) or "(none)"
+                    result = await generate_structured(
+                        prompts.FLASHCARDS_PROMPT.replace(
+                            "{count}", str(min(need, 20))
+                        ).replace("{existing_fronts}", fronts_note),
+                        ctx.source_text,
+                        prompts.FLASHCARDS_SCHEMA,
+                        preview,
+                    )
+                    kept, d = resolve_items(
+                        result.get("cards", []), ctx.index_map, {module_id}
+                    )
+                    dropped += d
+                    fresh = dedup_cards(kept, existing_fronts)
+                    if not fresh:
+                        continue
+                    added_this_round += len(fresh)
+                    resolved_cards.extend(fresh)
+                    existing_fronts.extend(
+                        (f.item.get("front") or "") for f in fresh
+                    )
+                if exhaustive and added_this_round < 3:
+                    log.info("exhaustive card generation ran dry after %d rounds", rounds)
+                    break
 
             await _progress(db, job, 85, "Validating citations")
             # carry over user-edited cards from the previous deck
@@ -389,10 +463,32 @@ async def generate_flashcards(job_id: int, module_id: int, count: int = 12) -> N
             db.add(artifact)
             await db.flush()
             elements_by_chunk = await _elements_for_chunks(
-                db, [c for r in resolved_cards[:count] for c in r.chunks]
+                db, [c for r in resolved_cards for c in r.chunks]
             )
             ord_ = 0
-            for resolved in resolved_cards[:count]:
+            # Derived term/acronym cards: exact content, summary's citations cloned
+            for front, back, ref in derived:
+                db.add(
+                    Flashcard(artifact_id=artifact.id, ord=ord_, front=front, back=back)
+                )
+                for src in summary_citations.get(ref, []):
+                    db.add(
+                        Citation(
+                            artifact_id=artifact.id,
+                            item_ref=f"card:{ord_}",
+                            chunk_id=src.chunk_id,
+                            element_ids=src.element_ids,
+                            document_id=src.document_id,
+                            document_title=src.document_title,
+                            page_start=src.page_start,
+                            page_end=src.page_end,
+                            quote_excerpt=src.quote_excerpt,
+                            support_score=src.support_score,
+                            status=src.status,
+                        )
+                    )
+                ord_ += 1
+            for resolved in resolved_cards[: max(0, count - len(derived))]:
                 db.add(
                     Flashcard(
                         artifact_id=artifact.id,
@@ -552,6 +648,174 @@ async def generate_quiz(
             await _finish(db, job, artifact.id, dropped)
         except (GenerationError, Exception) as exc:  # noqa: BLE001
             log.exception("quiz generation failed")
+            await db.rollback()
+            await _fail(db, job, exc)
+            raise
+
+
+@app.task(name="manabi_ai.tasks.define_term", queue="gpu", retry=1)
+async def define_term(
+    job_id: int, artifact_id: int, term: str, chunk_ids: list[int]
+) -> None:
+    """User asked for a missing key term. Retrieval already confirmed the
+    materials mention it; define it strictly from those passages or refuse."""
+    async with session_factory()() as db:
+        job = await _start(db, job_id)
+        preview = _preview_writer(db, job)
+        try:
+            artifact = (
+                await db.execute(select(Artifact).where(Artifact.id == artifact_id))
+            ).scalar_one()
+            scope = [int(m) for m in artifact.scope_module_ids]
+            wanted = set(chunk_ids)
+            chunks = [
+                c for c in await load_context_chunks(db, scope) if c.id in wanted
+            ]
+            if not chunks:
+                raise GenerationError("Retrieved passages no longer exist")
+
+            ctx = build_context(chunks, None)
+            result = await generate_structured(
+                prompts.DEFINE_TERM_PROMPT.replace("{term}", term),
+                ctx.source_text,
+                prompts.DEFINE_TERM_SCHEMA,
+                preview,
+            )
+            if not result.get("found") or not result.get("definition"):
+                raise GenerationError(
+                    f"The materials mention '{term}' but do not define it"
+                )
+            kept, _ = resolve_items(
+                [{"text": result["definition"], "source_ids": result.get("source_ids", [])}],
+                ctx.index_map,
+                set(scope),
+            )
+            if not kept:
+                raise GenerationError(
+                    f"Could not support a definition of '{term}' with citations"
+                )
+            resolved = kept[0]
+
+            content = dict(artifact.content)
+            key_terms = list(content.get("key_terms", []))
+            index = len(key_terms)
+            key_terms.append(
+                {
+                    "term": term,
+                    "definition": resolved.item["text"],
+                    "found_by_ai": True,
+                }
+            )
+            content["key_terms"] = key_terms
+            artifact.content = content
+
+            elements_by_chunk = await _elements_for_chunks(db, resolved.chunks)
+            excerpt = f"{term}: {resolved.item['text']}"
+            for row in _citation_rows(
+                artifact.id, f"kt:{index}", resolved.chunks, excerpt, elements_by_chunk
+            ):
+                db.add(row)
+            await _finish(db, job, artifact.id, 0)
+        except (GenerationError, Exception) as exc:  # noqa: BLE001
+            log.exception("define_term failed")
+            await db.rollback()
+            await _fail(db, job, exc)
+            raise
+
+
+@app.task(name="manabi_ai.tasks.chat_answer", queue="gpu", retry=1)
+async def chat_answer(job_id: int, thread_id: int, chunk_ids: list[int]) -> None:
+    """Answer one chat question: grounded in retrieved module passages with
+    citations, or explicitly ungrounded general knowledge, never blended."""
+    from manabi_core.models import ChatMessage, ChatRole, ChatThread
+
+    async with session_factory()() as db:
+        job = await _start(db, job_id)
+        preview = _preview_writer(db, job)
+        try:
+            thread = (
+                await db.execute(select(ChatThread).where(ChatThread.id == thread_id))
+            ).scalar_one()
+            history = (
+                (
+                    await db.execute(
+                        select(ChatMessage)
+                        .where(ChatMessage.thread_id == thread_id)
+                        .order_by(ChatMessage.id.desc())
+                        .limit(9)
+                    )
+                )
+                .scalars()
+                .all()
+            )[::-1]
+
+            wanted = set(chunk_ids)
+            chunks = [
+                c
+                for c in await load_context_chunks(db, [thread.module_id])
+                if c.id in wanted
+            ]
+            ctx = build_context(chunks, None) if chunks else None
+
+            conversation = "\n\n".join(
+                f"{'STUDENT' if m.role == ChatRole.user else 'ASSISTANT'}: {m.content}"
+                for m in history
+            )
+            user_prompt = (
+                (ctx.source_text if ctx else "SOURCE MATERIAL: (none retrieved)")
+                + "\n\nCONVERSATION:\n"
+                + conversation
+            )
+            await _progress(db, job, 30, "Answering")
+            result = await generate_structured(
+                prompts.CHAT_PROMPT, user_prompt, prompts.CHAT_SCHEMA, preview
+            )
+
+            answer = (result.get("answer") or "").strip()
+            if not answer:
+                raise GenerationError("Empty answer from model")
+            grounded = bool(result.get("grounded")) and bool(result.get("source_ids"))
+            citations_snapshot: list[dict] = []
+            if grounded and ctx is not None:
+                kept, _ = resolve_items(
+                    [{"text": answer, "source_ids": result.get("source_ids", [])}],
+                    ctx.index_map,
+                    {thread.module_id},
+                )
+                if kept:
+                    citations_snapshot = [
+                        {
+                            "chunk_id": c.id,
+                            "document_id": c.document_id,
+                            "document_title": c.document_title,
+                            "page_start": c.page_start,
+                            "page_end": c.page_end,
+                        }
+                        for c in kept[0].chunks
+                    ]
+                else:
+                    grounded = False  # cited ids didn't resolve — don't fake it
+
+            db.add(
+                ChatMessage(
+                    thread_id=thread_id,
+                    role=ChatRole.assistant,
+                    content=answer,
+                    grounded=grounded,
+                    general_knowledge=bool(result.get("general_knowledge_used"))
+                    or not grounded,
+                    citations=citations_snapshot or None,
+                    job_id=job.id,
+                )
+            )
+            job.status = JobStatus.succeeded
+            job.progress_pct = 100
+            job.progress_note = "Done"
+            job.preview = None
+            job.finished_at = datetime.now(UTC)
+            await db.commit()
+        except (GenerationError, Exception) as exc:  # noqa: BLE001
+            log.exception("chat answer failed")
             await db.rollback()
             await _fail(db, job, exc)
             raise

@@ -113,8 +113,65 @@ Card guidelines:
 - Back: the concise correct answer, self-contained.
 - Cover the most important, testable concepts; prefer topics the student
   notes emphasize. Vary style: definitions, contrasts, why/how questions.
+- ENUMERATIONS: when a source lists N items (types, steps, layers, modes,
+  statuses), create a card asking to name all N, with the full list on the
+  back.
+- COMPARISONS: when the sources contrast two concepts (e.g. human vs data
+  communication, analog vs digital, LAN vs WAN, synchronous vs
+  asynchronous), create a card asking to compare or distinguish them.
+- Do NOT duplicate or trivially rephrase any of these existing cards:
+{{existing_fronts}}
 
 Produce JSON matching the schema with exactly {{count}} cards."""
+
+DEFINE_TERM_PROMPT = f"""A student says the term below is missing from their study notes.
+
+{_GROUNDING}
+
+Check whether the SOURCE MATERIAL defines or explains the term
+"{{term}}". If it does, give the precise definition exactly as the sources
+present it. If the sources only mention it in passing without explaining it,
+set found=false — do not invent a definition.
+
+Produce JSON matching the schema."""
+
+CHAT_PROMPT = """You are a study assistant for ONE university module. The student
+asks questions; you answer from the module's SOURCE MATERIAL below.
+
+RULES — follow strictly:
+- If the sources cover the question: answer from them ONLY, cite the source
+  numbers you used in "source_ids", set grounded=true.
+- If the sources do NOT cover the question: set grounded=false, START your
+  answer by saying the module materials don't cover this, then — only if you
+  are confident — answer briefly from general knowledge and set
+  general_knowledge_used=true. Never silently blend the two.
+- If you are not confident either way, say so honestly.
+- Be concise and exam-oriented. Preserve exact terminology from the sources.
+- The conversation so far is provided for context; the current question is
+  the last user message.
+
+Produce JSON matching the schema."""
+
+CHAT_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "grounded": {"type": "boolean"},
+        "answer": {"type": "string"},
+        "source_ids": {"type": "array", "items": {"type": "integer"}},
+        "general_knowledge_used": {"type": "boolean"},
+    },
+    "required": ["grounded", "answer", "source_ids", "general_knowledge_used"],
+}
+
+DEFINE_TERM_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "found": {"type": "boolean"},
+        "definition": {"type": "string"},
+        "source_ids": {"type": "array", "items": {"type": "integer"}},
+    },
+    "required": ["found", "definition", "source_ids"],
+}
 
 FLASHCARDS_SCHEMA = {
     "type": "object",

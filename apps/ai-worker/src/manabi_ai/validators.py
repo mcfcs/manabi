@@ -77,6 +77,25 @@ def match_element_ids(
     return picked or [scored[0][1]]
 
 
+def dedup_cards(
+    new_items: list[ResolvedItem],
+    existing_fronts: list[str],
+    threshold: float = 0.85,
+) -> list[ResolvedItem]:
+    """Drop cards whose fronts near-duplicate existing ones (or each other)."""
+    from difflib import SequenceMatcher
+
+    kept: list[ResolvedItem] = []
+    fronts = [f.lower() for f in existing_fronts]
+    for item in new_items:
+        front = (item.item.get("front") or "").lower()
+        if any(SequenceMatcher(None, front, f).ratio() > threshold for f in fronts):
+            continue
+        kept.append(item)
+        fronts.append(front)
+    return kept
+
+
 def dedup_questions(items: list[ResolvedItem], threshold: float = 0.8) -> list[ResolvedItem]:
     """Drop near-duplicate question stems (difflib ratio)."""
     from difflib import SequenceMatcher

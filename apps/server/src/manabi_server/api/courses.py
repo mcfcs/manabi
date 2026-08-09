@@ -38,13 +38,17 @@ class CourseOut(BaseModel):
     accent_color: str | None
     position: int
     module_count: int
+    document_count: int = 0
+    card_count: int = 0
 
 
 class ReorderIn(BaseModel):
     ids: list[int]
 
 
-def _course_out(course: Course, module_count: int) -> CourseOut:
+def _course_out(
+    course: Course, module_count: int, document_count: int = 0, card_count: int = 0
+) -> CourseOut:
     return CourseOut(
         id=course.id,
         code=course.code,
@@ -55,6 +59,8 @@ def _course_out(course: Course, module_count: int) -> CourseOut:
         accent_color=course.accent_color,
         position=course.position,
         module_count=module_count,
+        document_count=document_count,
+        card_count=card_count,
     )
 
 
@@ -82,7 +88,45 @@ async def list_courses(
             .order_by(Course.position, Course.id)
         )
     ).all()
-    return [_course_out(course, count) for course, count in rows]
+    # per-course document + active-card counts for the home cards
+    from manabi_core.models import Artifact, ArtifactType, Flashcard, FlashcardStatus
+
+    doc_counts = dict(
+        (
+            await db.execute(
+                select(Module.course_id, func.count(Document.id))
+                .join(Document, Document.module_id == Module.id)
+                .where(Document.deleted_at.is_(None))
+                .group_by(Module.course_id)
+            )
+        ).all()
+    )
+    latest_decks = (
+        select(func.max(Artifact.id))
+        .where(Artifact.artifact_type == ArtifactType.flashcard_deck)
+        .group_by(Artifact.module_id)
+        .scalar_subquery()
+    )
+    card_counts = dict(
+        (
+            await db.execute(
+                select(Module.course_id, func.count(Flashcard.id))
+                .join(Artifact, Artifact.module_id == Module.id)
+                .join(Flashcard, Flashcard.artifact_id == Artifact.id)
+                .where(
+                    Artifact.id.in_(latest_decks),
+                    Flashcard.status == FlashcardStatus.active,
+                )
+                .group_by(Module.course_id)
+            )
+        ).all()
+    )
+    return [
+        _course_out(
+            course, count, doc_counts.get(course.id, 0), card_counts.get(course.id, 0)
+        )
+        for course, count in rows
+    ]
 
 
 @router.post("", dependencies=[Depends(require_csrf)])

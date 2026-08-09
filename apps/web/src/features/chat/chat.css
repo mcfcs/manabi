@@ -1,0 +1,168 @@
+.chat-tab {
+  display: flex;
+  gap: var(--s-4);
+  min-height: 60vh;
+}
+
+/* ── Thread list ────────────────────────────────────────────── */
+
+.chat-threads {
+  flex: 0 0 220px;
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-2);
+}
+
+.chat-new {
+  justify-content: center;
+}
+
+.chat-thread-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  overflow-y: auto;
+}
+
+.chat-thread-item {
+  display: flex;
+  align-items: center;
+  border-radius: var(--radius-sm);
+}
+.chat-thread-item.active {
+  background: var(--accent-blue-wash);
+}
+.chat-thread-item.active .chat-thread-title {
+  color: var(--accent-blue-deep);
+}
+
+.chat-thread-title {
+  flex: 1;
+  min-width: 0;
+  padding: var(--s-2) var(--s-3);
+  border: none;
+  background: none;
+  text-align: left;
+  font-size: 13px;
+  color: var(--ink-soft);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.chat-thread-del {
+  width: 26px;
+  height: 26px;
+  opacity: 0;
+}
+.chat-thread-item:hover .chat-thread-del {
+  opacity: 1;
+}
+
+/* ── Messages ───────────────────────────────────────────────── */
+
+.chat-main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-3);
+}
+
+.chat-messages {
+  flex: 1;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-3);
+  padding: var(--s-2) 0;
+  max-height: calc(100vh - 320px);
+}
+
+.chat-empty {
+  margin: auto;
+}
+
+.chat-msg {
+  display: flex;
+}
+.chat-msg.user {
+  justify-content: flex-end;
+}
+
+.chat-bubble {
+  max-width: 52ch;
+  padding: var(--s-3) var(--s-4);
+  border-radius: var(--radius);
+  font-family: var(--font-reading);
+  line-height: 1.6;
+}
+.chat-bubble p {
+  margin: 0;
+  white-space: pre-wrap;
+}
+
+.chat-msg.user .chat-bubble {
+  background: var(--accent-blue-wash);
+  border: 1px solid var(--accent-blue-wash);
+}
+
+.chat-msg.assistant .chat-bubble {
+  background: var(--surface-raised);
+  border: 1px solid var(--rule);
+}
+
+.chat-gk-badge {
+  display: inline-block;
+  margin-bottom: var(--s-2);
+}
+
+.chat-cites {
+  margin-top: var(--s-2);
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--s-1);
+}
+
+.chat-typing .chat-thinking {
+  color: var(--ink-faint);
+  font-style: italic;
+}
+
+.chat-preview {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--ink-soft);
+  max-height: 140px;
+  overflow: hidden;
+}
+
+/* ── Input ──────────────────────────────────────────────────── */
+
+.chat-input {
+  display: flex;
+  gap: var(--s-2);
+}
+
+/* ── Mobile ─────────────────────────────────────────────────── */
+
+@media (max-width: 767px) {
+  .chat-tab {
+    flex-direction: column;
+  }
+  .chat-threads {
+    flex: none;
+    flex-direction: row;
+    align-items: center;
+    overflow-x: auto;
+  }
+  .chat-thread-list {
+    flex-direction: row;
+  }
+  .chat-thread-title {
+    max-width: 140px;
+  }
+  .chat-messages {
+    max-height: none;
+  }
+}

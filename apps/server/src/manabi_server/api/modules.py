@@ -22,12 +22,19 @@ class ModuleOut(BaseModel):
     content_version: int
     document_count: int
     has_note: bool
+    # Study-kit status glyphs
+    summary_state: str = "none"  # none | current | outdated
+    card_count: int = 0
+    quiz_count: int = 0
 
 
 class ModuleDetail(ModuleOut):
     course_code: str
     course_name: str
     course_accent_color: str | None
+    page_count: int = 0
+    best_quiz_score: float | None = None
+    note_updated_at: str | None = None
 
 
 class ReorderIn(BaseModel):
@@ -73,7 +80,83 @@ async def _counts(db: AsyncSession, module_ids: list[int]) -> tuple[dict, set]:
     return doc_counts, noted
 
 
-def _module_out(module: Module, doc_counts: dict, noted: set) -> ModuleOut:
+async def _study_kit_stats(db: AsyncSession, module_ids: list[int]) -> dict[int, dict]:
+    """Per-module status glyph data: summary state, active cards, quiz count.
+
+    summary_state uses the cheap content_version comparison (no chunk loads);
+    the precise fingerprint check stays on the summary endpoint itself."""
+    from manabi_core.models import Artifact, ArtifactType, Flashcard, FlashcardStatus
+
+    stats: dict[int, dict] = {
+        m: {"summary_state": "none", "card_count": 0, "quiz_count": 0}
+        for m in module_ids
+    }
+    if not module_ids:
+        return stats
+
+    versions = dict(
+        (
+            await db.execute(
+                select(Module.id, Module.content_version).where(Module.id.in_(module_ids))
+            )
+        ).all()
+    )
+    summaries = (
+        await db.execute(
+            select(Artifact.module_id, Artifact.module_version_at_gen)
+            .where(
+                Artifact.module_id.in_(module_ids),
+                Artifact.artifact_type == ArtifactType.summary,
+            )
+            .order_by(Artifact.module_id, Artifact.id.desc())
+            .distinct(Artifact.module_id)
+        )
+    ).all()
+    for module_id, gen_version in summaries:
+        stats[module_id]["summary_state"] = (
+            "current" if gen_version >= versions.get(module_id, 0) else "outdated"
+        )
+
+    latest_decks = (
+        await db.execute(
+            select(Artifact.module_id, Artifact.id)
+            .where(
+                Artifact.module_id.in_(module_ids),
+                Artifact.artifact_type == ArtifactType.flashcard_deck,
+            )
+            .order_by(Artifact.module_id, Artifact.id.desc())
+            .distinct(Artifact.module_id)
+        )
+    ).all()
+    for module_id, artifact_id in latest_decks:
+        n = (
+            await db.execute(
+                select(func.count(Flashcard.id)).where(
+                    Flashcard.artifact_id == artifact_id,
+                    Flashcard.status == FlashcardStatus.active,
+                )
+            )
+        ).scalar_one()
+        stats[module_id]["card_count"] = n
+
+    quizzes = (
+        await db.execute(
+            select(Artifact.module_id, func.count(Artifact.id))
+            .where(
+                Artifact.module_id.in_(module_ids),
+                Artifact.artifact_type == ArtifactType.quiz,
+            )
+            .group_by(Artifact.module_id)
+        )
+    ).all()
+    for module_id, n in quizzes:
+        stats[module_id]["quiz_count"] = n
+    return stats
+
+
+def _module_out(
+    module: Module, doc_counts: dict, noted: set, kit: dict | None = None
+) -> ModuleOut:
     return ModuleOut(
         id=module.id,
         course_id=module.course_id,
@@ -82,6 +165,7 @@ def _module_out(module: Module, doc_counts: dict, noted: set) -> ModuleOut:
         content_version=module.content_version,
         document_count=doc_counts.get(module.id, 0),
         has_note=module.id in noted,
+        **(kit or {}),
     )
 
 
@@ -103,8 +187,10 @@ async def list_modules(
         .scalars()
         .all()
     )
-    doc_counts, noted = await _counts(db, [m.id for m in modules])
-    return [_module_out(m, doc_counts, noted) for m in modules]
+    module_ids = [m.id for m in modules]
+    doc_counts, noted = await _counts(db, module_ids)
+    kits = await _study_kit_stats(db, module_ids)
+    return [_module_out(m, doc_counts, noted, kits.get(m.id)) for m in modules]
 
 
 @router.post("/courses/{course_id}/modules", dependencies=[Depends(require_csrf)])
@@ -138,16 +224,44 @@ async def create_module(
 async def module_detail(
     module: Module = Depends(get_owned_module), db: AsyncSession = Depends(get_db)
 ) -> ModuleDetail:
+    from manabi_core.models import Artifact, ArtifactType, DocumentPage, QuizAttempt
+
     course = (
         await db.execute(select(Course).where(Course.id == module.course_id))
     ).scalar_one()
     doc_counts, noted = await _counts(db, [module.id])
-    base = _module_out(module, doc_counts, noted)
+    kits = await _study_kit_stats(db, [module.id])
+    base = _module_out(module, doc_counts, noted, kits.get(module.id))
+
+    page_count = (
+        await db.execute(
+            select(func.count(DocumentPage.id))
+            .join(Document, Document.id == DocumentPage.document_id)
+            .where(Document.module_id == module.id, Document.deleted_at.is_(None))
+        )
+    ).scalar_one()
+    best_score = (
+        await db.execute(
+            select(func.max(QuizAttempt.score))
+            .join(Artifact, Artifact.id == QuizAttempt.artifact_id)
+            .where(
+                Artifact.module_id == module.id,
+                Artifact.artifact_type == ArtifactType.quiz,
+            )
+        )
+    ).scalar_one_or_none()
+    note_updated = (
+        await db.execute(select(Note.updated_at).where(Note.module_id == module.id))
+    ).scalar_one_or_none()
+
     return ModuleDetail(
         **base.model_dump(),
         course_code=course.code,
         course_name=course.name,
         course_accent_color=course.accent_color,
+        page_count=page_count,
+        best_quiz_score=best_score,
+        note_updated_at=note_updated.isoformat() if note_updated else None,
     )
 
 

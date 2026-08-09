@@ -2,10 +2,8 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   Check,
   Download,
-  Minus,
   Pencil,
   Play,
-  Plus,
   RotateCcw,
   Sparkle,
   Trash2,
@@ -339,14 +337,25 @@ export function FlashcardsTab({ moduleId }: { moduleId: string }) {
             module's materials, prioritizing what your notes emphasize.
           </p>
           <div className="count-picker">
-            <button className="icon-btn" onClick={() => setCount(Math.max(4, count - 4))}>
-              <Minus size={14} />
-            </button>
-            <span className="mono">{count} cards</span>
-            <button className="icon-btn" onClick={() => setCount(Math.min(30, count + 4))}>
-              <Plus size={14} />
-            </button>
+            <select
+              className="input quiz-count"
+              value={count}
+              onChange={(e) => setCount(Number(e.target.value))}
+            >
+              {[12, 20, 30, 40, 60].map((n) => (
+                <option key={n} value={n}>
+                  {n} cards
+                </option>
+              ))}
+              <option value={0}>All (exhaustive)</option>
+            </select>
           </div>
+          <p className="gen-hint">
+            Key terms and acronyms become exact cards first; the AI adds
+            concept, enumeration, and comparison cards — no duplicates.
+            {count === 0 &&
+              " Exhaustive mode keeps generating until the material runs dry — expect 10–20 minutes."}
+          </p>
           <button
             className="btn btn-primary"
             onClick={() => generate.mutate()}

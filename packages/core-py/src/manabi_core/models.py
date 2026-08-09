@@ -394,6 +394,47 @@ class NoteSnapshot(Base, TimestampMixin):
     pm_json: Mapped[dict] = mapped_column(JSONB, nullable=False)
 
 
+class ChatThread(Base, TimestampMixin):
+    """Per-module chat conversations; history persists with the module."""
+
+    __tablename__ = "chat_threads"
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    module_id: Mapped[int] = mapped_column(
+        BigInteger, ForeignKey("modules.id", ondelete="CASCADE"), nullable=False
+    )
+    title: Mapped[str] = mapped_column(String(255), nullable=False)
+
+    __table_args__ = (Index("ix_chat_threads_module_id", "module_id"),)
+
+
+class ChatRole(enum.StrEnum):
+    user = "user"
+    assistant = "assistant"
+
+
+class ChatMessage(Base, TimestampMixin):
+    __tablename__ = "chat_messages"
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    thread_id: Mapped[int] = mapped_column(
+        BigInteger, ForeignKey("chat_threads.id", ondelete="CASCADE"), nullable=False
+    )
+    role: Mapped[ChatRole] = mapped_column(Enum(ChatRole, name="chat_role"), nullable=False)
+    content: Mapped[str] = mapped_column(Text, nullable=False)
+    # grounded=True: answered from module materials (citations present).
+    # general_knowledge=True: sources didn't cover it; model knowledge used,
+    # clearly labeled in the UI.
+    grounded: Mapped[bool] = mapped_column(nullable=False, default=True)
+    general_knowledge: Mapped[bool] = mapped_column(nullable=False, default=False)
+    citations: Mapped[list | None] = mapped_column(JSONB)  # snapshot list
+    job_id: Mapped[int | None] = mapped_column(
+        BigInteger, ForeignKey("jobs.id", ondelete="SET NULL")
+    )
+
+    __table_args__ = (Index("ix_chat_messages_thread_id", "thread_id"),)
+
+
 class JobQueue(enum.StrEnum):
     cpu = "cpu"
     gpu = "gpu"

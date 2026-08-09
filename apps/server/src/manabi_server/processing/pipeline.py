@@ -124,6 +124,7 @@ def _stage_structure(db: Session, doc: Document) -> None:
 
     source = files.resolve(doc.storage_path)
     parsed = _docling_parse(source)
+    parsed["elements"] = _fix_reading_order(parsed["elements"])
 
     notes_by_page: dict[int, str] = {}
     titles_by_page: dict[int, str] = {}
@@ -160,6 +161,49 @@ def _stage_structure(db: Session, doc: Document) -> None:
         )
     doc.page_count = page_count
     db.commit()
+
+
+INVERSION_TOLERANCE_PTS = 5
+# Scrambled OCR pages measure ~20%+; genuine multi-column pages have one
+# inversion per column break (a few % with realistic element counts).
+INVERSION_RATE_THRESHOLD = 0.15
+
+
+def _fix_reading_order(elements: list[dict]) -> list[dict]:
+    """Docling occasionally scrambles OCR-page element order. Detect pages
+    whose element sequence inverts vertically too often and re-sort those
+    pages by physical position (top-to-bottom, left-to-right). Correctly
+    ordered pages — including multi-column native parses — are untouched."""
+    by_page: dict[int, list[dict]] = {}
+    for el in elements:
+        by_page.setdefault(el["page_no"], []).append(el)
+
+    fixed: list[dict] = []
+    for page_no in sorted(by_page):
+        items = by_page[page_no]
+        boxed = [el for el in items if el.get("bbox")]
+        if len(boxed) >= 4:
+            inversions = 0
+            pairs = 0
+            for prev, nxt in zip(boxed, boxed[1:], strict=False):
+                pairs += 1
+                # bottom-left origin: larger t = higher on the page
+                if nxt["bbox"]["t"] > prev["bbox"]["t"] + INVERSION_TOLERANCE_PTS:
+                    inversions += 1
+            if pairs and inversions / pairs > INVERSION_RATE_THRESHOLD:
+                items = sorted(
+                    items,
+                    key=lambda el: (
+                        -(el["bbox"]["t"] if el.get("bbox") else 0),
+                        el["bbox"]["l"] if el.get("bbox") else 0,
+                    ),
+                )
+                log.info(
+                    "re-sorted scrambled page %s (%d/%d inversions)",
+                    page_no, inversions, pairs,
+                )
+        fixed.extend(items)
+    return fixed
 
 
 _converter = None

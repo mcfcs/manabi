@@ -8,6 +8,7 @@ import { api, type ModuleDetail } from "../../lib/api";
 import { useActiveJobs } from "../ai/common";
 import { FlashcardsTab } from "../ai/FlashcardsTab";
 import { GenerateAllModal } from "../ai/GenerateAllModal";
+import { ChatTab } from "../chat/ChatTab";
 import { QuizTab } from "../ai/QuizTab";
 import { SummaryTab } from "../ai/SummaryTab";
 import { MaterialsTab } from "../materials/MaterialsTab";
@@ -20,6 +21,7 @@ const TABS = [
   { key: "summary", label: "Summary" },
   { key: "cards", label: "Cards" },
   { key: "quiz", label: "Quiz" },
+  { key: "chat", label: "Chat" },
   { key: "notes", label: "Notes" },
 ] as const;
 
@@ -34,13 +36,90 @@ function Overview({ module }: { module: ModuleDetail }) {
   const [generating, setGenerating] = useState(false);
   const active = useActiveJobs(String(module.id));
 
+  const summary = useQuery({
+    queryKey: ["summary", String(module.id)],
+    queryFn: () =>
+      api.get<import("../../lib/api").SummaryOut | null>(
+        `/api/modules/${module.id}/summary`,
+      ),
+    staleTime: 30_000,
+  });
+  const terms = summary.data?.key_terms ?? [];
+
+  function open(tab: "materials" | "summary" | "cards" | "quiz" | "notes") {
+    navigate({
+      to: "/courses/$courseId/modules/$moduleId",
+      params: {
+        courseId: String(module.course_id),
+        moduleId: String(module.id),
+      },
+      search: { tab },
+    });
+  }
+
   return (
     <div className="module-overview">
-      <p className="overview-stats">
-        {module.document_count}{" "}
-        {module.document_count === 1 ? "document" : "documents"}
-        {module.has_note ? " · personal notes started" : " · no notes yet"}
-      </p>
+      <div className="stat-tiles">
+        <button className="stat-tile" onClick={() => open("materials")}>
+          <span className="stat-value">{module.document_count}</span>
+          <span className="stat-label">
+            {module.document_count === 1 ? "material" : "materials"}
+            {module.page_count > 0 && ` · ${module.page_count} pages`}
+          </span>
+        </button>
+        <button className="stat-tile" onClick={() => open("cards")}>
+          <span className="stat-value">{module.card_count}</span>
+          <span className="stat-label">flashcards</span>
+        </button>
+        <button className="stat-tile" onClick={() => open("quiz")}>
+          <span className="stat-value">{module.quiz_count}</span>
+          <span className="stat-label">
+            {module.quiz_count === 1 ? "quiz" : "quizzes"}
+            {module.best_quiz_score != null && ` · best ${module.best_quiz_score}%`}
+          </span>
+        </button>
+        <button className="stat-tile" onClick={() => open("notes")}>
+          <span className="stat-value">{module.has_note ? "✎" : "—"}</span>
+          <span className="stat-label">
+            {module.note_updated_at
+              ? `notes · ${new Date(module.note_updated_at).toLocaleDateString()}`
+              : "no notes yet"}
+          </span>
+        </button>
+      </div>
+
+      <div className="overview-status">
+        <button className="overview-status-row" onClick={() => open("summary")}>
+          <span>Summary</span>
+          {module.summary_state === "none" && (
+            <span className="badge stale">not generated</span>
+          )}
+          {module.summary_state === "current" && (
+            <span className="badge fresh">current</span>
+          )}
+          {module.summary_state === "outdated" && (
+            <span className="badge stale">materials changed</span>
+          )}
+          {summary.data?.coverage && (
+            <span className="gen-head-meta">
+              cites {summary.data.coverage.cited}/{summary.data.coverage.total}
+            </span>
+          )}
+        </button>
+        {terms.length > 0 && (
+          <div className="overview-terms">
+            {terms.slice(0, 8).map((t, i) => (
+              <button key={i} className="term-chip" onClick={() => open("summary")}>
+                {t.term}
+              </button>
+            ))}
+            {terms.length > 8 && (
+              <span className="gen-head-meta">+{terms.length - 8} more</span>
+            )}
+          </div>
+        )}
+      </div>
+
       <div className="overview-actions">
         <button
           className="btn btn-primary"
@@ -161,6 +240,7 @@ export function ModuleWorkspace() {
       {module && tab === "summary" && <SummaryTab moduleId={moduleId} />}
       {module && tab === "cards" && <FlashcardsTab moduleId={moduleId} />}
       {module && tab === "quiz" && <QuizTab moduleId={moduleId} courseId={courseId} />}
+      {module && tab === "chat" && <ChatTab moduleId={moduleId} />}
       {module && tab === "notes" && <NotesTab moduleId={moduleId} />}
     </div>
   );

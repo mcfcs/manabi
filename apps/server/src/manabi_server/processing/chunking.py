@@ -128,7 +128,9 @@ def chunk_pdf(elements: list[ElementIn]) -> list[ChunkOut]:
         pieces = _split_by_tokens(body, MAX_CHUNK_TOKENS)
         for piece in pieces:
             prefix = f"{heading} — " if heading and len(pieces) > 1 else ""
-            text = "\n".join(el.text.strip() for el in piece)
+            from manabi_server.processing.textmerge import merge_fragments
+
+            text = "\n".join(merge_fragments([el.text for el in piece]))
             chunks.append(
                 ChunkOut(
                     page_start=min(el.page_no for el in piece),
