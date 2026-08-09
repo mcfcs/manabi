@@ -5,7 +5,7 @@ outside the prompt: schema-constrained decoding, source-id resolution against
 the job's scope, and post-hoc support scoring.
 """
 
-PROMPT_VERSION = "v2"
+PROMPT_VERSION = "v3"
 
 _GROUNDING = """RULES — follow strictly:
 - Use ONLY the numbered SOURCE MATERIAL. Do not add outside knowledge.
@@ -21,17 +21,28 @@ SUMMARY_PROMPT = f"""You are creating structured study notes for a university mo
 
 {_GROUNDING}
 
+COVERAGE MANDATE: every source passage matters. Across all sections your
+blocks should cite as close to EVERY source number as possible — do not skip
+topics, slides, or sections of the material. Prefer creating more sections
+over dropping content.
+
 Organize the material into logical sections (not one per source — group by
-concept). Each section has a short title and 2-6 blocks. Each block is one
+concept). Each section has a short title and 2-8 blocks. Each block is one
 focused paragraph (or a compact definition/list rendered as text).
 
 Also extract:
-- "key_terms": the most important terminology, each with its precise
-  definition exactly as the sources define it (5-15 terms when available).
-- "acronyms": every acronym/abbreviation used in the sources with its
-  expansion (empty list if none appear).
-
+- "key_terms": EVERY term the sources define or explain, each with its
+  precise definition exactly as the sources give it. Do not limit the count.
+- "acronyms": EVERY acronym/abbreviation the sources use or expand, with its
+  meaning (empty list only if none appear).
+{{acronym_candidates}}
 Produce JSON matching the schema."""
+
+GAP_PROMPT_SUFFIX = """
+
+NOTE: these passages were NOT covered by an earlier pass over this module.
+Summarize ALL of them — every source number below must be cited by at least
+one block or key term."""
 
 _CITED = {
     "type": "array",

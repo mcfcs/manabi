@@ -58,10 +58,13 @@ const documentRoute = createRoute({
   component: DocumentViewer,
   validateSearch: (
     search: Record<string, unknown>,
-  ): { page: number; highlight?: number } => ({
+  ): { page: number; highlight?: number; citation?: number } => ({
     page: Number(search.page) >= 1 ? Number(search.page) : 1,
     ...(Number(search.highlight) >= 1
       ? { highlight: Number(search.highlight) }
+      : {}),
+    ...(Number(search.citation) >= 1
+      ? { citation: Number(search.citation) }
       : {}),
   }),
 });

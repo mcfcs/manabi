@@ -36,14 +36,29 @@ def _span_html(text: str, bold: bool, italic: bool) -> str:
     return out
 
 
+INDENT_STEP_PTS = 18  # one indent level ≈ 18pt of left offset
+MAX_INDENT = 4
+
+
 def _pdf_page_html(page) -> str | None:
-    """Styled HTML from the native text layer; None when the page is scanned."""
+    """Styled HTML from the native text layer; None when the page is scanned.
+    Preserves bold/italic and approximates indentation from span x-origins."""
     data = page.get_text("dict")
+    text_blocks = [b for b in data.get("blocks", []) if b.get("type") == 0]
+
+    # Base left margin for indent bucketing
+    x_origins = [
+        line["bbox"][0]
+        for block in text_blocks
+        for line in block.get("lines", [])
+        if line.get("spans")
+    ]
+    base_x = min(x_origins) if x_origins else 0.0
+
     parts: list[str] = []
-    for block in data.get("blocks", []):
-        if block.get("type") != 0:
-            continue
+    for block in text_blocks:
         lines: list[str] = []
+        block_x = None
         for line in block.get("lines", []):
             spans = []
             for span in line.get("spans", []):
@@ -56,11 +71,28 @@ def _pdf_page_html(page) -> str | None:
                 italic = bool(flags & ITALIC_FLAG) or "italic" in font.lower()
                 spans.append(_span_html(text, bold, italic))
             if spans:
+                if block_x is None:
+                    block_x = line["bbox"][0]
                 lines.append("".join(spans))
         if lines:
-            parts.append(f"<p>{'<br>'.join(lines)}</p>")
+            indent = 0
+            if block_x is not None:
+                indent = min(MAX_INDENT, int((block_x - base_x) / INDENT_STEP_PTS))
+            style = f' style="margin-left:{indent}em"' if indent > 0 else ""
+            parts.append(f"<p{style}>{'<br>'.join(lines)}</p>")
     joined = "".join(parts)
     return joined if joined.strip() else None
+
+
+def _figure_markers(elements: list[DocElement]) -> str:
+    """Placeholder lines so readers know visuals exist on the page."""
+    markers = []
+    for el in elements:
+        if el.element_type == "figure":
+            markers.append("<p><i>[Figure — see rendered page]</i></p>")
+        elif el.element_type == "table" and not (el.text_content or "").strip():
+            markers.append("<p><i>[Table — see rendered page]</i></p>")
+    return "".join(markers)
 
 
 def _elements_page_html(elements: list[DocElement]) -> str | None:
@@ -143,14 +175,13 @@ def build_text_html(db: Session, document_id: int) -> int:
 
         with fitz.open(files.resolve(doc.storage_path)) as pdf:
             for page in pages:
+                page_elements = elements_by_page.get(page.id, [])
                 native = None
                 if 1 <= page.page_no <= pdf.page_count:
                     native = _pdf_page_html(pdf[page.page_no - 1])
-                html_text = native or _elements_page_html(
-                    elements_by_page.get(page.id, [])
-                )
+                html_text = native or _elements_page_html(page_elements)
                 if html_text:
-                    page.text_html = html_text
+                    page.text_html = html_text + _figure_markers(page_elements)
                     updated += 1
     db.commit()
     return updated

@@ -9,7 +9,7 @@ context). Do not query the chunks table anywhere else for AI purposes.
 """
 
 import hashlib
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -27,6 +27,7 @@ class ScopedChunk:
     text: str
     token_count: int
     content_hash: str
+    element_ids: list[int] = field(default_factory=list)
 
 
 _SCOPE_FILTER = """
@@ -48,7 +49,7 @@ async def load_context_chunks(
                 f"""
                 SELECT c.id, c.module_id, c.document_id, d.filename,
                        c.page_start, c.page_end, c.heading_path, c.text,
-                       c.token_count, c.content_hash
+                       c.token_count, c.content_hash, c.element_ids
                 FROM chunks c
                 {_SCOPE_FILTER}
                 ORDER BY c.document_id, c.page_start, c.id
@@ -99,7 +100,7 @@ async def retrieve(
                 )
                 SELECT s.id, s.module_id, s.document_id, s.filename,
                        s.page_start, s.page_end, s.heading_path, s.text,
-                       s.token_count, s.content_hash
+                       s.token_count, s.content_hash, s.element_ids
                 FROM scoped s
                 LEFT JOIN v ON v.id = s.id
                 LEFT JOIN f ON f.id = s.id

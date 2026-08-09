@@ -76,6 +76,7 @@ export interface JobOut {
   status: "queued" | "running" | "succeeded" | "failed" | "cancelled";
   progress_pct: number | null;
   progress_note: string | null;
+  preview: string | null;
   result: Record<string, unknown> | null;
   error: string | null;
 }
@@ -200,6 +201,7 @@ export interface SummaryOut {
   sections: SummarySection[];
   key_terms: KeyTerm[];
   acronyms: Acronym[];
+  coverage: { cited: number; total: number } | null;
   citations: Record<string, CitationOut[]>;
 }
 

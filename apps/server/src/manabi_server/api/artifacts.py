@@ -393,6 +393,7 @@ class SummaryOut(BaseModel):
     sections: list[dict]
     key_terms: list[dict] = []
     acronyms: list[dict] = []
+    coverage: dict | None = None
     citations: dict[str, list[CitationOut]]
 
 
@@ -412,6 +413,7 @@ async def get_summary(
         sections=artifact.content.get("sections", []),
         key_terms=artifact.content.get("key_terms", []),
         acronyms=artifact.content.get("acronyms", []),
+        coverage=artifact.content.get("coverage"),
         citations=await _citations_by_ref(db, artifact.id),
     )
 

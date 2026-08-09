@@ -18,6 +18,7 @@ class JobOut(BaseModel):
     status: JobStatus
     progress_pct: int | None
     progress_note: str | None
+    preview: str | None
     result: dict | None
     error: str | None
 
@@ -30,6 +31,7 @@ def _to_out(job: Job) -> JobOut:
         status=job.status,
         progress_pct=job.progress_pct,
         progress_note=job.progress_note,
+        preview=job.preview,
         result=job.result,
         error=job.error,
     )

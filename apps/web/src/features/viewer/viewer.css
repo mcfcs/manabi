@@ -146,9 +146,10 @@
   flex: 1;
   overflow-y: auto;
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
-  gap: var(--s-3);
+  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+  gap: var(--s-2);
   padding: var(--s-4) 0;
+  align-content: start;
 }
 
 .grid-cell {
@@ -158,7 +159,11 @@
   background: #fff;
   padding: 0;
   overflow: hidden;
-  aspect-ratio: 4 / 3;
+  aspect-ratio: 4 / 3; /* fallback; real page ratio set inline */
+  align-self: start;
+}
+.grid-cell:hover {
+  border-color: var(--accent-blue);
 }
 .grid-cell img {
   width: 100%;
@@ -186,6 +191,69 @@
   padding: var(--s-2);
   font-size: 12px;
   color: var(--ink-soft);
+}
+
+/* ── Continuous scroll mode ─────────────────────────────────── */
+
+.viewer-scroll {
+  flex: 1;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-5);
+  padding: var(--s-4) 0;
+  scroll-behavior: smooth;
+}
+
+.scroll-row {
+  display: flex;
+  justify-content: center;
+  gap: var(--s-4);
+}
+
+.scroll-render {
+  position: relative;
+  max-width: min(760px, 100%);
+}
+
+.scroll-row.with-text .scroll-render {
+  flex: 1;
+  min-width: 0;
+  max-width: 560px;
+}
+
+.scroll-text {
+  flex: 1;
+  min-width: 0;
+  max-width: 60ch;
+  padding: var(--s-3) var(--s-4);
+  background: var(--surface-raised);
+  border: 1px solid var(--rule);
+  border-radius: var(--radius);
+  overflow-y: auto;
+  max-height: 80vh;
+}
+
+.scroll-page-no {
+  position: absolute;
+  bottom: 6px;
+  right: 8px;
+  font-size: 11px;
+  color: var(--ink-soft);
+  background: rgba(250, 247, 241, 0.9);
+  padding: 1px 6px;
+  border-radius: 3px;
+}
+
+@media (max-width: 900px) {
+  .scroll-row.with-text {
+    flex-direction: column;
+    align-items: center;
+  }
+  .scroll-text {
+    max-height: none;
+    width: 100%;
+  }
 }
 
 /* ── Speaker notes drawer ───────────────────────────────────── */

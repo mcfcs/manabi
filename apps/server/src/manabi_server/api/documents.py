@@ -339,7 +339,7 @@ async def chunk_regions(
 ) -> list[RegionOut]:
     """Bounding boxes of the elements a chunk was built from — used by the
     viewer to highlight the cited passage on the rendered page."""
-    from manabi_core.models import Chunk, Course, DocElement
+    from manabi_core.models import Chunk, Course
 
     chunk = (
         await db.execute(
@@ -352,11 +352,21 @@ async def chunk_regions(
     if chunk is None:
         raise HTTPException(status_code=404, detail="Chunk not found")
 
+    return await _regions_for_elements(db, list(chunk.element_ids))
+
+
+async def _regions_for_elements(
+    db: AsyncSession, element_ids: list[int]
+) -> list["RegionOut"]:
+    if not element_ids:
+        return []
+    from manabi_core.models import DocElement
+
     rows = (
         await db.execute(
             select(DocElement, DocumentPage)
             .join(DocumentPage, DocumentPage.id == DocElement.page_id)
-            .where(DocElement.id.in_(chunk.element_ids))
+            .where(DocElement.id.in_(element_ids))
         )
     ).all()
 
@@ -389,6 +399,38 @@ async def chunk_regions(
             )
         )
     return regions
+
+
+@router.get("/citations/{citation_id}/regions")
+async def citation_regions(
+    citation_id: int,
+    user: User = Depends(get_default_user),
+    db: AsyncSession = Depends(get_db),
+) -> list[RegionOut]:
+    """Precise highlight regions for one citation: the specific elements the
+    claim matched, falling back to the whole cited chunk for old citations."""
+    from manabi_core.models import Artifact, Chunk, Citation, Course
+
+    citation = (
+        await db.execute(
+            select(Citation)
+            .join(Artifact, Artifact.id == Citation.artifact_id)
+            .join(Module, Module.id == Artifact.module_id)
+            .join(Course, Course.id == Module.course_id)
+            .where(Citation.id == citation_id, Course.user_id == user.id)
+        )
+    ).scalar_one_or_none()
+    if citation is None:
+        raise HTTPException(status_code=404, detail="Citation not found")
+
+    element_ids: list[int] = list(citation.element_ids or [])
+    if not element_ids and citation.chunk_id is not None:
+        chunk = (
+            await db.execute(select(Chunk).where(Chunk.id == citation.chunk_id))
+        ).scalar_one_or_none()
+        if chunk is not None:
+            element_ids = list(chunk.element_ids)
+    return await _regions_for_elements(db, element_ids)
 
 
 class DocumentPatch(BaseModel):

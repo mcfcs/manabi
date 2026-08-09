@@ -7,6 +7,7 @@ labeled block that carries no citable index: notes can bias emphasis but can
 never be cited as a factual source.
 """
 
+import re
 from dataclasses import dataclass
 
 from manabi_core.retrieval import ScopedChunk
@@ -39,6 +40,32 @@ def build_context(chunks: list[ScopedChunk], notes_text: str | None) -> BuiltCon
             "source, never cite them:\n" + notes_text.strip()[:4000]
         )
     return BuiltContext(source_text=source_text, index_map=index_map)
+
+
+_ACRONYM_RE = re.compile(r"\b[A-Z][A-Z0-9]{1,5}s?\b")
+_COMMON_NON_ACRONYMS = {
+    "THE", "AND", "FOR", "NOT", "ARE", "BUT", "ALL", "ANY", "CAN", "ITS",
+    "THIS", "THAT", "WITH", "FROM", "NOTE", "PART", "UNIT", "PAGE", "II",
+    "III", "IV", "VI", "VII", "USA", "OK",
+}
+
+
+def scan_acronym_candidates(chunks: list[ScopedChunk], limit: int = 40) -> list[str]:
+    """Deterministic acronym candidates: uppercase tokens that either recur
+    or appear with a parenthesized expansion. Guarantees the model at least
+    CONSIDERS every acronym present in the sources."""
+    counts: dict[str, int] = {}
+    for chunk in chunks:
+        for m in _ACRONYM_RE.findall(chunk.text):
+            token = m.rstrip("s")
+            if len(token) < 2 or token in _COMMON_NON_ACRONYMS:
+                continue
+            counts[token] = counts.get(token, 0) + 1
+    candidates = sorted(
+        (t for t, n in counts.items() if n >= 2 or len(t) >= 3),
+        key=lambda t: -counts[t],
+    )
+    return candidates[:limit]
 
 
 def batch_chunks(

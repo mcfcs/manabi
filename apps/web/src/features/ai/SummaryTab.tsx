@@ -125,6 +125,15 @@ export function SummaryTab({ moduleId }: { moduleId: string }) {
       {summary.data && (
         <header className="gen-head">
           <StalenessBadge staleness={summary.data.staleness} />
+          {summary.data.coverage && (
+            <span
+              className="badge fresh"
+              title="How many source passages this summary cites"
+            >
+              cites {summary.data.coverage.cited}/{summary.data.coverage.total}{" "}
+              passages
+            </span>
+          )}
           <span className="gen-head-meta">
             generated {new Date(summary.data.generated_at).toLocaleString()} ·{" "}
             {summary.data.model_name}

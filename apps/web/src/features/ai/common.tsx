@@ -1,7 +1,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import { AlertTriangle, Loader2 } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import {
   api,
@@ -101,7 +101,7 @@ export function CitationPill({ citation }: { citation: CitationOut }) {
       params={{ documentId: String(citation.document_id) }}
       search={{
         page: citation.page_start ?? 1,
-        ...(citation.chunk_id != null ? { highlight: citation.chunk_id } : {}),
+        citation: citation.id,
       }}
       className={`citation-pill${weak ? " weak" : ""}`}
       title={
@@ -132,13 +132,32 @@ export function StalenessBadge({ staleness }: { staleness: Staleness }) {
 }
 
 export function JobProgress({ job }: { job: JobOut | undefined }) {
+  const [watching, setWatching] = useState(false);
+  const tailRef = useRef<HTMLPreElement>(null);
+
+  useEffect(() => {
+    if (watching && tailRef.current) {
+      tailRef.current.scrollTop = tailRef.current.scrollHeight;
+    }
+  }, [watching, job?.preview]);
+
   if (!job) return null;
   return (
-    <div className="job-progress">
-      <Loader2 size={16} className="spin" strokeWidth={1.5} />
-      <span>{job.progress_note ?? "Queued…"}</span>
-      {job.progress_pct != null && (
-        <span className="mono job-pct">{job.progress_pct}%</span>
+    <div className="job-progress-box">
+      <div className="job-progress">
+        <Loader2 size={16} className="spin" strokeWidth={1.5} />
+        <span>{job.progress_note ?? "Queued…"}</span>
+        {job.progress_pct != null && (
+          <span className="mono job-pct">{job.progress_pct}%</span>
+        )}
+        <button className="link-btn watch-toggle" onClick={() => setWatching((v) => !v)}>
+          {watching ? "hide generation" : "watch generation"}
+        </button>
+      </div>
+      {watching && (
+        <pre ref={tailRef} className="job-preview">
+          {job.preview ?? "…waiting for the model to start writing…"}
+        </pre>
       )}
     </div>
   );

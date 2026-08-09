@@ -13,6 +13,7 @@ from manabi_core.models import (
     Artifact,
     ArtifactType,
     Citation,
+    DocElement,
     Flashcard,
     Job,
     JobStatus,
@@ -27,10 +28,15 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from manabi_ai import prompts
 from manabi_ai.app import app
 from manabi_ai.config import get_settings
-from manabi_ai.context import batch_chunks, build_context
+from manabi_ai.context import batch_chunks, build_context, scan_acronym_candidates
 from manabi_ai.db import session_factory
 from manabi_ai.ollama_client import GenerationError, generate_structured
-from manabi_ai.validators import ResolvedItem, dedup_questions, resolve_items
+from manabi_ai.validators import (
+    ResolvedItem,
+    dedup_questions,
+    match_element_ids,
+    resolve_items,
+)
 
 log = logging.getLogger("manabi_ai")
 
@@ -53,22 +59,59 @@ async def _load_notes_text(db: AsyncSession, module_ids: list[int]) -> str | Non
     return text or None
 
 
-def _citation_rows(
-    artifact_id: int, item_ref: str, chunks: list[ScopedChunk], excerpt: str
-) -> list[Citation]:
-    return [
-        Citation(
-            artifact_id=artifact_id,
-            item_ref=item_ref,
-            chunk_id=c.id,
-            document_id=c.document_id,
-            document_title=c.document_title,
-            page_start=c.page_start,
-            page_end=c.page_end,
-            quote_excerpt=excerpt[:400],
+async def _elements_for_chunks(
+    db: AsyncSession, chunks: list[ScopedChunk]
+) -> dict[int, list[tuple[int, str]]]:
+    """chunk_id → [(element_id, text)] for precise per-claim highlighting."""
+    all_ids = {eid for c in chunks for eid in c.element_ids}
+    if not all_ids:
+        return {}
+    rows = (
+        await db.execute(
+            select(DocElement.id, DocElement.text_content).where(DocElement.id.in_(all_ids))
         )
-        for c in chunks
-    ]
+    ).all()
+    text_by_id = {i: (t or "") for i, t in rows}
+    return {
+        c.id: [(eid, text_by_id.get(eid, "")) for eid in c.element_ids] for c in chunks
+    }
+
+
+def _citation_rows(
+    artifact_id: int,
+    item_ref: str,
+    chunks: list[ScopedChunk],
+    excerpt: str,
+    elements_by_chunk: dict[int, list[tuple[int, str]]] | None = None,
+) -> list[Citation]:
+    rows = []
+    for c in chunks:
+        element_ids = None
+        if elements_by_chunk and c.id in elements_by_chunk:
+            matched = match_element_ids(excerpt, elements_by_chunk[c.id])
+            element_ids = matched or None
+        rows.append(
+            Citation(
+                artifact_id=artifact_id,
+                item_ref=item_ref,
+                chunk_id=c.id,
+                element_ids=element_ids,
+                document_id=c.document_id,
+                document_title=c.document_title,
+                page_start=c.page_start,
+                page_end=c.page_end,
+                quote_excerpt=excerpt[:400],
+            )
+        )
+    return rows
+
+
+def _preview_writer(db: AsyncSession, job: Job):
+    async def write(text: str) -> None:
+        job.preview = text[-6000:]
+        await db.commit()
+
+    return write
 
 
 async def _finish(db: AsyncSession, job: Job, artifact_id: int, dropped: int) -> None:
@@ -76,6 +119,7 @@ async def _finish(db: AsyncSession, job: Job, artifact_id: int, dropped: int) ->
     job.progress_pct = 100
     job.progress_note = "Done" + (f" ({dropped} unsupported items dropped)" if dropped else "")
     job.result = {"artifact_id": artifact_id, "dropped": dropped}
+    job.preview = None
     job.finished_at = datetime.now(UTC)
     await db.commit()
     # support scoring runs on the cpu queue (needs the app server's embed model)
@@ -87,6 +131,7 @@ async def _finish(db: AsyncSession, job: Job, artifact_id: int, dropped: int) ->
 async def _fail(db: AsyncSession, job: Job, exc: Exception) -> None:
     job.status = JobStatus.failed
     job.error = f"{type(exc).__name__}: {str(exc)[:400]}"
+    job.preview = None
     job.finished_at = datetime.now(UTC)
     await db.commit()
 
@@ -101,11 +146,15 @@ async def _start(db: AsyncSession, job_id: int) -> Job:
     return job
 
 
+COVERAGE_TARGET = 0.9
+
+
 @app.task(name="manabi_ai.tasks.generate_summary", queue="gpu", retry=1)
 async def generate_summary(job_id: int, module_id: int) -> None:
     settings = get_settings()
     async with session_factory()() as db:
         job = await _start(db, job_id)
+        preview = _preview_writer(db, job)
         try:
             chunks = await load_context_chunks(db, [module_id])
             notes = await _load_notes_text(db, [module_id])
@@ -113,22 +162,25 @@ async def generate_summary(job_id: int, module_id: int) -> None:
                 await db.execute(select(Module).where(Module.id == module_id))
             ).scalar_one()
 
+            candidates = scan_acronym_candidates(chunks)
+            candidate_note = (
+                "\nAcronym candidates found in the sources — define each one "
+                f"the sources explain: {', '.join(candidates)}\n"
+                if candidates
+                else ""
+            )
+            base_prompt = prompts.SUMMARY_PROMPT.replace(
+                "{acronym_candidates}", candidate_note
+            )
+
             sections: list[dict] = []
             key_terms: list[dict] = []
             acronyms: list[dict] = []
             all_citations: list[tuple[str, list[ScopedChunk], str]] = []
             dropped = 0
-            batches = batch_chunks(chunks)
-            for bi, batch in enumerate(batches):
-                await _progress(
-                    db, job, 15 + int(60 * bi / len(batches)),
-                    f"Generating with {settings.generation_model}"
-                    + (f" ({bi + 1}/{len(batches)})" if len(batches) > 1 else ""),
-                )
-                ctx = build_context(batch, notes if bi == 0 else None)
-                result = await generate_structured(
-                    prompts.SUMMARY_PROMPT, ctx.source_text, prompts.SUMMARY_SCHEMA
-                )
+
+            def absorb(result: dict, ctx) -> None:
+                nonlocal dropped
                 for section in result.get("sections", []):
                     kept, d = resolve_items(
                         section.get("blocks", []), ctx.index_map, {module_id}
@@ -154,6 +206,11 @@ async def generate_summary(job_id: int, module_id: int) -> None:
                 )
                 dropped += d
                 for resolved in kept_terms:
+                    if any(
+                        t["term"].lower() == resolved.item["term"].lower()
+                        for t in key_terms
+                    ):
+                        continue
                     ref = f"kt:{len(key_terms)}"
                     key_terms.append(
                         {
@@ -184,7 +241,40 @@ async def generate_summary(job_id: int, module_id: int) -> None:
                     excerpt = f"{resolved.item['acronym']} means {resolved.item['meaning']}"
                     all_citations.append((ref, resolved.chunks, excerpt))
 
-            await _progress(db, job, 85, "Validating citations")
+            batches = batch_chunks(chunks)
+            for bi, batch in enumerate(batches):
+                await _progress(
+                    db, job, 15 + int(50 * bi / len(batches)),
+                    f"Generating with {settings.generation_model}"
+                    + (f" ({bi + 1}/{len(batches)})" if len(batches) > 1 else ""),
+                )
+                ctx = build_context(batch, notes if bi == 0 else None)
+                result = await generate_structured(
+                    base_prompt, ctx.source_text, prompts.SUMMARY_SCHEMA, preview
+                )
+                absorb(result, ctx)
+
+            # Gap pass: one extra call over passages the first pass skipped
+            cited_ids = {c.id for _, cited, _ in all_citations for c in cited}
+            uncited = [c for c in chunks if c.id not in cited_ids]
+            if chunks and len(cited_ids) / len(chunks) < COVERAGE_TARGET and uncited:
+                await _progress(
+                    db, job, 72, f"Covering {len(uncited)} missed passages"
+                )
+                ctx = build_context(uncited, None)
+                result = await generate_structured(
+                    base_prompt + prompts.GAP_PROMPT_SUFFIX,
+                    ctx.source_text,
+                    prompts.SUMMARY_SCHEMA,
+                    preview,
+                )
+                absorb(result, ctx)
+                cited_ids = {c.id for _, cited, _ in all_citations for c in cited}
+
+            await _progress(db, job, 88, "Validating citations")
+            elements_by_chunk = await _elements_for_chunks(
+                db, [c for _, cited, _ in all_citations for c in cited]
+            )
             artifact = Artifact(
                 module_id=module_id,
                 artifact_type=ArtifactType.summary,
@@ -194,6 +284,7 @@ async def generate_summary(job_id: int, module_id: int) -> None:
                     "sections": sections,
                     "key_terms": key_terms,
                     "acronyms": acronyms,
+                    "coverage": {"cited": len(cited_ids), "total": len(chunks)},
                 },
                 model_name=settings.generation_model,
                 prompt_version=prompts.PROMPT_VERSION,
@@ -205,7 +296,9 @@ async def generate_summary(job_id: int, module_id: int) -> None:
             db.add(artifact)
             await db.flush()
             for ref, cited, excerpt in all_citations:
-                for row in _citation_rows(artifact.id, ref, cited, excerpt):
+                for row in _citation_rows(
+                    artifact.id, ref, cited, excerpt, elements_by_chunk
+                ):
                     db.add(row)
             await _finish(db, job, artifact.id, dropped)
         except (GenerationError, Exception) as exc:  # noqa: BLE001
@@ -220,6 +313,7 @@ async def generate_flashcards(job_id: int, module_id: int, count: int = 12) -> N
     settings = get_settings()
     async with session_factory()() as db:
         job = await _start(db, job_id)
+        preview = _preview_writer(db, job)
         try:
             chunks = await load_context_chunks(db, [module_id])
             notes = await _load_notes_text(db, [module_id])
@@ -245,6 +339,7 @@ async def generate_flashcards(job_id: int, module_id: int, count: int = 12) -> N
                     prompts.FLASHCARDS_PROMPT.replace("{count}", str(n)),
                     ctx.source_text,
                     prompts.FLASHCARDS_SCHEMA,
+                    preview,
                 )
                 kept, d = resolve_items(result.get("cards", []), ctx.index_map, {module_id})
                 dropped += d
@@ -293,6 +388,9 @@ async def generate_flashcards(job_id: int, module_id: int, count: int = 12) -> N
             )
             db.add(artifact)
             await db.flush()
+            elements_by_chunk = await _elements_for_chunks(
+                db, [c for r in resolved_cards[:count] for c in r.chunks]
+            )
             ord_ = 0
             for resolved in resolved_cards[:count]:
                 db.add(
@@ -304,7 +402,9 @@ async def generate_flashcards(job_id: int, module_id: int, count: int = 12) -> N
                     )
                 )
                 excerpt = f"{resolved.item['front']} {resolved.item['back']}"
-                for row in _citation_rows(artifact.id, f"card:{ord_}", resolved.chunks, excerpt):
+                for row in _citation_rows(
+                    artifact.id, f"card:{ord_}", resolved.chunks, excerpt, elements_by_chunk
+                ):
                     db.add(row)
                 ord_ += 1
             for old in carried:
@@ -353,6 +453,7 @@ async def generate_quiz(
     settings = get_settings()
     async with session_factory()() as db:
         job = await _start(db, job_id)
+        preview = _preview_writer(db, job)
         try:
             scope = {int(m) for m in module_ids}
             notes = await _load_notes_text(db, list(scope))
@@ -381,6 +482,7 @@ async def generate_quiz(
                         ),
                         ctx.source_text,
                         prompts.QUIZ_SCHEMA,
+                        preview,
                     )
                     kept, d = resolve_items(
                         result.get("questions", []), ctx.index_map, scope
@@ -426,6 +528,9 @@ async def generate_quiz(
             )
             db.add(artifact)
             await db.flush()
+            elements_by_chunk = await _elements_for_chunks(
+                db, [c for r in final for c in r.chunks]
+            )
             for ord_, resolved in enumerate(final):
                 item = resolved.item
                 db.add(
@@ -440,7 +545,9 @@ async def generate_quiz(
                     )
                 )
                 excerpt = f"{item['prompt']} {item.get('explanation', '')}"
-                for row in _citation_rows(artifact.id, f"q:{ord_}", resolved.chunks, excerpt):
+                for row in _citation_rows(
+                    artifact.id, f"q:{ord_}", resolved.chunks, excerpt, elements_by_chunk
+                ):
                     db.add(row)
             await _finish(db, job, artifact.id, dropped)
         except (GenerationError, Exception) as exc:  # noqa: BLE001

@@ -4,7 +4,12 @@ from pathlib import Path
 from manabi_core.retrieval import ScopedChunk, source_fingerprint
 
 sys.path.insert(0, str(Path(__file__).parents[2] / "ai-worker" / "src"))
-from manabi_ai.validators import dedup_questions, resolve_items  # noqa: E402
+from manabi_ai.context import scan_acronym_candidates  # noqa: E402
+from manabi_ai.validators import (  # noqa: E402
+    dedup_questions,
+    match_element_ids,
+    resolve_items,
+)
 
 
 def _chunk(id: int, module_id: int = 1) -> ScopedChunk:
@@ -56,6 +61,40 @@ def test_dedup_questions_drops_near_duplicates():
     )
     deduped = dedup_questions(items)
     assert len(deduped) == 2
+
+
+def test_acronym_scanner_finds_candidates():
+    chunks = [
+        _chunk(1),
+        ScopedChunk(
+            id=2, module_id=1, document_id=1, document_title="d", page_start=27,
+            page_end=27, heading_path=None, token_count=30, content_hash="h2",
+            text="CAD (Computer-Aided Design) tools are used with LAN networks. "
+                 "CAD systems and LAN topologies appear throughout. The USA is skipped.",
+        ),
+    ]
+    candidates = scan_acronym_candidates(chunks)
+    assert "CAD" in candidates
+    assert "LAN" in candidates
+    assert "USA" not in candidates  # common non-acronym list
+    assert "THE" not in candidates
+
+
+def test_match_element_ids_picks_supporting_element():
+    elements = [
+        (101, "A local area network (LAN) connects computers in one building."),
+        (102, "Wide area networks span countries and continents."),
+        (103, "Fiber optics carry light signals over long distances."),
+    ]
+    claim = "A LAN is a local area network connecting computers within a building."
+    picked = match_element_ids(claim, elements)
+    assert picked == [101]
+
+
+def test_match_element_ids_always_returns_best_when_weak():
+    elements = [(1, "completely unrelated words here"), (2, "network of computers")]
+    picked = match_element_ids("computers connected in a network", elements)
+    assert picked == [2]
 
 
 def test_source_fingerprint_orders_and_detects_change():

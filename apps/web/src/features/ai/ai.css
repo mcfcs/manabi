@@ -42,14 +42,38 @@
   background: var(--stale-wash);
 }
 
+.job-progress-box {
+  border: 1px dashed var(--rule);
+  border-radius: var(--radius);
+}
+
 .job-progress {
   display: flex;
   align-items: center;
   gap: var(--s-2);
   padding: var(--s-4);
-  border: 1px dashed var(--rule);
-  border-radius: var(--radius);
   color: var(--ink-soft);
+}
+
+.watch-toggle {
+  margin-left: auto;
+  font-size: 12px;
+}
+
+.job-preview {
+  margin: 0;
+  max-height: 240px;
+  overflow-y: auto;
+  padding: var(--s-3) var(--s-4);
+  border-top: 1px dashed var(--rule);
+  background: var(--ink);
+  color: var(--paper);
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  line-height: 1.55;
+  white-space: pre-wrap;
+  word-break: break-word;
+  border-radius: 0 0 var(--radius) var(--radius);
 }
 .job-pct {
   color: var(--ink-faint);

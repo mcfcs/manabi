@@ -47,6 +47,36 @@ def resolve_items(
     return kept, dropped
 
 
+def match_element_ids(
+    claim_text: str,
+    elements: list[tuple[int, str]],
+    threshold: float = 0.15,
+) -> list[int]:
+    """Pick the elements within a cited chunk that actually support the claim
+    (precise highlight targets). elements: (element_id, text). Token-overlap
+    scoring; always returns at least the best match when any text exists."""
+    import re
+
+    def tokens(text: str) -> set[str]:
+        return {w for w in re.findall(r"[a-z0-9]+", text.lower()) if len(w) > 2}
+
+    claim = tokens(claim_text)
+    if not claim:
+        return []
+    scored: list[tuple[float, int]] = []
+    for el_id, el_text in elements:
+        el_tokens = tokens(el_text)
+        if not el_tokens:
+            continue
+        overlap = len(claim & el_tokens) / len(claim)
+        scored.append((overlap, el_id))
+    if not scored:
+        return []
+    scored.sort(reverse=True)
+    picked = [el_id for score, el_id in scored if score >= threshold]
+    return picked or [scored[0][1]]
+
+
 def dedup_questions(items: list[ResolvedItem], threshold: float = 0.8) -> list[ResolvedItem]:
     """Drop near-duplicate question stems (difflib ratio)."""
     from difflib import SequenceMatcher

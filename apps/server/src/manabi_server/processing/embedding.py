@@ -24,7 +24,11 @@ def embed_texts(texts: list[str], *, is_query: bool = False) -> list[list[float]
             batch = inputs[start : start + BATCH_SIZE]
             r = client.post(
                 f"{settings.embedding_ollama_url}/api/embed",
-                json={"model": settings.embedding_model, "input": batch},
+                json={
+                    "model": settings.embedding_model,
+                    "input": batch,
+                    "keep_alive": "10m",
+                },
             )
             r.raise_for_status()
             vectors.extend(r.json()["embeddings"])
