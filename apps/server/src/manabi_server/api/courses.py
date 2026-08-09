@@ -18,6 +18,7 @@ class CourseIn(BaseModel):
     instructor: str | None = None
     term: str | None = None
     accent_color: str | None = None
+    meeting_url: str | None = None
 
 
 class CoursePatch(BaseModel):
@@ -27,6 +28,7 @@ class CoursePatch(BaseModel):
     instructor: str | None = None
     term: str | None = None
     accent_color: str | None = None
+    meeting_url: str | None = None
 
 
 class CourseOut(BaseModel):
@@ -42,6 +44,7 @@ class CourseOut(BaseModel):
     document_count: int = 0
     card_count: int = 0
     canvas_url: str | None = None
+    meeting_url: str | None = None
 
 
 class ReorderIn(BaseModel):
@@ -71,6 +74,7 @@ def _course_out(
         document_count=document_count,
         card_count=card_count,
         canvas_url=canvas_course_url(course.canvas_course_id),
+        meeting_url=course.meeting_url,
     )
 
 

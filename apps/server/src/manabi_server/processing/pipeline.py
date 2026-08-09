@@ -65,12 +65,22 @@ def run_pipeline(db: Session, document_id: int, job_id: int | None) -> None:
 
     done = STAGES.index(doc.extract_stage) + 1 if doc.extract_stage in STAGES else 0
     try:
-        if done < 1:
+        if doc.processing_mode == "render_only":
+            # Store + view only (e.g. syllabus): render pages, skip parse,
+            # text extraction, chunking, and embeddings entirely.
+            _progress(db, job, 20, "Rendering pages")
+            db.execute(delete(Chunk).where(Chunk.document_id == doc.id))
+            db.execute(delete(DocElement).where(DocElement.document_id == doc.id))
+            db.commit()
+            _stage_render(db, doc, job)
+            doc.extract_stage = "embed"  # terminal — nothing left to resume
+            db.commit()
+        if doc.processing_mode != "render_only" and done < 1:
             _progress(db, job, 10, "Parsing document")
             _stage_structure(db, doc)
             doc.extract_stage = "structure"
             db.commit()
-        if done < 2:
+        if doc.processing_mode != "render_only" and done < 2:
             _progress(db, job, 45, "Rendering pages")
             _stage_render(db, doc, job)
             from manabi_server.processing.text_html import build_text_html
@@ -78,12 +88,12 @@ def run_pipeline(db: Session, document_id: int, job_id: int | None) -> None:
             build_text_html(db, doc.id)
             doc.extract_stage = "render"
             db.commit()
-        if done < 3:
+        if doc.processing_mode != "render_only" and done < 3:
             _progress(db, job, 80, "Creating chunks")
             _stage_chunk(db, doc)
             doc.extract_stage = "chunk"
             db.commit()
-        if done < 4:
+        if doc.processing_mode != "render_only" and done < 4:
             _progress(db, job, 92, "Indexing for retrieval")
             from manabi_server.processing.embedding import embed_missing_chunks_sync
 

@@ -23,6 +23,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from manabi_server.api.settings import get_app_settings
+from manabi_server.config import get_settings
 from manabi_server.db import get_db
 from manabi_server.security import get_default_user, require_csrf
 from manabi_server.services.gcal import fetch_gcal
@@ -33,12 +34,13 @@ router = APIRouter(prefix="/api/calendar", tags=["calendar"])
 
 class MeetingOut(BaseModel):
     date: Date
-    course_id: int
+    course_id: int | None
     code: str
     accent_color: str | None
     start_minute: int
     end_minute: int
     location: str | None
+    meeting_url: str | None
 
 
 class EventOut(BaseModel):
@@ -56,6 +58,7 @@ class EventOut(BaseModel):
 class GcalOut(BaseModel):
     date: Date
     title: str
+    calendar: str | None
     start_minute: int | None
     end_minute: int | None
     location: str | None
@@ -69,7 +72,7 @@ class MarkOut(BaseModel):
 
 
 class MonthOut(BaseModel):
-    ym: str
+    ym: str | None
     semester_start: Date
     semester_end: Date
     meetings: list[MeetingOut]
@@ -132,13 +135,9 @@ def _event_out(ev: CalendarEvent, occurrence: Date | None = None) -> EventOut:
     )
 
 
-@router.get("/month")
-async def month_view(
-    ym: str = Query(...),
-    user: User = Depends(get_default_user),
-    db: AsyncSession = Depends(get_db),
+async def _range_data(
+    db: AsyncSession, user: User, first: Date, last: Date, ym: str | None = None
 ) -> MonthOut:
-    first, last = _parse_ym(ym)
     app = await get_app_settings(db)
 
     courses = {
@@ -152,34 +151,30 @@ async def month_view(
         ).scalars()
     }
     blocks = (
-        (
-            await db.execute(
-                select(ScheduleBlock).where(ScheduleBlock.course_id.in_(courses.keys()))
-            )
-        )
-        .scalars()
-        .all()
+        (await db.execute(select(ScheduleBlock))).scalars().all()
     )
 
-    # Classes: expand blocks over the month ∩ semester
+    # Classes + labeled entries: expand timed blocks over the range ∩ semester
     meetings: list[MeetingOut] = []
     day = max(first, app.semester_start)
     stop = min(last, app.semester_end)
     while day <= stop:
         for b in blocks:
-            if b.day_of_week == day.weekday():
-                c = courses[b.course_id]
-                meetings.append(
-                    MeetingOut(
-                        date=day,
-                        course_id=c.id,
-                        code=c.code,
-                        accent_color=c.accent_color,
-                        start_minute=b.start_minute,
-                        end_minute=b.end_minute,
-                        location=b.location,
-                    )
+            if b.day_of_week != day.weekday() or b.start_minute is None:
+                continue
+            c = courses.get(b.course_id) if b.course_id else None
+            meetings.append(
+                MeetingOut(
+                    date=day,
+                    course_id=c.id if c else None,
+                    code=c.code if c else (b.label or "—"),
+                    accent_color=(c.accent_color if c else None) or b.color,
+                    start_minute=b.start_minute,
+                    end_minute=b.end_minute,
+                    location=b.location,
+                    meeting_url=c.meeting_url if c else None,
                 )
+            )
         day += timedelta(days=1)
 
     # Custom events: singles in month + weekly repeats intersecting it
@@ -236,6 +231,7 @@ async def month_view(
             GcalOut(
                 date=g.date,
                 title=g.title,
+                calendar=g.calendar,
                 start_minute=g.start_minute,
                 end_minute=g.end_minute,
                 location=g.location,
@@ -246,8 +242,30 @@ async def month_view(
             MarkOut(date=m.date, course_id=m.course_id, mode=m.mode, note=m.note)
             for m in marks
         ],
-        gcal_configured=bool(app.gcal_ics_url),
+        gcal_configured=bool(app.gcal_ics_url) or bool(get_settings().gcal_ics_urls),
     )
+
+
+@router.get("/month")
+async def month_view(
+    ym: str = Query(...),
+    user: User = Depends(get_default_user),
+    db: AsyncSession = Depends(get_db),
+) -> MonthOut:
+    first, last = _parse_ym(ym)
+    return await _range_data(db, user, first, last, ym=ym)
+
+
+@router.get("/range")
+async def range_view(
+    start: Date = Query(...),
+    end: Date = Query(...),
+    user: User = Depends(get_default_user),
+    db: AsyncSession = Depends(get_db),
+) -> MonthOut:
+    if end < start or (end - start).days > 62:
+        raise HTTPException(status_code=422, detail="range must be 0-62 days")
+    return await _range_data(db, user, start, end)
 
 
 @router.post("/events", dependencies=[Depends(require_csrf)])

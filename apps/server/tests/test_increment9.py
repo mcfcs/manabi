@@ -65,7 +65,7 @@ class TestGcalOccurrenceRows:
         # 06:00 UTC = 14:00 Manila
         ev.add("dtstart", datetime(2026, 9, 1, 6, 0, tzinfo=UTC))
         ev.add("dtend", datetime(2026, 9, 1, 7, 0, tzinfo=UTC))
-        rows = _occurrence_rows(ev, "uid1")
+        rows = _occurrence_rows(ev, "uid1", "Personal")
         assert len(rows) == 1
         assert rows[0]["date"] == date(2026, 9, 1)
         assert rows[0]["start_minute"] == 14 * 60
@@ -78,7 +78,7 @@ class TestGcalOccurrenceRows:
         ev.add("summary", "Org fair")
         ev.add("dtstart", date(2026, 9, 3))
         ev.add("dtend", date(2026, 9, 5))  # exclusive → Sep 3 + Sep 4 only
-        rows = _occurrence_rows(ev, "uid2")
+        rows = _occurrence_rows(ev, "uid2", None)
         assert [r["date"] for r in rows] == [date(2026, 9, 3), date(2026, 9, 4)]
         assert all(r["start_minute"] is None for r in rows)
 
@@ -88,7 +88,7 @@ class TestGcalOccurrenceRows:
         ev = icalendar.Event()
         ev.add("summary", "Floating")
         ev.add("dtstart", datetime(2026, 9, 2, 9, 30))
-        rows = _occurrence_rows(ev, "uid3")
+        rows = _occurrence_rows(ev, "uid3", None)
         assert rows[0]["start_minute"] == 9 * 60 + 30
 
 

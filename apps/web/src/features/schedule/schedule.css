@@ -1,7 +1,7 @@
 .schedule-page {
   display: flex;
   flex-direction: column;
-  gap: var(--s-4);
+  gap: var(--s-5);
 }
 
 .schedule-head {
@@ -18,6 +18,36 @@
   font-size: 13px;
   color: var(--ink-faint);
 }
+.schedule-edit {
+  margin-left: auto;
+}
+.schedule-edit.on {
+  border-color: var(--accent-blue);
+  color: var(--accent-blue);
+}
+
+.schedule-group {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-3);
+}
+.schedule-group-head {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+}
+.schedule-group-head h2 {
+  font-family: var(--font-display);
+  font-size: 18px;
+  margin: 0;
+  flex: 1;
+}
+
+.schedule-add-row {
+  display: flex;
+  gap: var(--s-2);
+  max-width: 380px;
+}
 
 /* ── Time grid (desktop) ───────────────────────────────────── */
 
@@ -25,7 +55,7 @@
   display: grid;
   grid-template-columns: 52px repeat(5, 1fr);
   gap: 0 var(--s-1);
-  min-height: 640px;
+  min-height: 780px;
 }
 
 .timegrid-gutter {
@@ -74,14 +104,13 @@
   position: absolute;
   left: 3px;
   right: 3px;
-  border: none;
   border-left: 3px solid;
   border-radius: var(--radius-sm);
-  padding: var(--s-1) var(--s-2);
+  padding: 3px var(--s-2);
   display: flex;
   flex-direction: column;
-  align-items: flex-start;
-  gap: 1px;
+  align-items: stretch;
+  gap: 0;
   text-align: left;
   overflow: hidden;
   cursor: pointer;
@@ -90,18 +119,49 @@
 .sched-block:hover {
   filter: brightness(0.97);
 }
+.sched-block-line1 {
+  display: flex;
+  align-items: center;
+  gap: var(--s-1);
+  min-width: 0;
+}
 .sched-block-code {
   font-weight: 700;
   font-size: 12.5px;
-  line-height: 1.2;
+  line-height: 1.25;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 .sched-block-time {
-  font-size: 11px;
+  font-size: 10.5px;
+  line-height: 1.3;
   color: var(--ink-soft);
+  white-space: nowrap;
 }
-.sched-block-room {
-  font-size: 11px;
+.sched-block-room,
+.sched-block-prof {
+  font-size: 10.5px;
+  line-height: 1.3;
   color: var(--ink-faint);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+/* 1-hour blocks: one line only so nothing bleeds into the next slot */
+.sched-block.compact {
+  justify-content: center;
+}
+.sched-block-meet {
+  color: var(--accent-blue);
+  display: inline-flex;
+  flex-shrink: 0;
+}
+.sched-block-delete {
+  position: absolute;
+  top: 2px;
+  right: 2px;
+  background: var(--surface-raised);
 }
 
 /* ── Mobile stacked list ───────────────────────────────────── */
@@ -119,7 +179,7 @@
     flex-direction: column;
     gap: var(--s-4);
   }
-  .schedule-list-day h2 {
+  .schedule-list-day h3 {
     font-size: 13px;
     text-transform: uppercase;
     letter-spacing: 0.06em;
@@ -131,16 +191,17 @@
     width: 100%;
     margin-bottom: var(--s-2);
   }
+  .schedule-list .sched-block.compact {
+    justify-content: flex-start;
+  }
 }
 
-/* ── TBA aside ─────────────────────────────────────────────── */
+/* ── TBA cards ─────────────────────────────────────────────── */
 
-.schedule-tba h2 {
-  font-size: 13px;
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
-  color: var(--ink-soft);
-  margin: 0 0 var(--s-2);
+.schedule-tba {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--s-2);
 }
 .tba-card {
   display: flex;
@@ -150,6 +211,7 @@
   background: var(--surface-raised);
   border: 1px solid var(--rule);
   border-radius: var(--radius-sm);
+  min-width: 300px;
   max-width: 460px;
 }
 .tba-dot {
@@ -177,4 +239,27 @@
 .tba-meta {
   font-size: 12px;
   color: var(--ink-faint);
+}
+
+/* ── Entry dialog day picker ───────────────────────────────── */
+
+.entry-days {
+  display: flex;
+  gap: var(--s-1);
+}
+.entry-day {
+  flex: 1;
+  border: 1px solid var(--rule);
+  background: none;
+  border-radius: var(--radius-sm);
+  padding: var(--s-2) 0;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--ink-soft);
+  cursor: pointer;
+}
+.entry-day.on {
+  border-color: var(--accent-blue);
+  color: var(--accent-blue);
+  background: var(--accent-blue-wash, rgba(40, 81, 143, 0.1));
 }

@@ -160,3 +160,50 @@
     height: 40px;
   }
 }
+
+/* ── Canvas file manager ───────────────────────────────────── */
+
+.course-canvas-files {
+  min-height: 32px;
+  font-size: 12.5px;
+}
+
+.canvas-mgr-list {
+  display: flex;
+  flex-direction: column;
+  max-height: 340px;
+  overflow-y: auto;
+  border: 1px solid var(--rule);
+  border-radius: var(--radius-sm);
+}
+.canvas-mgr-row {
+  display: grid;
+  grid-template-columns: 1fr 150px 52px 32px;
+  align-items: center;
+  gap: var(--s-2);
+  padding: var(--s-2);
+  border-bottom: 1px solid var(--rule);
+}
+.canvas-mgr-row:last-child {
+  border-bottom: none;
+}
+.canvas-mgr-headrow {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--ink-faint);
+  position: sticky;
+  top: 0;
+  background: var(--surface-raised);
+}
+.canvas-mgr-name {
+  font-size: 12.5px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.canvas-mgr-dest {
+  min-height: 32px;
+  font-size: 12.5px;
+  padding: 0 var(--s-2);
+}

@@ -1,5 +1,5 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { Plus, X } from "lucide-react";
+import { Plus, Video, X } from "lucide-react";
 
 import {
   api,
@@ -22,14 +22,12 @@ export function DayPanel({
   onClose,
   onAddEvent,
   onEditEvent,
-  ym,
 }: {
   date: string;
   data: DayData;
   onClose: () => void;
   onAddEvent: () => void;
   onEditEvent: (e: CalendarEventOut) => void;
-  ym: string;
 }) {
   const queryClient = useQueryClient();
   const putMark = useMutation({
@@ -38,7 +36,7 @@ export function DayPanel({
       course_id: number | null;
       mode: string | null;
     }) => api.put("/api/calendar/marks", body),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["calendar", ym] }),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["calendar"] }),
   });
 
   const wholeDay = data.marks.find((m) => m.course_id === null);
@@ -87,7 +85,7 @@ export function DayPanel({
         <section>
           <h3>Classes</h3>
           {data.meetings.map((m, i) => {
-            const mark = markFor(m.course_id);
+            const mark = m.course_id == null ? undefined : markFor(m.course_id);
             return (
               <div key={i} className="day-row">
                 <span
@@ -102,19 +100,31 @@ export function DayPanel({
                     {m.location ? ` · ${m.location}` : ""}
                   </span>
                 </span>
-                <button
-                  className={`mark-toggle small${mark ? ` ${mark.mode}` : ""}`}
-                  onClick={() =>
-                    putMark.mutate({
-                      date,
-                      course_id: m.course_id,
-                      mode: cycleMode(mark?.mode),
-                    })
-                  }
-                  title="Cycle: none → async → sync"
-                >
-                  {mark?.mode ?? "sync?"}
-                </button>
+                {mark?.mode === "sync" && m.meeting_url && (
+                  <a
+                    className="btn day-join"
+                    href={m.meeting_url}
+                    target="_blank"
+                    rel="noreferrer"
+                  >
+                    <Video size={13} strokeWidth={1.75} /> Join
+                  </a>
+                )}
+                {m.course_id != null && (
+                  <button
+                    className={`mark-toggle small${mark ? ` ${mark.mode}` : ""}`}
+                    onClick={() =>
+                      putMark.mutate({
+                        date,
+                        course_id: m.course_id,
+                        mode: cycleMode(mark?.mode),
+                      })
+                    }
+                    title="Cycle: onsite → async → sync (online)"
+                  >
+                    {mark?.mode ?? "onsite"}
+                  </button>
+                )}
               </div>
             );
           })}

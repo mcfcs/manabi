@@ -7,7 +7,7 @@ of seeded courses. Run with:
     uv run --package manabi-server python -m manabi_server.seed_schedule
 """
 
-from manabi_core.models import Course, ScheduleBlock, User
+from manabi_core.models import Course, Schedule, ScheduleBlock, User
 from sqlalchemy import create_engine, delete, func, select
 from sqlalchemy.orm import Session
 
@@ -45,6 +45,28 @@ def main() -> None:
         user = db.execute(select(User).order_by(User.id)).scalars().first()
         if user is None:
             raise SystemExit("no user row — start the app once first")
+
+        class_sched = db.execute(
+            select(Schedule).where(Schedule.title == "Class schedule")
+        ).scalars().first()
+        if class_sched is None:
+            class_sched = Schedule(title="Class schedule", position=0)
+            db.add(class_sched)
+            db.flush()
+
+        internship = db.execute(
+            select(Schedule).where(Schedule.title == "Internship")
+        ).scalars().first()
+        if internship is None:
+            internship = Schedule(title="Internship", position=1)
+            db.add(internship)
+            db.flush()
+            db.add(
+                ScheduleBlock(
+                    schedule_id=internship.id, label="Internship", color="#2E7D8F"
+                )
+            )
+            print("created  Internship schedule (TBA)")
 
         courses = db.execute(select(Course)).scalars().all()
         used_colors = {c.accent_color for c in courses if c.accent_color}
@@ -84,9 +106,12 @@ def main() -> None:
             seeded_ids.append(course.id)
 
             db.execute(delete(ScheduleBlock).where(ScheduleBlock.course_id == course.id))
+            if not blocks:  # TBA course (thesis) — still shows on the schedule
+                db.add(ScheduleBlock(schedule_id=class_sched.id, course_id=course.id))
             for dow, start, end, room in blocks:
                 db.add(
                     ScheduleBlock(
+                        schedule_id=class_sched.id,
                         course_id=course.id,
                         day_of_week=dow,
                         start_minute=start,

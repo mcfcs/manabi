@@ -104,7 +104,10 @@ export function SettingsDialog({ onClose }: { onClose: () => void }) {
         <h3 className="settings-heading">Google Calendar</h3>
         {s?.gcal_configured ? (
           <p className="settings-hint">
-            Feed connected ({s.gcal_url_tail}) · last sync{" "}
+            {s.gcal_env_feeds > 0
+              ? `${s.gcal_env_feeds} feed${s.gcal_env_feeds > 1 ? "s" : ""} configured in .env`
+              : `Feed connected (${s.gcal_url_tail})`}
+            {" · last sync "}
             {s.gcal_last_synced_at
               ? new Date(s.gcal_last_synced_at).toLocaleTimeString()
               : "never"}

@@ -4,16 +4,19 @@ import {
   ArrowDown,
   ArrowUp,
   ChevronLeft,
+  CloudDownload,
   ExternalLink,
   FileText,
   Pencil,
   Plus,
   StickyNote,
   Trash2,
+  Video,
 } from "lucide-react";
 import { type FormEvent, useState } from "react";
 
 import { Modal } from "../../components/Modal";
+import { CanvasFilesModal } from "./CanvasFilesModal";
 import {
   api,
   ApiError,
@@ -174,6 +177,7 @@ export function CoursePage() {
   const [newTitle, setNewTitle] = useState("");
   const [confirmingCourse, setConfirmingCourse] =
     useState<DeleteConsequences | null>(null);
+  const [canvasFilesOpen, setCanvasFilesOpen] = useState(false);
 
   const courses = useQuery({
     queryKey: ["courses"],
@@ -250,17 +254,37 @@ export function CoursePage() {
           <h1>{course ? `${course.code} · ${course.name}` : "…"}</h1>
           {course?.term && <p className="course-head-meta">{course.term}</p>}
         </div>
-        {course?.canvas_url && (
+        {course?.meeting_url && (
           <a
             className="icon-btn"
-            href={course.canvas_url}
+            href={course.meeting_url}
             target="_blank"
             rel="noreferrer"
-            aria-label="Open in Canvas"
-            title="Open in Canvas"
+            aria-label="Join online meeting"
+            title="Join online meeting"
           >
-            <ExternalLink size={16} strokeWidth={1.5} />
+            <Video size={16} strokeWidth={1.5} />
           </a>
+        )}
+        {course?.canvas_url && (
+          <>
+            <a
+              className="icon-btn"
+              href={course.canvas_url}
+              target="_blank"
+              rel="noreferrer"
+              aria-label="Open in Canvas"
+              title="Open in Canvas"
+            >
+              <ExternalLink size={16} strokeWidth={1.5} />
+            </a>
+            <button
+              className="btn course-canvas-files"
+              onClick={() => setCanvasFilesOpen(true)}
+            >
+              <CloudDownload size={15} strokeWidth={1.75} /> Canvas files
+            </button>
+          </>
         )}
         <button
           className="icon-btn danger course-delete"
@@ -316,6 +340,10 @@ export function CoursePage() {
           </form>
         )}
       </section>
+
+      {canvasFilesOpen && course && (
+        <CanvasFilesModal course={course} onClose={() => setCanvasFilesOpen(false)} />
+      )}
 
       {confirmingCourse && (
         <Modal

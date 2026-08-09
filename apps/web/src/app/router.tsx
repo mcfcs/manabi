@@ -87,12 +87,21 @@ const scheduleRoute = createRoute({
   component: SchedulePage,
 });
 
+export type CalendarView = "month" | "week" | "day";
+
 const calendarRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "/calendar",
   component: CalendarPage,
-  validateSearch: (search: Record<string, unknown>): { ym?: string } =>
-    /^\d{4}-\d{2}$/.test(String(search.ym)) ? { ym: String(search.ym) } : {},
+  validateSearch: (
+    search: Record<string, unknown>,
+  ): { view?: CalendarView; ym?: string; d?: string } => ({
+    ...(["month", "week", "day"].includes(String(search.view))
+      ? { view: String(search.view) as CalendarView }
+      : {}),
+    ...(/^\d{4}-\d{2}$/.test(String(search.ym)) ? { ym: String(search.ym) } : {}),
+    ...(/^\d{4}-\d{2}-\d{2}$/.test(String(search.d)) ? { d: String(search.d) } : {}),
+  }),
 });
 
 const tasksRoute = createRoute({

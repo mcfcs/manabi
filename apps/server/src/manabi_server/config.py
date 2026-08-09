@@ -17,6 +17,9 @@ class Settings(CoreSettings):
     # Canvas LMS importer — token stays server-side only
     canvas_base_url: str = ""  # e.g. https://ateneo.instructure.com
     canvas_access_token: str = ""
+    # Google Calendar secret ICS feeds, comma-separated (kept out of git).
+    # Optionally "Name|url" per entry to override the calendar's display name.
+    gcal_ics_urls: str = ""
     # Web Push (generate with: uv run vapid --gen  then  uv run vapid --applicationServerKey)
     vapid_public_key: str = ""  # base64url application server key
     vapid_private_key: str = ""

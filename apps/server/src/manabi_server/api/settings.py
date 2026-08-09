@@ -19,6 +19,7 @@ class SettingsOut(BaseModel):
     semester_start: date
     semester_end: date
     gcal_configured: bool
+    gcal_env_feeds: int  # feeds configured via GCAL_ICS_URLS in .env
     gcal_url_tail: str | None  # last chars only — the URL is a secret
     gcal_last_synced_at: datetime | None
     gcal_last_error: str | None
@@ -41,10 +42,12 @@ async def get_app_settings(db: AsyncSession) -> AppSettings:
 
 def _out(row: AppSettings) -> SettingsOut:
     env = get_settings()
+    env_feeds = len([u for u in env.gcal_ics_urls.split(",") if u.strip()])
     return SettingsOut(
         semester_start=row.semester_start,
         semester_end=row.semester_end,
-        gcal_configured=bool(row.gcal_ics_url),
+        gcal_configured=bool(row.gcal_ics_url) or env_feeds > 0,
+        gcal_env_feeds=env_feeds,
         gcal_url_tail=f"…{row.gcal_ics_url[-18:]}" if row.gcal_ics_url else None,
         gcal_last_synced_at=row.gcal_last_synced_at,
         gcal_last_error=row.gcal_last_error,

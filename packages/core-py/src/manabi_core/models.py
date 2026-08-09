@@ -78,6 +78,7 @@ class Course(Base, TimestampMixin):
     position: Mapped[int] = mapped_column(nullable=False, default=0)
     archived_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     canvas_course_id: Mapped[int | None] = mapped_column(BigInteger)
+    meeting_url: Mapped[str | None] = mapped_column(String(512))  # gmeet/zoom
 
     modules: Mapped[list["Module"]] = relationship(
         back_populates="course", order_by="Module.position"
@@ -140,6 +141,10 @@ class Document(Base, TimestampMixin):
     page_count: Mapped[int | None] = mapped_column()
     # Per-material AI exclusion: enforced in retrieval SQL, not prompts
     ai_included: Mapped[bool] = mapped_column(nullable=False, default=True)
+    # 'full' or 'render_only' (store + view pages, skip text extraction/AI)
+    processing_mode: Mapped[str] = mapped_column(
+        String(16), nullable=False, default="full"
+    )
     deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
     pages: Mapped[list["DocumentPage"]] = relationship(
@@ -528,23 +533,42 @@ class AINodeHeartbeat(Base):
 # stay timestamptz. Conversions happen only at boundaries (Canvas, Google).
 
 
+class Schedule(Base, TimestampMixin):
+    """Named schedule group (Class schedule, Internship, ...)."""
+
+    __tablename__ = "schedules"
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    title: Mapped[str] = mapped_column(String(128), nullable=False)
+    position: Mapped[int] = mapped_column(nullable=False, default=0)
+
+
 class ScheduleBlock(Base, TimestampMixin):
-    """One weekly class meeting (a course can have several)."""
+    """One entry of a schedule: course-linked or free-label, timed or TBA
+    (day_of_week/start/end NULL)."""
 
     __tablename__ = "schedule_blocks"
 
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
-    course_id: Mapped[int] = mapped_column(
-        BigInteger, ForeignKey("courses.id", ondelete="CASCADE"), nullable=False
+    schedule_id: Mapped[int] = mapped_column(
+        BigInteger, ForeignKey("schedules.id", ondelete="CASCADE"), nullable=False
     )
-    day_of_week: Mapped[int] = mapped_column(SmallInteger, nullable=False)  # 0=Mon
-    start_minute: Mapped[int] = mapped_column(nullable=False)
-    end_minute: Mapped[int] = mapped_column(nullable=False)
+    course_id: Mapped[int | None] = mapped_column(
+        BigInteger, ForeignKey("courses.id", ondelete="CASCADE")
+    )
+    label: Mapped[str | None] = mapped_column(String(128))  # used when no course
+    color: Mapped[str | None] = mapped_column(String(16))
+    day_of_week: Mapped[int | None] = mapped_column(SmallInteger)  # 0=Mon, NULL=TBA
+    start_minute: Mapped[int | None] = mapped_column()
+    end_minute: Mapped[int | None] = mapped_column()
     location: Mapped[str | None] = mapped_column(String(64))
 
     __table_args__ = (
         Index("ix_schedule_blocks_course_id", "course_id"),
-        CheckConstraint("end_minute > start_minute", name="ck_schedule_block_range"),
+        CheckConstraint(
+            "start_minute IS NULL OR end_minute IS NULL OR end_minute > start_minute",
+            name="ck_schedule_block_range",
+        ),
     )
 
 
@@ -615,6 +639,7 @@ class GcalEvent(Base):
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
     uid: Mapped[str] = mapped_column(String(512), nullable=False)
     title: Mapped[str] = mapped_column(String(512), nullable=False)
+    calendar: Mapped[str | None] = mapped_column(String(128))  # source feed name
     date: Mapped[date] = mapped_column(Date, nullable=False)
     start_minute: Mapped[int | None] = mapped_column()  # NULL = all-day
     end_minute: Mapped[int | None] = mapped_column()

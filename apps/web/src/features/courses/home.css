@@ -119,3 +119,87 @@
 .course-canvas-link:hover {
   color: var(--accent-blue-deep);
 }
+
+/* ── Home widgets (up next + due tasks) ─────────────────────── */
+
+.home-widgets {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: var(--s-3);
+  margin-bottom: var(--s-2);
+}
+.home-widget {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-2);
+  padding: var(--s-3) var(--s-4);
+  background: var(--surface-raised);
+  border: 1px solid var(--rule);
+  border-radius: var(--radius);
+  color: var(--ink);
+}
+.home-widget:hover {
+  text-decoration: none;
+  border-color: var(--ink-faint);
+}
+.home-widget-head {
+  display: flex;
+  align-items: center;
+  gap: var(--s-1);
+  font-size: 11.5px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--ink-faint);
+}
+.home-widget-main {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  font-size: 15px;
+}
+.home-widget-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+}
+.home-widget-time {
+  font-size: 12.5px;
+  color: var(--ink-soft);
+}
+.home-widget-sub {
+  font-size: 12.5px;
+  color: var(--ink-faint);
+}
+.home-widget-join {
+  color: var(--accent-blue);
+  display: inline-flex;
+}
+.home-widget-task {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  font-size: 13px;
+  min-width: 0;
+}
+.home-widget-taskdate {
+  width: 44px;
+  flex-shrink: 0;
+  font-size: 11px;
+  color: var(--ink-faint);
+}
+.home-widget-taskdate.urgent {
+  color: var(--accent-red);
+  font-weight: 700;
+}
+.home-widget-tasktitle {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.home-widget-taskcourse {
+  font-size: 11px;
+  font-weight: 600;
+  flex-shrink: 0;
+}

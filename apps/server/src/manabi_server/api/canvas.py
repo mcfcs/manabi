@@ -37,6 +37,9 @@ class CanvasFile(BaseModel):
 
 class ImportIn(BaseModel):
     file_id: int
+    ai_included: bool = True
+    # False → store + render pages only; no text extraction, chunking, or AI
+    extract_text: bool = True
 
 
 def _canvas_config() -> tuple[str, str]:
@@ -177,6 +180,8 @@ async def canvas_import(
         storage_path=rel_path,
         content_hash=content_hash,
         byte_size=len(content),
+        ai_included=data.ai_included and data.extract_text,
+        processing_mode="full" if data.extract_text else "render_only",
     )
     db.add(doc)
     await db.flush()

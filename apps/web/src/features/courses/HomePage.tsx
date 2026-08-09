@@ -5,6 +5,7 @@ import { type FormEvent, useState } from "react";
 
 import { Modal } from "../../components/Modal";
 import { api, type CourseOut } from "../../lib/api";
+import { HomeWidgets } from "./HomeWidgets";
 import "./home.css";
 
 const ACCENTS = ["#C93A2E", "#28518F", "#3E7A4E", "#B07D1F", "#6A4C93", "#1C2434"];
@@ -21,6 +22,7 @@ function CourseDialog({
   const [name, setName] = useState(course?.name ?? "");
   const [term, setTerm] = useState(course?.term ?? "");
   const [instructor, setInstructor] = useState(course?.instructor ?? "");
+  const [meetingUrl, setMeetingUrl] = useState(course?.meeting_url ?? "");
   const [accent, setAccent] = useState(course?.accent_color ?? ACCENTS[1]);
 
   const save = useMutation({
@@ -41,6 +43,7 @@ function CourseDialog({
       name,
       term: term || null,
       instructor: instructor || null,
+      meeting_url: meetingUrl.trim() || null,
       accent_color: accent,
     });
   }
@@ -98,6 +101,19 @@ function CourseDialog({
           />
         </div>
         <div>
+          <label className="field-label" htmlFor="course-meet">
+            Online meeting link (Google Meet / Zoom, optional)
+          </label>
+          <input
+            id="course-meet"
+            className="input"
+            type="url"
+            value={meetingUrl}
+            onChange={(e) => setMeetingUrl(e.target.value)}
+            placeholder="https://meet.google.com/…"
+          />
+        </div>
+        <div>
           <span className="field-label">Accent</span>
           <div className="accent-row">
             {ACCENTS.map((c) => (
@@ -144,6 +160,8 @@ export function HomePage() {
           <Plus size={16} strokeWidth={2} /> New course
         </button>
       </header>
+
+      <HomeWidgets />
 
       {courses.isLoading && <div className="home-empty">Loading…</div>}
       {courses.isError && (

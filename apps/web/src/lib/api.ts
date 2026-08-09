@@ -94,44 +94,47 @@ export interface CourseOut {
   document_count: number;
   card_count: number;
   canvas_url: string | null;
+  meeting_url: string | null;
 }
 
 // ── Increment 9: schedule / calendar / tasks / settings ─────────────────
 
-export interface ScheduleBlockOut {
+export interface ScheduleEntryOut {
   id: number;
-  course_id: number;
+  schedule_id: number;
+  course_id: number | null;
   code: string;
-  name: string;
-  accent_color: string | null;
-  day_of_week: number;
-  start_minute: number;
-  end_minute: number;
-  location: string | null;
-}
-
-export interface UnscheduledCourseOut {
-  course_id: number;
-  code: string;
-  name: string;
+  name: string | null;
   instructor: string | null;
   accent_color: string | null;
+  day_of_week: number | null;
+  start_minute: number | null;
+  end_minute: number | null;
+  location: string | null;
+  meeting_url: string | null;
   canvas_url: string | null;
 }
 
+export interface ScheduleGroupOut {
+  id: number;
+  title: string;
+  position: number;
+  entries: ScheduleEntryOut[];
+}
+
 export interface ScheduleOut {
-  blocks: ScheduleBlockOut[];
-  unscheduled: UnscheduledCourseOut[];
+  schedules: ScheduleGroupOut[];
 }
 
 export interface MeetingOut {
   date: string;
-  course_id: number;
+  course_id: number | null;
   code: string;
   accent_color: string | null;
   start_minute: number;
   end_minute: number;
   location: string | null;
+  meeting_url: string | null;
 }
 
 export interface CalendarEventOut {
@@ -149,6 +152,7 @@ export interface CalendarEventOut {
 export interface GcalEventOut {
   date: string;
   title: string;
+  calendar: string | null;
   start_minute: number | null;
   end_minute: number | null;
   location: string | null;
@@ -162,7 +166,7 @@ export interface DayMarkOut {
 }
 
 export interface CalendarMonthOut {
-  ym: string;
+  ym: string | null;
   semester_start: string;
   semester_end: string;
   meetings: MeetingOut[];
@@ -190,6 +194,7 @@ export interface SettingsOut {
   semester_start: string;
   semester_end: string;
   gcal_configured: boolean;
+  gcal_env_feeds: number;
   gcal_url_tail: string | null;
   gcal_last_synced_at: string | null;
   gcal_last_error: string | null;
