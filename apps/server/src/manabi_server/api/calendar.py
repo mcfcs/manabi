@@ -16,6 +16,7 @@ from manabi_core.models import (
     DayMark,
     GcalEvent,
     ScheduleBlock,
+    StudyTask,
     User,
 )
 from pydantic import BaseModel
@@ -62,6 +63,9 @@ class GcalOut(BaseModel):
     start_minute: int | None
     end_minute: int | None
     location: str | None
+    organizer: str | None
+    attendees: list[dict] | None  # [{name, status}]
+    my_status: str | None  # accepted | declined | tentative | needs-action
 
 
 class MarkOut(BaseModel):
@@ -69,6 +73,17 @@ class MarkOut(BaseModel):
     course_id: int | None
     mode: str
     note: str | None
+
+
+class CalTaskOut(BaseModel):
+    id: int
+    date: Date
+    title: str
+    course_id: int | None
+    course_code: str | None
+    accent_color: str | None
+    due_minute: int | None
+    done: bool
 
 
 class MonthOut(BaseModel):
@@ -79,6 +94,7 @@ class MonthOut(BaseModel):
     events: list[EventOut]
     gcal: list[GcalOut]
     marks: list[MarkOut]
+    tasks: list[CalTaskOut]
     gcal_configured: bool
 
 
@@ -220,6 +236,19 @@ async def _range_data(
         .scalars()
         .all()
     )
+    task_rows = (
+        (
+            await db.execute(
+                select(StudyTask).where(
+                    StudyTask.user_id == user.id,
+                    StudyTask.due_date >= first,
+                    StudyTask.due_date <= last,
+                )
+            )
+        )
+        .scalars()
+        .all()
+    )
 
     return MonthOut(
         ym=ym,
@@ -235,12 +264,30 @@ async def _range_data(
                 start_minute=g.start_minute,
                 end_minute=g.end_minute,
                 location=g.location,
+                organizer=g.organizer,
+                attendees=g.attendees,
+                my_status=g.my_status,
             )
             for g in gcal_rows
         ],
         marks=[
             MarkOut(date=m.date, course_id=m.course_id, mode=m.mode, note=m.note)
             for m in marks
+        ],
+        tasks=[
+            CalTaskOut(
+                id=t.id,
+                date=t.due_date,
+                title=t.title,
+                course_id=t.course_id,
+                course_code=courses[t.course_id].code if t.course_id in courses else None,
+                accent_color=courses[t.course_id].accent_color
+                if t.course_id in courses
+                else None,
+                due_minute=t.due_minute,
+                done=t.done_at is not None,
+            )
+            for t in task_rows
         ],
         gcal_configured=bool(app.gcal_ics_url) or bool(get_settings().gcal_ics_urls),
     )

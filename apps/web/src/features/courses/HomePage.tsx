@@ -1,146 +1,13 @@
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useQuery } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
-import { ExternalLink, Plus } from "lucide-react";
-import { type FormEvent, useState } from "react";
+import { ExternalLink, Pencil, Plus } from "lucide-react";
+import { useState } from "react";
 
-import { Modal } from "../../components/Modal";
 import { api, type CourseOut } from "../../lib/api";
+import { Announcements } from "./Announcements";
+import { CourseDialog } from "./CourseDialog";
 import { HomeWidgets } from "./HomeWidgets";
 import "./home.css";
-
-const ACCENTS = ["#C93A2E", "#28518F", "#3E7A4E", "#B07D1F", "#6A4C93", "#1C2434"];
-
-function CourseDialog({
-  course,
-  onClose,
-}: {
-  course: CourseOut | null;
-  onClose: () => void;
-}) {
-  const queryClient = useQueryClient();
-  const [code, setCode] = useState(course?.code ?? "");
-  const [name, setName] = useState(course?.name ?? "");
-  const [term, setTerm] = useState(course?.term ?? "");
-  const [instructor, setInstructor] = useState(course?.instructor ?? "");
-  const [meetingUrl, setMeetingUrl] = useState(course?.meeting_url ?? "");
-  const [accent, setAccent] = useState(course?.accent_color ?? ACCENTS[1]);
-
-  const save = useMutation({
-    mutationFn: (body: Record<string, unknown>) =>
-      course
-        ? api.patch<CourseOut>(`/api/courses/${course.id}`, body)
-        : api.post<CourseOut>("/api/courses", body),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["courses"] });
-      onClose();
-    },
-  });
-
-  function submit(e: FormEvent) {
-    e.preventDefault();
-    save.mutate({
-      code,
-      name,
-      term: term || null,
-      instructor: instructor || null,
-      meeting_url: meetingUrl.trim() || null,
-      accent_color: accent,
-    });
-  }
-
-  return (
-    <Modal title={course ? "Edit course" : "New course"} onClose={onClose}>
-      <form className="modal-form" onSubmit={submit}>
-        <div>
-          <label className="field-label" htmlFor="course-code">
-            Course code
-          </label>
-          <input
-            id="course-code"
-            className="input"
-            value={code}
-            onChange={(e) => setCode(e.target.value)}
-            placeholder="CSCI 123"
-            required
-          />
-        </div>
-        <div>
-          <label className="field-label" htmlFor="course-name">
-            Name
-          </label>
-          <input
-            id="course-name"
-            className="input"
-            value={name}
-            onChange={(e) => setName(e.target.value)}
-            placeholder="Computer Architecture"
-            required
-          />
-        </div>
-        <div>
-          <label className="field-label" htmlFor="course-term">
-            Term (optional)
-          </label>
-          <input
-            id="course-term"
-            className="input"
-            value={term}
-            onChange={(e) => setTerm(e.target.value)}
-            placeholder="1st Sem 2026–27"
-          />
-        </div>
-        <div>
-          <label className="field-label" htmlFor="course-instructor">
-            Instructor (optional)
-          </label>
-          <input
-            id="course-instructor"
-            className="input"
-            value={instructor}
-            onChange={(e) => setInstructor(e.target.value)}
-          />
-        </div>
-        <div>
-          <label className="field-label" htmlFor="course-meet">
-            Online meeting link (Google Meet / Zoom, optional)
-          </label>
-          <input
-            id="course-meet"
-            className="input"
-            type="url"
-            value={meetingUrl}
-            onChange={(e) => setMeetingUrl(e.target.value)}
-            placeholder="https://meet.google.com/…"
-          />
-        </div>
-        <div>
-          <span className="field-label">Accent</span>
-          <div className="accent-row">
-            {ACCENTS.map((c) => (
-              <button
-                key={c}
-                type="button"
-                className={`accent-swatch${accent === c ? " selected" : ""}`}
-                style={{ background: c }}
-                onClick={() => setAccent(c)}
-                aria-label={`Accent ${c}`}
-              />
-            ))}
-          </div>
-        </div>
-        {save.isError && <p className="error-text">{(save.error as Error).message}</p>}
-        <div className="modal-actions">
-          <button type="button" className="btn" onClick={onClose}>
-            Cancel
-          </button>
-          <button className="btn btn-primary" disabled={save.isPending}>
-            {course ? "Save" : "Create course"}
-          </button>
-        </div>
-      </form>
-    </Modal>
-  );
-}
 
 export function HomePage() {
   const [dialog, setDialog] = useState<null | { course: CourseOut | null }>(null);
@@ -162,11 +29,12 @@ export function HomePage() {
       </header>
 
       <HomeWidgets />
+      <Announcements />
 
       {courses.isLoading && <div className="home-empty">Loading…</div>}
       {courses.isError && (
         <div className="home-empty">
-          <p>Could not load courses. <button className="btn" onClick={() => courses.refetch()}>Retry</button></p>
+          <p>Could not load courses — is the server running?</p>
         </div>
       )}
       {courses.data && courses.data.length === 0 && (
@@ -203,18 +71,28 @@ export function HomePage() {
                   </span>
                 </div>
               </Link>
-              {course.canvas_url && (
-                <a
-                  className="icon-btn course-canvas-link"
-                  href={course.canvas_url}
-                  target="_blank"
-                  rel="noreferrer"
-                  aria-label={`Open ${course.code} in Canvas`}
-                  title="Open in Canvas"
+              <div className="course-card-actions">
+                <button
+                  className="icon-btn"
+                  onClick={() => setDialog({ course })}
+                  aria-label={`Edit ${course.code}`}
+                  title="Edit course (meeting link, color, delete…)"
                 >
-                  <ExternalLink size={14} strokeWidth={1.5} />
-                </a>
-              )}
+                  <Pencil size={13} strokeWidth={1.5} />
+                </button>
+                {course.canvas_url && (
+                  <a
+                    className="icon-btn"
+                    href={course.canvas_url}
+                    target="_blank"
+                    rel="noreferrer"
+                    aria-label={`Open ${course.code} in Canvas`}
+                    title="Open in Canvas"
+                  >
+                    <ExternalLink size={13} strokeWidth={1.5} />
+                  </a>
+                )}
+              </div>
             </div>
           ))}
         </div>

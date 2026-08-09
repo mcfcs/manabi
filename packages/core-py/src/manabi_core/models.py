@@ -98,6 +98,9 @@ class Module(Base, TimestampMixin):
     position: Mapped[int] = mapped_column(nullable=False, default=0)
     # Staleness trigger: bumped on document add/remove/re-extract and note edits
     content_version: Mapped[int] = mapped_column(nullable=False, default=0)
+    # Hidden "Course files" container (syllabus, COA, …) — excluded from
+    # module lists; its documents default to no extraction / no AI.
+    is_general: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
 
     course: Mapped[Course] = relationship(back_populates="modules")
 
@@ -644,6 +647,11 @@ class GcalEvent(Base):
     start_minute: Mapped[int | None] = mapped_column()  # NULL = all-day
     end_minute: Mapped[int | None] = mapped_column()
     location: Mapped[str | None] = mapped_column(String(255))
+    organizer: Mapped[str | None] = mapped_column(String(255))
+    # [{name, status}] — status: accepted | declined | tentative | needs-action
+    attendees: Mapped[list | None] = mapped_column(JSONB)
+    # This user's PARTSTAT (matched by the feed-owner email in the ICS URL)
+    my_status: Mapped[str | None] = mapped_column(String(16))
 
     __table_args__ = (Index("ix_gcal_events_date", "date"),)
 

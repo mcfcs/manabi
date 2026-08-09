@@ -552,3 +552,13 @@ mark.annot-red, .annot-swatch.annot-red, .annot-item-dot.annot-red {
     height: calc(100dvh - 2 * var(--s-4) - 64px);
   }
 }
+
+/* ── Original PDF mode (browser-native viewer: Ctrl+F, text select) ── */
+.viewer-original {
+  flex: 1;
+  width: 100%;
+  min-height: 78vh;
+  border: 1px solid var(--rule);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+}

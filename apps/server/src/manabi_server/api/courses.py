@@ -96,7 +96,10 @@ async def list_courses(
     rows = (
         await db.execute(
             select(Course, func.count(Module.id))
-            .outerjoin(Module, Module.course_id == Course.id)
+            .outerjoin(
+                Module,
+                (Module.course_id == Course.id) & Module.is_general.is_(False),
+            )
             .where(Course.user_id == user.id, Course.archived_at.is_(None))
             .group_by(Course.id)
             .order_by(Course.position, Course.id)

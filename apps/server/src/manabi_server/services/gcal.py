@@ -7,7 +7,9 @@ only and are never echoed to the browser in full.
 """
 
 import logging
+import re
 from datetime import date, datetime, timedelta
+from urllib.parse import unquote
 
 import httpx
 from manabi_core.models import AppSettings, GcalEvent
@@ -44,7 +46,42 @@ def _feed_list(app: AppSettings) -> list[tuple[str | None, str]]:
     return out
 
 
-def _occurrence_rows(event, uid: str, calendar: str | None) -> list[dict]:
+def _feed_owner_email(url: str) -> str | None:
+    """Google secret ICS URLs embed the calendar owner: .../ical/<email>/private-..."""
+    m = re.search(r"/ical/([^/]+)/", url)
+    return unquote(m.group(1)).lower() if m else None
+
+
+def _party(value) -> tuple[str | None, str | None, str]:
+    """vCalAddress → (email, display name, partstat)."""
+    email = str(value).replace("mailto:", "").lower() or None
+    params = getattr(value, "params", {}) or {}
+    name = params.get("CN") or (email.split("@")[0] if email else None)
+    status = str(params.get("PARTSTAT", "")).lower().replace("_", "-") or "needs-action"
+    return email, name, status
+
+
+def _attendee_info(event, owner_email: str | None) -> dict:
+    organizer = None
+    if event.get("ORGANIZER") is not None:
+        _, organizer, _ = _party(event.get("ORGANIZER"))
+    raw = event.get("ATTENDEE")
+    if raw is None:
+        return {"organizer": organizer, "attendees": None, "my_status": None}
+    values = raw if isinstance(raw, list) else [raw]
+    attendees = []
+    my_status = None
+    for v in values:
+        email, name, status = _party(v)
+        if owner_email and email == owner_email:
+            my_status = status
+        attendees.append({"name": name, "status": status})
+    return {"organizer": organizer, "attendees": attendees or None, "my_status": my_status}
+
+
+def _occurrence_rows(
+    event, uid: str, calendar: str | None, owner_email: str | None = None
+) -> list[dict]:
     """One expanded VEVENT occurrence → per-day row dicts (Manila-local)."""
     start = event.get("DTSTART").dt if event.get("DTSTART") else None
     end = event.get("DTEND").dt if event.get("DTEND") else None
@@ -54,6 +91,7 @@ def _occurrence_rows(event, uid: str, calendar: str | None) -> list[dict]:
         return []
 
     base = {"uid": uid, "title": title, "location": location, "calendar": calendar}
+    base.update(_attendee_info(event, owner_email))
     rows: list[dict] = []
     if isinstance(start, datetime):
         start_l = start.astimezone(MANILA) if start.tzinfo else start.replace(tzinfo=MANILA)
@@ -106,10 +144,11 @@ async def _fetch_one(
     r.raise_for_status()
     cal = icalendar.Calendar.from_ical(r.content)
     calendar_name = name or str(cal.get("X-WR-CALNAME", "")) or "Google"
+    owner_email = _feed_owner_email(url)
     rows: list[dict] = []
     for ev in recurring_ical_events.of(cal).between(window_start, window_end):
         uid = str(ev.get("UID", "")) or "no-uid"
-        rows.extend(_occurrence_rows(ev, uid, calendar_name))
+        rows.extend(_occurrence_rows(ev, uid, calendar_name, owner_email))
     return rows
 
 

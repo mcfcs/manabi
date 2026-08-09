@@ -178,11 +178,21 @@
 }
 .canvas-mgr-row {
   display: grid;
-  grid-template-columns: 1fr 150px 52px 32px;
+  grid-template-columns: minmax(0, 1fr) 170px 56px 36px;
   align-items: center;
-  gap: var(--s-2);
-  padding: var(--s-2);
+  gap: var(--s-3);
+  padding: var(--s-3);
   border-bottom: 1px solid var(--rule);
+}
+.canvas-mgr-row input[type="checkbox"] {
+  width: 16px;
+  height: 16px;
+  accent-color: var(--accent-blue);
+  justify-self: center;
+}
+.canvas-mgr-headrow span:nth-child(3),
+.canvas-mgr-headrow span:nth-child(4) {
+  text-align: center;
 }
 .canvas-mgr-row:last-child {
   border-bottom: none;
@@ -197,13 +207,76 @@
   background: var(--surface-raised);
 }
 .canvas-mgr-name {
-  font-size: 12.5px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  font-size: 13px;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  line-height: 1.35;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+.canvas-mgr-name .canvas-file-size {
+  font-size: 11px;
+  color: var(--ink-faint);
 }
 .canvas-mgr-dest {
   min-height: 32px;
   font-size: 12.5px;
   padding: 0 var(--s-2);
+}
+
+/* ── Course files strip ────────────────────────────────────── */
+
+.course-files {
+  margin: var(--s-2) 0 var(--s-3);
+}
+.course-files-head {
+  font-size: 11.5px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--ink-faint);
+  margin: 0 0 var(--s-2);
+  font-family: var(--font-ui);
+  font-weight: 600;
+}
+.course-files-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--s-2);
+}
+.course-file-card {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  padding: var(--s-2) var(--s-3);
+  background: var(--surface-raised);
+  border: 1px solid var(--rule);
+  border-radius: var(--radius-sm);
+  max-width: 320px;
+}
+.course-file-name {
+  font-size: 13px;
+  color: var(--ink);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s-1);
+}
+a.course-file-name:hover {
+  color: var(--accent-blue-deep);
+  text-decoration: none;
+}
+.course-file-delete {
+  opacity: 0;
+  transition: opacity var(--t-fast) var(--ease);
+}
+.course-file-card:hover .course-file-delete {
+  opacity: 1;
+}
+@media (pointer: coarse) {
+  .course-file-delete {
+    opacity: 1;
+  }
 }

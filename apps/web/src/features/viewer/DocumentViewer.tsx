@@ -3,6 +3,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Modal } from "../../components/Modal";
 import { Link, useNavigate, useParams, useSearch } from "@tanstack/react-router";
 import {
+  FileSearch,
   ChevronLeft,
   ChevronRight,
   Download,
@@ -41,11 +42,13 @@ import {
 } from "./annotations";
 import "./viewer.css";
 
-type ViewMode = "single" | "scroll" | "grid";
+type ViewMode = "single" | "scroll" | "grid" | "original";
 
 function loadMode(): ViewMode {
   const saved = localStorage.getItem("manabi-viewer-mode");
-  return saved === "single" || saved === "grid" ? saved : "scroll";
+  return saved === "single" || saved === "grid" || saved === "original"
+    ? saved
+    : "scroll";
 }
 
 function PageImage({
@@ -354,6 +357,16 @@ export function DocumentViewer() {
           >
             <LayoutGrid size={17} strokeWidth={1.5} />
           </button>
+          {d.kind === "pdf" && (
+            <button
+              className={`icon-btn${mode === "original" ? " active" : ""}`}
+              onClick={() => setMode("original")}
+              aria-label="Original PDF"
+              title="Browser PDF viewer — Ctrl+F and copy/paste work natively"
+            >
+              <FileSearch size={17} strokeWidth={1.5} />
+            </button>
+          )}
           <a
             className="icon-btn"
             href={`/api/documents/${documentId}/original`}
@@ -372,6 +385,14 @@ export function DocumentViewer() {
           )}{" "}
           of {termList.length} summary terms appear in this document's text
         </p>
+      )}
+
+      {mode === "original" && (
+        <iframe
+          className="viewer-original"
+          src={`/api/documents/${documentId}/original?inline=1#page=${page}`}
+          title={d.filename}
+        />
       )}
 
       {mode === "grid" && (

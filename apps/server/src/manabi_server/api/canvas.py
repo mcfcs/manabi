@@ -6,7 +6,7 @@ import hashlib
 
 import httpx
 from fastapi import APIRouter, Depends, HTTPException
-from manabi_core.models import Document, DocumentKind, Module, User
+from manabi_core.models import Course, Document, DocumentKind, Module, User
 from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -84,6 +84,84 @@ async def canvas_courses() -> list[CanvasCourse]:
         for c in data
         if isinstance(c, dict) and "id" in c and c.get("name")
     ]
+
+
+class AnnouncementOut(BaseModel):
+    id: int
+    title: str
+    preview: str  # single-line excerpt
+    message: str  # full plain text, line breaks preserved
+    posted_at: str | None
+    author: str | None
+    course_id: int | None
+    course_code: str | None
+    accent_color: str | None
+    html_url: str | None
+
+
+def _html_to_text(html_text: str) -> str:
+    """Canvas announcement HTML → plain text with paragraph/line breaks kept."""
+    import html as html_mod
+    import re
+
+    text = re.sub(r"(?i)<br\s*/?>", "\n", html_text or "")
+    text = re.sub(r"(?i)</(p|div|li|h[1-6]|tr)>", "\n", text)
+    text = re.sub(r"(?i)<li[^>]*>", "• ", text)
+    text = re.sub(r"<[^>]+>", "", text)
+    text = html_mod.unescape(text)
+    lines = [re.sub(r"[ \t ]+", " ", ln).strip() for ln in text.split("\n")]
+    return re.sub(r"\n{3,}", "\n\n", "\n".join(lines)).strip()
+
+
+@router.get("/announcements")
+async def canvas_announcements(
+    course_id: int | None = None,
+    limit: int = 5,
+    user: User = Depends(get_default_user),
+    db: AsyncSession = Depends(get_db),
+) -> list[AnnouncementOut]:
+    """Latest announcements across all Canvas-linked courses (or one)."""
+    query = select(Course).where(
+        Course.user_id == user.id,
+        Course.archived_at.is_(None),
+        Course.canvas_course_id.is_not(None),
+    )
+    if course_id is not None:
+        query = query.where(Course.id == course_id)
+    courses = (await db.execute(query)).scalars().all()
+    if not courses:
+        return []
+    by_context = {f"course_{c.canvas_course_id}": c for c in courses}
+
+    data = await _canvas_get(
+        "/announcements",
+        {
+            "context_codes[]": list(by_context.keys()),
+            "active_only": "true",
+        },
+    )
+    out: list[AnnouncementOut] = []
+    for a in data:
+        if not isinstance(a, dict) or not a.get("id"):
+            continue
+        course = by_context.get(a.get("context_code", ""))
+        message = _html_to_text(a.get("message", ""))
+        out.append(
+            AnnouncementOut(
+                id=a["id"],
+                title=a.get("title") or "(untitled)",
+                preview=" ".join(message.split())[:280],
+                message=message[:4000],
+                posted_at=a.get("posted_at"),
+                author=(a.get("author") or {}).get("display_name"),
+                course_id=course.id if course else None,
+                course_code=course.code if course else None,
+                accent_color=course.accent_color if course else None,
+                html_url=a.get("html_url"),
+            )
+        )
+    out.sort(key=lambda x: x.posted_at or "", reverse=True)
+    return out[: max(1, min(limit, 20))]
 
 
 IMPORTABLE_TYPES = (

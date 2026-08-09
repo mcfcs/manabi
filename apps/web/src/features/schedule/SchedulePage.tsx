@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "@tanstack/react-router";
-import { ExternalLink, Plus, Trash2, Video } from "lucide-react";
+import { ExternalLink, Pencil, Plus, Trash2, Video } from "lucide-react";
 import { useState } from "react";
 
 import { Modal } from "../../components/Modal";
@@ -12,6 +12,7 @@ import {
   type ScheduleGroupOut,
   type ScheduleOut,
 } from "../../lib/api";
+import { CourseDialog } from "../courses/CourseDialog";
 import "./schedule.css";
 
 const AXIS_START = 450; // 07:30
@@ -29,21 +30,23 @@ function BlockChip({
   entry,
   editing,
   onDelete,
+  onEditCourse,
 }: {
   entry: ScheduleEntryOut;
   editing: boolean;
   onDelete: () => void;
+  onEditCourse: () => void;
 }) {
   const navigate = useNavigate();
   const accent = entry.accent_color ?? "var(--accent-blue)";
   const start = entry.start_minute!;
   const end = entry.end_minute!;
+  const mins = end - start;
   const top = ((start - AXIS_START) / AXIS_SPAN) * 100;
   const height = ((end - start) / AXIS_SPAN) * 100;
-  const compact = end - start <= 60; // 1-hour blocks: single-line layout
   return (
     <div
-      className={`sched-block${compact ? " compact" : ""}`}
+      className="sched-block"
       style={{
         top: `${top}%`,
         height: `${height}%`,
@@ -60,18 +63,13 @@ function BlockChip({
         })
       }
       title={`${entry.name ?? entry.code} · ${fmt(start)}–${fmt(end)}${
-        entry.instructor ? ` · ${entry.instructor}` : ""
-      }`}
+        entry.location ? ` · ${entry.location}` : ""
+      }${entry.instructor ? ` · ${entry.instructor}` : ""}`}
     >
       <span className="sched-block-line1">
         <span className="sched-block-code" style={{ color: accent }}>
           {entry.code}
         </span>
-        {compact && (
-          <span className="sched-block-time mono">
-            {fmt(start)}–{fmt(end)}
-          </span>
-        )}
         {entry.meeting_url && (
           <a
             href={entry.meeting_url}
@@ -86,29 +84,43 @@ function BlockChip({
           </a>
         )}
       </span>
-      {!compact && (
-        <span className="sched-block-time mono">
-          {fmt(start)}–{fmt(end)}
-        </span>
-      )}
-      {!compact && entry.location && (
+      <span className="sched-block-time mono">
+        {fmt(start)}–{fmt(end)}
+        {mins <= 75 && entry.location ? ` · ${entry.location}` : ""}
+      </span>
+      {mins > 75 && entry.location && (
         <span className="sched-block-room">{entry.location}</span>
       )}
-      {!compact && entry.instructor && (
+      {mins > 75 && entry.instructor && (
         <span className="sched-block-prof">{entry.instructor}</span>
       )}
-      {editing && (
-        <button
-          className="icon-btn danger sched-block-delete"
-          onClick={(e) => {
-            e.stopPropagation();
-            onDelete();
-          }}
-          aria-label="Remove entry"
-        >
-          <Trash2 size={12} strokeWidth={1.5} />
-        </button>
-      )}
+      <span className="sched-block-actions">
+        {entry.course_id != null && (
+          <button
+            className="icon-btn sched-block-pencil"
+            onClick={(e) => {
+              e.stopPropagation();
+              onEditCourse();
+            }}
+            aria-label="Edit course (meeting link…)"
+            title="Edit course (meeting link…)"
+          >
+            <Pencil size={11} strokeWidth={1.5} />
+          </button>
+        )}
+        {editing && (
+          <button
+            className="icon-btn danger"
+            onClick={(e) => {
+              e.stopPropagation();
+              onDelete();
+            }}
+            aria-label="Remove entry"
+          >
+            <Trash2 size={11} strokeWidth={1.5} />
+          </button>
+        )}
+      </span>
     </div>
   );
 }
@@ -280,30 +292,54 @@ function EntryDialog({
   );
 }
 
-function ScheduleGroup({
-  schedule,
-  editing,
-}: {
-  schedule: ScheduleGroupOut;
-  editing: boolean;
-}) {
+export function SchedulePage() {
   const queryClient = useQueryClient();
-  const [adding, setAdding] = useState(false);
+  const [tab, setTab] = useState<number | "all">("all");
+  const [editing, setEditing] = useState(false);
+  const [newTitle, setNewTitle] = useState("");
+  const [addingTo, setAddingTo] = useState<ScheduleGroupOut | null>(null);
+  const [editCourseId, setEditCourseId] = useState<number | null>(null);
+
+  const schedule = useQuery({
+    queryKey: ["schedule"],
+    queryFn: () => api.get<ScheduleOut>("/api/schedule"),
+    staleTime: 60_000,
+  });
+  const courses = useQuery({
+    queryKey: ["courses"],
+    queryFn: () => api.get<CourseOut[]>("/api/courses"),
+    staleTime: 60_000,
+  });
+
   const invalidate = () => {
     queryClient.invalidateQueries({ queryKey: ["schedule"] });
     queryClient.invalidateQueries({ queryKey: ["calendar"] });
   };
+  const addSchedule = useMutation({
+    mutationFn: () => api.post("/api/schedule", { title: newTitle.trim() }),
+    onSuccess: () => {
+      setNewTitle("");
+      invalidate();
+    },
+  });
   const removeEntry = useMutation({
     mutationFn: (id: number) => api.delete(`/api/schedule/entries/${id}`),
     onSuccess: invalidate,
   });
   const removeSchedule = useMutation({
-    mutationFn: () => api.delete(`/api/schedule/${schedule.id}`),
-    onSuccess: invalidate,
+    mutationFn: (id: number) => api.delete(`/api/schedule/${id}`),
+    onSuccess: () => {
+      setTab("all");
+      invalidate();
+    },
   });
 
-  const timed = schedule.entries.filter((e) => e.day_of_week != null);
-  const tba = schedule.entries.filter((e) => e.day_of_week == null);
+  const groups = schedule.data?.schedules ?? [];
+  const active = tab === "all" ? null : groups.find((g) => g.id === tab);
+  const entries =
+    tab === "all" ? groups.flatMap((g) => g.entries) : (active?.entries ?? []);
+  const timed = entries.filter((e) => e.day_of_week != null);
+  const tba = entries.filter((e) => e.day_of_week == null);
 
   const hours: number[] = [];
   for (let m = 480; m < AXIS_END; m += 60) hours.push(m);
@@ -311,31 +347,88 @@ function ScheduleGroup({
   for (const b of timed) {
     byDay.set(b.day_of_week!, [...(byDay.get(b.day_of_week!) ?? []), b]);
   }
+  const editCourse =
+    editCourseId != null
+      ? (courses.data?.find((c) => c.id === editCourseId) ?? null)
+      : null;
 
   return (
-    <section className="schedule-group">
-      <div className="schedule-group-head">
-        <h2>{schedule.title}</h2>
+    <div className="schedule-page">
+      <header className="schedule-head">
+        <h1>Schedule</h1>
+        <span className="schedule-term">1st Sem 2026–27</span>
+        <button
+          className={`btn schedule-edit${editing ? " on" : ""}`}
+          onClick={() => setEditing(!editing)}
+        >
+          {editing ? "Done" : "Edit"}
+        </button>
+      </header>
+
+      <div className="schedule-tabs">
+        <button
+          className={`cal-view-tab${tab === "all" ? " on" : ""}`}
+          onClick={() => setTab("all")}
+        >
+          All
+        </button>
+        {groups.map((g) => (
+          <button
+            key={g.id}
+            className={`cal-view-tab${tab === g.id ? " on" : ""}`}
+            onClick={() => setTab(g.id)}
+          >
+            {g.title}
+          </button>
+        ))}
         {editing && (
-          <>
-            <button className="btn" onClick={() => setAdding(true)}>
-              <Plus size={14} strokeWidth={1.75} /> Entry
+          <form
+            className="schedule-add-row"
+            onSubmit={(e) => {
+              e.preventDefault();
+              if (newTitle.trim()) addSchedule.mutate();
+            }}
+          >
+            <input
+              className="input schedule-add-input"
+              placeholder="New schedule…"
+              value={newTitle}
+              onChange={(e) => setNewTitle(e.target.value)}
+            />
+            <button className="btn" disabled={!newTitle.trim()}>
+              <Plus size={14} strokeWidth={1.75} />
             </button>
-            <button
-              className="icon-btn danger"
-              onClick={() => removeSchedule.mutate()}
-              aria-label={`Delete ${schedule.title}`}
-              title="Delete this schedule"
-            >
-              <Trash2 size={14} strokeWidth={1.5} />
-            </button>
-          </>
+          </form>
         )}
       </div>
 
+      {editing && (
+        <div className="schedule-edit-actions">
+          {tab !== "all" && active ? (
+            <>
+              <button className="btn" onClick={() => setAddingTo(active)}>
+                <Plus size={14} strokeWidth={1.75} /> Entry in {active.title}
+              </button>
+              <button
+                className="btn btn-danger"
+                onClick={() => removeSchedule.mutate(active.id)}
+              >
+                <Trash2 size={14} strokeWidth={1.5} /> Delete {active.title}
+              </button>
+            </>
+          ) : (
+            groups.map((g) => (
+              <button key={g.id} className="btn" onClick={() => setAddingTo(g)}>
+                <Plus size={14} strokeWidth={1.75} /> {g.title}
+              </button>
+            ))
+          )}
+        </div>
+      )}
+
       {timed.length > 0 && (
         <>
-          <div className="timegrid" role="grid" aria-label={schedule.title}>
+          <div className="timegrid" role="grid" aria-label="Weekly schedule">
             <div className="timegrid-gutter">
               {hours.map((m) => (
                 <span
@@ -364,6 +457,7 @@ function ScheduleGroup({
                       entry={b}
                       editing={editing}
                       onDelete={() => removeEntry.mutate(b.id)}
+                      onEditCourse={() => setEditCourseId(b.course_id)}
                     />
                   ))}
                 </div>
@@ -383,6 +477,7 @@ function ScheduleGroup({
                       entry={b}
                       editing={editing}
                       onDelete={() => removeEntry.mutate(b.id)}
+                      onEditCourse={() => setEditCourseId(b.course_id)}
                     />
                   ))}
                 </section>
@@ -407,6 +502,16 @@ function ScheduleGroup({
                   {c.instructor ? `${c.instructor} · ` : ""}TBA
                 </span>
               </div>
+              {c.course_id != null && (
+                <button
+                  className="icon-btn"
+                  onClick={() => setEditCourseId(c.course_id)}
+                  aria-label="Edit course"
+                  title="Edit course (meeting link…)"
+                >
+                  <Pencil size={14} strokeWidth={1.5} />
+                </button>
+              )}
               {c.meeting_url && (
                 <a
                   className="icon-btn"
@@ -445,63 +550,11 @@ function ScheduleGroup({
         </div>
       )}
 
-      {adding && <EntryDialog schedule={schedule} onClose={() => setAdding(false)} />}
-    </section>
-  );
-}
-
-export function SchedulePage() {
-  const queryClient = useQueryClient();
-  const [editing, setEditing] = useState(false);
-  const [newTitle, setNewTitle] = useState("");
-  const schedule = useQuery({
-    queryKey: ["schedule"],
-    queryFn: () => api.get<ScheduleOut>("/api/schedule"),
-    staleTime: 60_000,
-  });
-  const addSchedule = useMutation({
-    mutationFn: () => api.post("/api/schedule", { title: newTitle.trim() }),
-    onSuccess: () => {
-      setNewTitle("");
-      queryClient.invalidateQueries({ queryKey: ["schedule"] });
-    },
-  });
-
-  return (
-    <div className="schedule-page">
-      <header className="schedule-head">
-        <h1>Schedule</h1>
-        <span className="schedule-term">1st Sem 2026–27</span>
-        <button
-          className={`btn schedule-edit${editing ? " on" : ""}`}
-          onClick={() => setEditing(!editing)}
-        >
-          {editing ? "Done" : "Edit"}
-        </button>
-      </header>
-
-      {(schedule.data?.schedules ?? []).map((s) => (
-        <ScheduleGroup key={s.id} schedule={s} editing={editing} />
-      ))}
-
-      {editing && (
-        <form
-          className="schedule-add-row"
-          onSubmit={(e) => {
-            e.preventDefault();
-            if (newTitle.trim()) addSchedule.mutate();
-          }}
-        >
-          <input
-            className="input"
-            placeholder="New schedule title…"
-            value={newTitle}
-            onChange={(e) => setNewTitle(e.target.value)}
-          />
-          <button className="btn" disabled={!newTitle.trim()}>
-            <Plus size={14} strokeWidth={1.75} /> Schedule
-          </button>
-        </form>
+      {addingTo && (
+        <EntryDialog schedule={addingTo} onClose={() => setAddingTo(null)} />
+      )}
+      {editCourse && (
+        <CourseDialog course={editCourse} onClose={() => setEditCourseId(null)} />
       )}
     </div>
   );

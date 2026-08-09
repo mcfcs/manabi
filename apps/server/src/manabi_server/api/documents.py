@@ -297,12 +297,23 @@ async def page_thumb(
 
 
 @router.get("/documents/{document_id}/original")
-async def download_original(doc: Document = Depends(_get_owned_document)) -> FileResponse:
+async def download_original(
+    doc: Document = Depends(_get_owned_document), inline: bool = False
+) -> FileResponse:
+    """The stored file. inline=1 renders in the browser's own PDF viewer
+    (native text layer → Ctrl+F and copy/paste without any extraction)."""
     media = (
         "application/pdf"
         if doc.kind == DocumentKind.pdf
         else "application/vnd.openxmlformats-officedocument.presentationml.presentation"
     )
+    if inline:
+        return FileResponse(
+            files.resolve(doc.storage_path),
+            media_type=media,
+            content_disposition_type="inline",
+            filename=doc.filename,
+        )
     return FileResponse(files.resolve(doc.storage_path), media_type=media, filename=doc.filename)
 
 

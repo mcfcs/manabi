@@ -45,8 +45,33 @@
 
 .schedule-add-row {
   display: flex;
+  gap: var(--s-1);
+  margin-left: var(--s-2);
+}
+.schedule-add-input {
+  min-height: 32px;
+  width: 150px;
+}
+
+.schedule-tabs {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0;
+  border: 1px solid var(--rule);
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+  align-self: flex-start;
+}
+.schedule-tabs .schedule-add-row {
+  border-left: 1px solid var(--rule);
+  padding: 2px var(--s-1);
+}
+
+.schedule-edit-actions {
+  display: flex;
   gap: var(--s-2);
-  max-width: 380px;
+  flex-wrap: wrap;
 }
 
 /* ── Time grid (desktop) ───────────────────────────────────── */
@@ -148,21 +173,35 @@
   overflow: hidden;
   text-overflow: ellipsis;
 }
-/* 1-hour blocks: one line only so nothing bleeds into the next slot */
-.sched-block.compact {
-  justify-content: center;
+/* actions appear on hover in the block's top-right corner */
+.sched-block-actions {
+  position: absolute;
+  top: 1px;
+  right: 1px;
+  display: flex;
+  gap: 0;
+  opacity: 0;
+  transition: opacity var(--t-fast) var(--ease);
+}
+.sched-block:hover .sched-block-actions {
+  opacity: 1;
+}
+.sched-block-actions .icon-btn {
+  min-width: 22px;
+  min-height: 22px;
+  background: var(--surface-raised);
+}
+@media (pointer: coarse) {
+  .sched-block-actions {
+    opacity: 1;
+  }
 }
 .sched-block-meet {
   color: var(--accent-blue);
   display: inline-flex;
   flex-shrink: 0;
 }
-.sched-block-delete {
-  position: absolute;
-  top: 2px;
-  right: 2px;
-  background: var(--surface-raised);
-}
+
 
 /* ── Mobile stacked list ───────────────────────────────────── */
 
@@ -190,9 +229,6 @@
     position: static;
     width: 100%;
     margin-bottom: var(--s-2);
-  }
-  .schedule-list .sched-block.compact {
-    justify-content: flex-start;
   }
 }
 

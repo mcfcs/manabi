@@ -145,3 +145,163 @@ button {
 .status-dot.online {
   background: var(--accent-blue);
 }
+
+/* ── Motion (Increment 9.7) ───────────────────────────────────────────────
+   Subtle, fast, and consistent: content fades up on navigation, cards lift
+   on hover, dialogs pop, presses compress. Everything respects
+   prefers-reduced-motion. */
+
+@keyframes manabi-fade-up {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@keyframes manabi-pop {
+  from {
+    opacity: 0;
+    transform: translateY(10px) scale(0.985);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@keyframes manabi-fade {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes manabi-rise {
+  from {
+    opacity: 0;
+    transform: translateY(14px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+/* Route content entry */
+.content > * {
+  animation: manabi-fade-up 240ms var(--ease) both;
+}
+
+/* Pressable things compress slightly */
+.btn:active,
+.icon-btn:active,
+.cal-cell:active,
+.sched-block:active,
+.course-card:active,
+.cal-filter:active,
+.entry-day:active {
+  transform: scale(0.985);
+}
+.btn,
+.icon-btn,
+.cal-filter,
+.entry-day {
+  transition:
+    transform 80ms var(--ease),
+    background var(--t-fast) var(--ease),
+    color var(--t-fast) var(--ease),
+    border-color var(--t-fast) var(--ease),
+    opacity var(--t-fast) var(--ease);
+}
+
+/* Cards lift on hover */
+.course-card,
+.module-card,
+.home-widget,
+.tba-card,
+.course-file-card {
+  transition:
+    transform var(--t-med) var(--ease),
+    box-shadow var(--t-med) var(--ease),
+    border-color var(--t-fast) var(--ease);
+}
+.course-card-wrap:hover .course-card,
+.module-card:hover,
+.home-widget:hover,
+.course-file-card:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 6px 18px rgba(28, 36, 52, 0.07);
+}
+
+/* Modals */
+.modal-overlay {
+  animation: manabi-fade 140ms var(--ease) both;
+}
+.modal {
+  animation: manabi-pop 200ms var(--ease) both;
+}
+
+/* Day panel slides in */
+.day-panel {
+  animation: manabi-pop 220ms var(--ease) both;
+}
+
+/* Toast rises */
+.update-toast {
+  animation: manabi-rise 260ms var(--ease) both;
+}
+
+/* Chat messages fade in as they arrive */
+.chat-msg {
+  animation: manabi-fade-up 220ms var(--ease) both;
+}
+
+/* Calendar chips + schedule blocks ease in */
+.cal-cell,
+.week-block,
+.sched-block,
+.ann-row,
+.task-row {
+  animation: manabi-fade 180ms var(--ease) both;
+}
+
+/* Rail links nudge on hover */
+.rail-link {
+  transition:
+    background var(--t-fast) var(--ease),
+    color var(--t-fast) var(--ease),
+    padding-left var(--t-fast) var(--ease);
+}
+.rail-link:hover {
+  padding-left: calc(var(--s-3) + 3px);
+}
+
+/* Status dots breathe when online */
+.status-dot.online {
+  animation: manabi-breathe 2.6s ease-in-out infinite;
+}
+@keyframes manabi-breathe {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.45;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}

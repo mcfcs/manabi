@@ -16,7 +16,9 @@ import {
 import { type FormEvent, useState } from "react";
 
 import { Modal } from "../../components/Modal";
+import { Announcements } from "./Announcements";
 import { CanvasFilesModal } from "./CanvasFilesModal";
+import { CourseFiles } from "./CourseFiles";
 import {
   api,
   ApiError,
@@ -294,6 +296,10 @@ export function CoursePage() {
           <Trash2 size={16} strokeWidth={1.5} />
         </button>
       </header>
+
+      <Announcements courseId={Number(courseId)} />
+
+      <CourseFiles courseId={courseId} />
 
       <section className="module-section">
         <div className="module-section-head">

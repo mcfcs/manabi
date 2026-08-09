@@ -149,6 +149,11 @@ export interface CalendarEventOut {
   repeat_until: string | null;
 }
 
+export interface GcalAttendee {
+  name: string | null;
+  status: "accepted" | "declined" | "tentative" | "needs-action";
+}
+
 export interface GcalEventOut {
   date: string;
   title: string;
@@ -156,6 +161,22 @@ export interface GcalEventOut {
   start_minute: number | null;
   end_minute: number | null;
   location: string | null;
+  organizer: string | null;
+  attendees: GcalAttendee[] | null;
+  my_status: string | null;
+}
+
+export interface AnnouncementOut {
+  id: number;
+  title: string;
+  preview: string;
+  message: string;
+  posted_at: string | null;
+  author: string | null;
+  course_id: number | null;
+  course_code: string | null;
+  accent_color: string | null;
+  html_url: string | null;
 }
 
 export interface DayMarkOut {
@@ -163,6 +184,17 @@ export interface DayMarkOut {
   course_id: number | null;
   mode: "sync" | "async";
   note: string | null;
+}
+
+export interface CalTaskOut {
+  id: number;
+  date: string;
+  title: string;
+  course_id: number | null;
+  course_code: string | null;
+  accent_color: string | null;
+  due_minute: number | null;
+  done: boolean;
 }
 
 export interface CalendarMonthOut {
@@ -173,6 +205,7 @@ export interface CalendarMonthOut {
   events: CalendarEventOut[];
   gcal: GcalEventOut[];
   marks: DayMarkOut[];
+  tasks: CalTaskOut[];
   gcal_configured: boolean;
 }
 

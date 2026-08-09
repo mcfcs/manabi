@@ -180,7 +180,11 @@ async def list_modules(
             await db.execute(
                 select(Module)
                 .join(Course, Course.id == Module.course_id)
-                .where(Module.course_id == course_id, Course.user_id == user.id)
+                .where(
+                    Module.course_id == course_id,
+                    Course.user_id == user.id,
+                    Module.is_general.is_(False),
+                )
                 .order_by(Module.position, Module.id)
             )
         )
@@ -218,6 +222,76 @@ async def create_module(
     db.add(module)
     await db.commit()
     return _module_out(module, {}, set())
+
+
+@router.get("/courses/{course_id}/course-files")
+async def course_files(
+    course_id: int,
+    user: User = Depends(get_default_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Documents in the course's hidden "Course files" container."""
+    from manabi_server.api.documents import _doc_out
+
+    general = (
+        await db.execute(
+            select(Module)
+            .join(Course, Course.id == Module.course_id)
+            .where(
+                Module.course_id == course_id,
+                Course.user_id == user.id,
+                Module.is_general.is_(True),
+            )
+        )
+    ).scalar_one_or_none()
+    if general is None:
+        return {"module_id": None, "documents": []}
+    docs = (
+        (
+            await db.execute(
+                select(Document)
+                .where(
+                    Document.module_id == general.id, Document.deleted_at.is_(None)
+                )
+                .order_by(Document.filename)
+            )
+        )
+        .scalars()
+        .all()
+    )
+    return {"module_id": general.id, "documents": [_doc_out(d) for d in docs]}
+
+
+@router.post(
+    "/courses/{course_id}/course-files-module", dependencies=[Depends(require_csrf)]
+)
+async def ensure_course_files_module(
+    course_id: int,
+    user: User = Depends(get_default_user),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """Find-or-create the hidden course-files container; returns its id."""
+    course = (
+        await db.execute(
+            select(Course).where(Course.id == course_id, Course.user_id == user.id)
+        )
+    ).scalar_one_or_none()
+    if course is None:
+        raise HTTPException(status_code=404, detail="Course not found")
+    general = (
+        await db.execute(
+            select(Module).where(
+                Module.course_id == course_id, Module.is_general.is_(True)
+            )
+        )
+    ).scalar_one_or_none()
+    if general is None:
+        general = Module(
+            course_id=course_id, title="Course files", position=9999, is_general=True
+        )
+        db.add(general)
+        await db.commit()
+    return {"module_id": general.id}
 
 
 @router.get("/modules/{module_id}")

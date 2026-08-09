@@ -6,10 +6,12 @@ export function Modal({
   title,
   onClose,
   children,
+  wide = false,
 }: {
   title: string;
   onClose: () => void;
   children: ReactNode;
+  wide?: boolean;
 }) {
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -22,7 +24,7 @@ export function Modal({
   return (
     <div className="modal-overlay" onClick={onClose}>
       <div
-        className="modal"
+        className={wide ? "modal modal-wide" : "modal"}
         role="dialog"
         aria-label={title}
         onClick={(e) => e.stopPropagation()}

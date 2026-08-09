@@ -67,3 +67,7 @@
 .btn-danger:hover {
   background: var(--accent-red-deep);
 }
+
+.modal-wide {
+  width: min(640px, 100%);
+}

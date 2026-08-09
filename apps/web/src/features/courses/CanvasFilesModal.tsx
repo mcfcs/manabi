@@ -13,7 +13,7 @@ interface CanvasFile {
 }
 
 const SKIP = "";
-const NEW_GENERAL = "__general__";
+const COURSE_FILES = "__coursefiles__";
 
 interface RowChoice {
   dest: string; // "" skip · module id · "__general__"
@@ -60,7 +60,16 @@ export function CanvasFilesModal({
   const setChoice = (id: number, patch: Partial<RowChoice>) =>
     setChoices((prev) => {
       const next = new Map(prev);
-      next.set(id, { ...choice(id), ...patch });
+      const current = { ...choice(id), ...patch };
+      // Course files (syllabus, COA, …): extraction + AI default OFF
+      if (patch.dest === COURSE_FILES) {
+        current.extract = false;
+        current.ai = false;
+      } else if (patch.dest && patch.dest !== SKIP) {
+        current.extract = true;
+        current.ai = true;
+      }
+      next.set(id, current);
       return next;
     });
 
@@ -68,19 +77,17 @@ export function CanvasFilesModal({
 
   const runImport = useMutation({
     mutationFn: async () => {
-      let generalId: number | null =
-        modules.data?.find((m) => m.title.toLowerCase() === "general")?.id ?? null;
+      let courseFilesId: number | null = null;
       let done = 0;
       for (const f of selected) {
         const c = choice(f.id);
-        let moduleId = c.dest === NEW_GENERAL ? generalId : Number(c.dest);
-        if (c.dest === NEW_GENERAL && moduleId == null) {
-          const created = await api.post<ModuleOut>(
-            `/api/courses/${course.id}/modules`,
-            { title: "General" },
+        let moduleId = c.dest === COURSE_FILES ? courseFilesId : Number(c.dest);
+        if (c.dest === COURSE_FILES && moduleId == null) {
+          const created = await api.post<{ module_id: number }>(
+            `/api/courses/${course.id}/course-files-module`,
           );
-          generalId = created.id;
-          moduleId = created.id;
+          courseFilesId = created.module_id;
+          moduleId = created.module_id;
         }
         setProgress(`Importing ${++done} of ${selected.length}…`);
         try {
@@ -94,6 +101,7 @@ export function CanvasFilesModal({
         }
       }
       queryClient.invalidateQueries({ queryKey: ["modules", String(course.id)] });
+      queryClient.invalidateQueries({ queryKey: ["course-files", String(course.id)] });
       queryClient.invalidateQueries({ queryKey: ["documents"] });
     },
     onSuccess: () => {
@@ -107,7 +115,7 @@ export function CanvasFilesModal({
   });
 
   return (
-    <Modal title={`Canvas files — ${course.code}`} onClose={onClose}>
+    <Modal title={`Canvas files — ${course.code}`} onClose={onClose} wide>
       <div className="modal-form">
         {files.isLoading && (
           <p className="gen-hint">
@@ -141,7 +149,7 @@ export function CanvasFilesModal({
                 <div key={f.id} className="canvas-mgr-row">
                   <span className="canvas-mgr-name" title={f.filename}>
                     {f.filename}
-                    <span className="canvas-file-size mono"> {formatBytes(f.size)}</span>
+                    <span className="canvas-file-size mono">{formatBytes(f.size)}</span>
                   </span>
                   <select
                     className="input canvas-mgr-dest"
@@ -149,14 +157,12 @@ export function CanvasFilesModal({
                     onChange={(e) => setChoice(f.id, { dest: e.target.value })}
                   >
                     <option value={SKIP}>— skip —</option>
+                    <option value={COURSE_FILES}>Course files</option>
                     {(modules.data ?? []).map((m) => (
                       <option key={m.id} value={m.id}>
                         {m.title.slice(0, 30)}
                       </option>
                     ))}
-                    {!modules.data?.some(
-                      (m) => m.title.toLowerCase() === "general",
-                    ) && <option value={NEW_GENERAL}>➕ General (new)</option>}
                   </select>
                   <input
                     type="checkbox"
@@ -184,8 +190,9 @@ export function CanvasFilesModal({
         )}
 
         <p className="gen-hint">
-          Extract off = store the file for viewing only (fine for syllabi) — no
-          text layer, search, or AI use.
+          "Course files" = the course's general area (syllabus, COA, …) —
+          extraction and AI default off there; the built-in PDF view still
+          supports Ctrl+F. Modules default to full extraction.
         </p>
 
         {progress && (

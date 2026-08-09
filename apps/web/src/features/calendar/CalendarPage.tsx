@@ -16,6 +16,7 @@ import {
   api,
   type CalendarEventOut,
   type CalendarMonthOut,
+  type CalTaskOut,
   type DayMarkOut,
   type GcalEventOut,
   type MeetingOut,
@@ -26,6 +27,34 @@ import "./calendar.css";
 
 export function fmtMin(minute: number): string {
   return `${Math.floor(minute / 60)}:${String(minute % 60).padStart(2, "0")}`;
+}
+
+// Stable muted colors for external calendar feeds (distinct from course accents)
+const FEED_PALETTE = ["#8A5A00", "#4A6B8A", "#7A4A8A", "#3E7A6E", "#8A3E52"];
+const FEED_COLOR_KEY = "manabi-feed-colors";
+
+function feedOverrides(): Record<string, string> {
+  try {
+    return JSON.parse(localStorage.getItem(FEED_COLOR_KEY) ?? "{}");
+  } catch {
+    return {};
+  }
+}
+
+export function setFeedColor(name: string, color: string) {
+  const map = feedOverrides();
+  map[name] = color;
+  localStorage.setItem(FEED_COLOR_KEY, JSON.stringify(map));
+}
+
+export function feedColor(name: string | null): string {
+  if (!name) return "var(--ink-faint)";
+  const override = feedOverrides()[name];
+  if (override) return override;
+  if (/holiday/i.test(name)) return "#A8552E"; // holidays get a warm fixed tone
+  let h = 0;
+  for (const ch of name) h = (h * 31 + ch.charCodeAt(0)) >>> 0;
+  return FEED_PALETTE[h % FEED_PALETTE.length];
 }
 
 // ── date helpers (all local, YYYY-MM-DD strings) ─────────────────────────
@@ -88,38 +117,41 @@ function gridDates(ym: string): (string | null)[] {
   return cells;
 }
 
-interface DayData {
+export interface DayData {
   meetings: MeetingOut[];
   events: CalendarEventOut[];
   gcal: GcalEventOut[];
   marks: DayMarkOut[];
+  tasks: CalTaskOut[];
 }
 
-const EMPTY_DAY: DayData = { meetings: [], events: [], gcal: [], marks: [] };
+export const EMPTY_DAY: DayData = {
+  meetings: [],
+  events: [],
+  gcal: [],
+  marks: [],
+  tasks: [],
+};
 
 function groupByDay(data: CalendarMonthOut | undefined): Map<string, DayData> {
   const byDay = new Map<string, DayData>();
   if (!data) return byDay;
   const entry = (d: string) => {
-    if (!byDay.has(d)) byDay.set(d, { meetings: [], events: [], gcal: [], marks: [] });
+    if (!byDay.has(d))
+      byDay.set(d, { meetings: [], events: [], gcal: [], marks: [], tasks: [] });
     return byDay.get(d)!;
   };
   for (const m of data.meetings) entry(m.date).meetings.push(m);
   for (const e of data.events) entry(e.date).events.push(e);
   for (const g of data.gcal) entry(g.date).gcal.push(g);
   for (const mk of data.marks) entry(mk.date).marks.push(mk);
+  for (const t of data.tasks) entry(t.date).tasks.push(t);
   return byDay;
 }
 
-function useCalendarRange(start: string, end: string) {
-  return useQuery({
-    queryKey: ["calendar", start, end],
-    queryFn: () =>
-      api.get<CalendarMonthOut>(`/api/calendar/range?start=${start}&end=${end}`),
-  });
-}
-
-function meetingMode(
+/** Mode of one class meeting. Day marks apply ONLY to classes: no mark =
+ * onsite, sync = online (Join link), async = no meeting. */
+export function meetingMode(
   m: MeetingOut,
   day: DayData,
 ): "sync" | "async" | "onsite" {
@@ -127,8 +159,63 @@ function meetingMode(
     (mk) => mk.course_id != null && mk.course_id === m.course_id,
   );
   const whole = day.marks.find((mk) => mk.course_id === null);
-  const mode = specific?.mode ?? whole?.mode;
-  return mode ?? "onsite"; // neither sync nor async → assume onsite
+  return (specific?.mode ?? whole?.mode ?? "onsite") as "sync" | "async" | "onsite";
+}
+
+// ── Filters (persisted) ──────────────────────────────────────────────────
+
+const FILTER_KEY = "manabi-cal-hidden";
+
+function loadHidden(): Set<string> {
+  try {
+    return new Set(JSON.parse(localStorage.getItem(FILTER_KEY) ?? "[]"));
+  } catch {
+    return new Set();
+  }
+}
+
+function filterDay(day: DayData, hidden: Set<string>): DayData {
+  return {
+    meetings: hidden.has("classes") ? [] : day.meetings,
+    events: hidden.has("events") ? [] : day.events,
+    tasks: hidden.has("tasks") ? [] : day.tasks,
+    gcal: day.gcal.filter((g) => !hidden.has(`gcal:${g.calendar ?? "Google"}`)),
+    marks: day.marks,
+  };
+}
+
+// ── Chips ────────────────────────────────────────────────────────────────
+
+function TaskChip({ t }: { t: CalTaskOut }) {
+  const accent = t.accent_color ?? "var(--ink-soft)";
+  return (
+    <span
+      className={`cal-chip task${t.done ? " done" : ""}`}
+      style={{ borderColor: accent, color: accent }}
+      title={`Task: ${t.title}${t.course_code ? ` (${t.course_code})` : ""}`}
+    >
+      ☐ {t.title}
+    </span>
+  );
+}
+
+function MeetingChip({ m, day }: { m: MeetingOut; day: DayData }) {
+  const mode = meetingMode(m, day);
+  return (
+    <span
+      className={`cal-chip meeting ${mode}`}
+      style={{
+        background: `color-mix(in srgb, ${m.accent_color ?? "var(--accent-blue)"} 16%, transparent)`,
+        color: m.accent_color ?? "var(--accent-blue)",
+      }}
+      title={`${m.code} · ${fmtMin(m.start_minute)}–${fmtMin(m.end_minute)} · ${
+        mode === "sync" ? "online" : mode === "async" ? "async (no meeting)" : (m.location ?? "onsite")
+      }`}
+    >
+      {m.code.replace(/\s/g, "")} {fmtMin(m.start_minute)}
+      {mode === "sync" && <Video size={9} strokeWidth={2} className="cal-chip-video" />}
+    </span>
+  );
 }
 
 // ── Views ────────────────────────────────────────────────────────────────
@@ -162,28 +249,22 @@ function MonthView({
           >
             <span className="cal-daynum">
               {Number(date.slice(8))}
-              {wholeDayMark && (
-                <span className={`cal-mark ${wholeDayMark.mode}`}>
-                  {wholeDayMark.mode}
+              {wholeDayMark && day.meetings.length > 0 && (
+                <span
+                  className={`cal-mark ${wholeDayMark.mode}`}
+                  title={`All classes ${wholeDayMark.mode} this day`}
+                >
+                  classes {wholeDayMark.mode}
                 </span>
               )}
             </span>
             <span className="cal-chips">
-              {day.meetings.map((m, j) => {
-                const mode = meetingMode(m, day);
-                return (
-                  <span
-                    key={`m${j}`}
-                    className={`cal-chip meeting${mode === "async" ? " async" : ""}`}
-                    style={{
-                      background: `color-mix(in srgb, ${m.accent_color ?? "var(--accent-blue)"} 16%, transparent)`,
-                      color: m.accent_color ?? "var(--accent-blue)",
-                    }}
-                  >
-                    {m.code.replace(/\s/g, "")} {fmtMin(m.start_minute)}
-                  </span>
-                );
-              })}
+              {day.meetings.map((m, j) => (
+                <MeetingChip key={`m${j}`} m={m} day={day} />
+              ))}
+              {day.tasks.map((t) => (
+                <TaskChip key={`t${t.id}`} t={t} />
+              ))}
               {day.events.map((e) => (
                 <span key={`e${e.id}-${e.date}`} className="cal-chip event">
                   {e.title}
@@ -193,6 +274,10 @@ function MonthView({
                 <span
                   key={`g${j}`}
                   className="cal-chip gcal"
+                  style={{
+                    background: `color-mix(in srgb, ${feedColor(g.calendar)} 15%, transparent)`,
+                    color: feedColor(g.calendar),
+                  }}
                   title={`${g.title}${g.calendar ? ` (${g.calendar})` : ""}`}
                 >
                   {g.title}
@@ -240,8 +325,16 @@ function WeekView({
       {days.map((date) => {
         const day = byDay.get(date) ?? EMPTY_DAY;
         const allDay = [
-          ...day.gcal.filter((g) => g.start_minute == null),
-          ...day.events.filter((e) => e.start_minute == null),
+          ...day.tasks.map((t) => ({
+            title: `☐ ${t.title}`,
+            color: t.accent_color ?? "var(--ink-soft)",
+          })),
+          ...day.gcal
+            .filter((g) => g.start_minute == null)
+            .map((g) => ({ title: g.title, color: feedColor(g.calendar) })),
+          ...day.events
+            .filter((e) => e.start_minute == null)
+            .map((e) => ({ title: e.title, color: "var(--ink-soft)" })),
         ];
         const wholeDayMark = day.marks.find((m) => m.course_id === null);
         const label = toDate(date).toLocaleDateString(undefined, {
@@ -255,7 +348,7 @@ function WeekView({
               onClick={() => onSelectDay(date)}
             >
               {label}
-              {wholeDayMark && (
+              {wholeDayMark && day.meetings.length > 0 && (
                 <span className={`cal-mark ${wholeDayMark.mode}`}>
                   {wholeDayMark.mode}
                 </span>
@@ -263,7 +356,15 @@ function WeekView({
             </button>
             <div className="week-allday">
               {allDay.map((item, i) => (
-                <span key={i} className="cal-chip gcal" title={item.title}>
+                <span
+                  key={i}
+                  className="cal-chip gcal"
+                  style={{
+                    background: `color-mix(in srgb, ${item.color} 15%, transparent)`,
+                    color: item.color,
+                  }}
+                  title={item.title}
+                >
                   {item.title}
                 </span>
               ))}
@@ -289,9 +390,9 @@ function WeekView({
                       borderLeftColor: accent,
                       background: `color-mix(in srgb, ${accent} 13%, var(--surface-raised))`,
                     }}
-                    title={`${m.code} ${fmtMin(m.start_minute)}–${fmtMin(m.end_minute)}${
-                      m.location ? ` · ${m.location}` : ""
-                    } · ${mode}`}
+                    title={`${m.code} ${fmtMin(m.start_minute)}–${fmtMin(m.end_minute)} · ${
+                      mode === "sync" ? "online" : mode === "async" ? "async" : (m.location ?? "onsite")
+                    }`}
                   >
                     <span style={{ color: accent }}>{m.code.replace(/\s/g, "")}</span>
                     {mode === "sync" && m.meeting_url && (
@@ -333,6 +434,9 @@ function WeekView({
                     style={{
                       top: `${((g.start_minute! - WEEK_START_MIN) / WEEK_SPAN) * 100}%`,
                       height: `${(((g.end_minute ?? g.start_minute! + 60) - g.start_minute!) / WEEK_SPAN) * 100}%`,
+                      borderLeftColor: feedColor(g.calendar),
+                      background: `color-mix(in srgb, ${feedColor(g.calendar)} 13%, var(--surface-raised))`,
+                      color: feedColor(g.calendar),
                     }}
                     title={`${g.title}${g.calendar ? ` (${g.calendar})` : ""}`}
                   >
@@ -363,12 +467,26 @@ function DayView({ date, day }: { date: string; day: DayData }) {
         minute: m.start_minute as number | null,
         end: m.end_minute as number | null,
         label: m.code,
-        sub: `${mode}${m.location ? ` · ${m.location}` : ""}`,
+        sub:
+          mode === "sync"
+            ? "online"
+            : mode === "async"
+              ? "async — no meeting"
+              : (m.location ?? "onsite"),
         kind: `meeting ${mode}`,
         accent: m.accent_color,
         url: mode === "sync" ? m.meeting_url : null,
       };
     }),
+    ...day.tasks.map((t) => ({
+      minute: t.due_minute,
+      end: null,
+      label: `☐ ${t.title}`,
+      sub: t.course_code ?? "task",
+      kind: "task",
+      accent: t.accent_color,
+      url: null,
+    })),
     ...day.events.map((e) => ({
       minute: e.start_minute,
       end: e.end_minute,
@@ -384,16 +502,14 @@ function DayView({ date, day }: { date: string; day: DayData }) {
       label: g.title,
       sub: [g.calendar, g.location].filter(Boolean).join(" · "),
       kind: "gcal",
-      accent: null,
+      accent: feedColor(g.calendar),
       url: null,
     })),
   ].sort((a, b) => (a.minute ?? -1) - (b.minute ?? -1));
 
   return (
     <div className="dayview">
-      {items.length === 0 && (
-        <p className="dayview-empty">Nothing on {date}.</p>
-      )}
+      {items.length === 0 && <p className="dayview-empty">Nothing on {date}.</p>}
       {items.map((it, i) => (
         <div key={i} className={`dayview-row ${it.kind}`}>
           <span className="dayview-time mono">
@@ -410,12 +526,7 @@ function DayView({ date, day }: { date: string; day: DayData }) {
             {it.sub && <span className="dayview-sub"> {it.sub}</span>}
           </span>
           {it.url && (
-            <a
-              className="btn dayview-join"
-              href={it.url}
-              target="_blank"
-              rel="noreferrer"
-            >
+            <a className="btn dayview-join" href={it.url} target="_blank" rel="noreferrer">
               <Video size={14} strokeWidth={1.75} /> Join
             </a>
           )}
@@ -434,6 +545,8 @@ export function CalendarPage() {
   const [editingEvent, setEditingEvent] = useState<
     CalendarEventOut | "new" | { date: string } | null
   >(null);
+  const [hidden, setHidden] = useState<Set<string>>(loadHidden);
+  const [, setColorTick] = useState(0); // re-render after a feed color change
   const queryClient = useQueryClient();
 
   const view: CalendarView = search.view ?? "month";
@@ -441,17 +554,39 @@ export function CalendarPage() {
   const anchor = search.d ?? todayStr();
   const weekStart = startOfWeek(anchor);
 
-  // range for the active view
   const [start, end] =
     view === "month"
-      ? [`${ym}-01`, `${ym}-${String(new Date(Number(ym.slice(0, 4)), Number(ym.slice(5, 7)), 0).getDate()).padStart(2, "0")}`]
+      ? [
+          `${ym}-01`,
+          `${ym}-${String(new Date(Number(ym.slice(0, 4)), Number(ym.slice(5, 7)), 0).getDate()).padStart(2, "0")}`,
+        ]
       : view === "week"
         ? [weekStart, addDays(weekStart, 6)]
         : [anchor, anchor];
 
-  const range = useCalendarRange(start, end);
+  const range = useQuery({
+    queryKey: ["calendar", start, end],
+    queryFn: () =>
+      api.get<CalendarMonthOut>(`/api/calendar/range?start=${start}&end=${end}`),
+  });
   const data = range.data;
-  const byDay = groupByDay(data);
+
+  const rawByDay = groupByDay(data);
+  const byDay = new Map(
+    [...rawByDay.entries()].map(([d, day]) => [d, filterDay(day, hidden)]),
+  );
+  const feedNames = [
+    ...new Set((data?.gcal ?? []).map((g) => g.calendar ?? "Google")),
+  ].sort();
+
+  const toggleFilter = (key: string) =>
+    setHidden((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      localStorage.setItem(FILTER_KEY, JSON.stringify([...next]));
+      return next;
+    });
 
   const refreshGcal = useMutation({
     mutationFn: () =>
@@ -483,6 +618,17 @@ export function CalendarPage() {
     else if (view === "week") go({ d: addDays(weekStart, delta * 7) });
     else go({ d: addDays(anchor, delta) });
   }
+
+  const filters: { key: string; label: string; color?: string }[] = [
+    { key: "classes", label: "Classes" },
+    { key: "events", label: "Events" },
+    { key: "tasks", label: "Tasks" },
+    ...feedNames.map((n) => ({
+      key: `gcal:${n}`,
+      label: n,
+      color: feedColor(n),
+    })),
+  ];
 
   return (
     <div className="cal-page">
@@ -532,6 +678,37 @@ export function CalendarPage() {
         </div>
       </header>
 
+      <div className="cal-filters">
+        {filters.map((f) => (
+          <span key={f.key} className="cal-filter-wrap">
+            <button
+              className={`cal-filter${hidden.has(f.key) ? " off" : ""}`}
+              style={
+                f.color && !hidden.has(f.key)
+                  ? { borderColor: f.color, color: f.color }
+                  : undefined
+              }
+              onClick={() => toggleFilter(f.key)}
+            >
+              {f.label}
+            </button>
+            {f.color && (
+              <input
+                type="color"
+                className="cal-filter-color"
+                value={f.color.startsWith("#") ? f.color : "#888888"}
+                onChange={(e) => {
+                  setFeedColor(f.label, e.target.value);
+                  setColorTick((t) => t + 1);
+                }}
+                title={`Pick a color for ${f.label}`}
+                aria-label={`Color for ${f.label}`}
+              />
+            )}
+          </span>
+        ))}
+      </div>
+
       {refreshGcal.data?.error && (
         <p className="error-text">Google sync: {refreshGcal.data.error}</p>
       )}
@@ -540,7 +717,11 @@ export function CalendarPage() {
         <MonthView ym={clamped} byDay={byDay} onSelectDay={setSelectedDay} />
       )}
       {view === "week" && (
-        <WeekView weekStart={weekStart} byDay={byDay} onSelectDay={(d) => go({ view: "day", d })} />
+        <WeekView
+          weekStart={weekStart}
+          byDay={byDay}
+          onSelectDay={(d) => setSelectedDay(d)}
+        />
       )}
       {view === "day" && <DayView date={anchor} day={byDay.get(anchor) ?? EMPTY_DAY} />}
 
