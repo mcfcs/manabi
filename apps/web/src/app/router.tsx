@@ -5,9 +5,12 @@ import {
   Outlet,
 } from "@tanstack/react-router";
 
+import { CalendarPage } from "../features/calendar/CalendarPage";
 import { CoursePage } from "../features/courses/CoursePage";
 import { HomePage } from "../features/courses/HomePage";
 import { ModuleWorkspace } from "../features/modules/ModuleWorkspace";
+import { SchedulePage } from "../features/schedule/SchedulePage";
+import { TasksPage } from "../features/tasks/TasksPage";
 import { DocumentViewer } from "../features/viewer/DocumentViewer";
 import { AppGate } from "./AppGate";
 
@@ -78,11 +81,34 @@ const documentRoute = createRoute({
   }),
 });
 
+const scheduleRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "/schedule",
+  component: SchedulePage,
+});
+
+const calendarRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "/calendar",
+  component: CalendarPage,
+  validateSearch: (search: Record<string, unknown>): { ym?: string } =>
+    /^\d{4}-\d{2}$/.test(String(search.ym)) ? { ym: String(search.ym) } : {},
+});
+
+const tasksRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "/tasks",
+  component: TasksPage,
+});
+
 const routeTree = rootRoute.addChildren([
   homeRoute,
   courseRoute,
   moduleRoute,
   documentRoute,
+  scheduleRoute,
+  calendarRoute,
+  tasksRoute,
 ]);
 
 export const router = createRouter({ routeTree });

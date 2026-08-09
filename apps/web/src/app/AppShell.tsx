@@ -1,11 +1,33 @@
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
-import { Home, Loader2 } from "lucide-react";
+import {
+  CalendarClock,
+  CalendarDays,
+  Home,
+  ListTodo,
+  Loader2,
+  Settings2,
+} from "lucide-react";
 import { type ReactNode, useEffect, useState } from "react";
 
+import { SettingsDialog } from "../features/settings/SettingsDialog";
 import { api, type CourseOut, type HealthOut, type UserOut } from "../lib/api";
 import { getRecentModules } from "../lib/recents";
 import "./shell.css";
+
+function useDueCount(): number {
+  const due = useQuery({
+    queryKey: ["tasks", "due-count"],
+    queryFn: () => api.get<{ count: number }>("/api/tasks/due-count"),
+    refetchInterval: 60_000,
+  });
+  return due.data?.count ?? 0;
+}
+
+function DueBadge({ count }: { count: number }) {
+  if (count === 0) return null;
+  return <span className="due-badge">{count}</span>;
+}
 
 function AiStatus() {
   const health = useQuery({
@@ -96,6 +118,8 @@ export function AppShell({
     staleTime: 30_000,
   });
   const recents = getRecentModules();
+  const dueCount = useDueCount();
+  const [settingsOpen, setSettingsOpen] = useState(false);
 
   return (
     <div className="shell">
@@ -108,7 +132,33 @@ export function AppShell({
         </Link>
 
         <div className="rail-links">
-          <span className="rail-heading">Courses</span>
+          <Link
+            to="/schedule"
+            className="rail-link"
+            activeProps={{ className: "rail-link active" }}
+          >
+            <CalendarClock size={16} strokeWidth={1.5} />
+            <span>Schedule</span>
+          </Link>
+          <Link
+            to="/calendar"
+            className="rail-link"
+            activeProps={{ className: "rail-link active" }}
+          >
+            <CalendarDays size={16} strokeWidth={1.5} />
+            <span>Calendar</span>
+          </Link>
+          <Link
+            to="/tasks"
+            className="rail-link"
+            activeProps={{ className: "rail-link active" }}
+          >
+            <ListTodo size={16} strokeWidth={1.5} />
+            <span>Tasks</span>
+            <DueBadge count={dueCount} />
+          </Link>
+
+          <span className="rail-heading rail-heading-gap">Courses</span>
           {(courses.data ?? []).map((c) => (
             <Link
               key={c.id}
@@ -152,23 +202,57 @@ export function AppShell({
         <div className="rail-foot">
           <Activity />
           <AiStatus />
-          <div className="rail-user mono" title={user.email}>
-            {user.email}
+          <div className="rail-foot-row">
+            <div className="rail-user mono" title={user.email}>
+              {user.email}
+            </div>
+            <button
+              className="icon-btn"
+              onClick={() => setSettingsOpen(true)}
+              aria-label="Settings"
+            >
+              <Settings2 size={15} strokeWidth={1.5} />
+            </button>
           </div>
         </div>
       </nav>
 
       <main className="content">{children}</main>
       <UpdateToast />
+      {settingsOpen && <SettingsDialog onClose={() => setSettingsOpen(false)} />}
 
       <nav className="bottom-bar" aria-label="Main">
         <Link to="/" className="bottom-link" activeProps={{ className: "bottom-link active" }}>
           <Home size={20} strokeWidth={1.5} />
           <span>Home</span>
         </Link>
-        <div className="bottom-link" aria-hidden>
-          <AiStatus />
-        </div>
+        <Link
+          to="/schedule"
+          className="bottom-link"
+          activeProps={{ className: "bottom-link active" }}
+        >
+          <CalendarClock size={20} strokeWidth={1.5} />
+          <span>Schedule</span>
+        </Link>
+        <Link
+          to="/calendar"
+          className="bottom-link"
+          activeProps={{ className: "bottom-link active" }}
+        >
+          <CalendarDays size={20} strokeWidth={1.5} />
+          <span>Calendar</span>
+        </Link>
+        <Link
+          to="/tasks"
+          className="bottom-link"
+          activeProps={{ className: "bottom-link active" }}
+        >
+          <span className="bottom-link-icon">
+            <ListTodo size={20} strokeWidth={1.5} />
+            <DueBadge count={dueCount} />
+          </span>
+          <span>Tasks</span>
+        </Link>
       </nav>
     </div>
   );

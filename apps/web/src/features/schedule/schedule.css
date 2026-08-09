@@ -1,0 +1,180 @@
+.schedule-page {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-4);
+}
+
+.schedule-head {
+  display: flex;
+  align-items: baseline;
+  gap: var(--s-3);
+}
+.schedule-head h1 {
+  font-family: var(--font-display);
+  font-size: 26px;
+  margin: 0;
+}
+.schedule-term {
+  font-size: 13px;
+  color: var(--ink-faint);
+}
+
+/* ── Time grid (desktop) ───────────────────────────────────── */
+
+.timegrid {
+  display: grid;
+  grid-template-columns: 52px repeat(5, 1fr);
+  gap: 0 var(--s-1);
+  min-height: 640px;
+}
+
+.timegrid-gutter {
+  position: relative;
+  margin-top: 28px; /* aligns with day body below the head row */
+}
+.timegrid-hour {
+  position: absolute;
+  right: var(--s-2);
+  transform: translateY(-50%);
+  font-size: 11px;
+  color: var(--ink-faint);
+}
+
+.timegrid-day {
+  display: flex;
+  flex-direction: column;
+}
+.timegrid-day-head {
+  height: 28px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--ink-soft);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+.timegrid-day-body {
+  position: relative;
+  flex: 1;
+  border-left: 1px solid var(--rule);
+  background: var(--surface-raised);
+  border-radius: var(--radius-sm);
+}
+.timegrid-line {
+  position: absolute;
+  left: 0;
+  right: 0;
+  border-top: 1px solid var(--rule);
+  opacity: 0.6;
+}
+
+.sched-block {
+  position: absolute;
+  left: 3px;
+  right: 3px;
+  border: none;
+  border-left: 3px solid;
+  border-radius: var(--radius-sm);
+  padding: var(--s-1) var(--s-2);
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 1px;
+  text-align: left;
+  overflow: hidden;
+  cursor: pointer;
+  transition: filter var(--t-fast) var(--ease);
+}
+.sched-block:hover {
+  filter: brightness(0.97);
+}
+.sched-block-code {
+  font-weight: 700;
+  font-size: 12.5px;
+  line-height: 1.2;
+}
+.sched-block-time {
+  font-size: 11px;
+  color: var(--ink-soft);
+}
+.sched-block-room {
+  font-size: 11px;
+  color: var(--ink-faint);
+}
+
+/* ── Mobile stacked list ───────────────────────────────────── */
+
+.schedule-list {
+  display: none;
+}
+
+@media (max-width: 767px) {
+  .timegrid {
+    display: none;
+  }
+  .schedule-list {
+    display: flex;
+    flex-direction: column;
+    gap: var(--s-4);
+  }
+  .schedule-list-day h2 {
+    font-size: 13px;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--ink-soft);
+    margin: 0 0 var(--s-2);
+  }
+  .schedule-list .sched-block {
+    position: static;
+    width: 100%;
+    margin-bottom: var(--s-2);
+  }
+}
+
+/* ── TBA aside ─────────────────────────────────────────────── */
+
+.schedule-tba h2 {
+  font-size: 13px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--ink-soft);
+  margin: 0 0 var(--s-2);
+}
+.tba-card {
+  display: flex;
+  align-items: center;
+  gap: var(--s-3);
+  padding: var(--s-3);
+  background: var(--surface-raised);
+  border: 1px solid var(--rule);
+  border-radius: var(--radius-sm);
+  max-width: 460px;
+}
+.tba-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+.tba-body {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  flex: 1;
+}
+.tba-code {
+  font-weight: 600;
+}
+.tba-name {
+  font-size: 12.5px;
+  color: var(--ink-soft);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.tba-meta {
+  font-size: 12px;
+  color: var(--ink-faint);
+}

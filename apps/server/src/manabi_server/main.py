@@ -1,3 +1,6 @@
+import asyncio
+import contextlib
+from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException
@@ -6,6 +9,7 @@ from fastapi.staticfiles import StaticFiles
 
 from manabi_server.api import (
     artifacts,
+    calendar,
     canvas,
     chat,
     courses,
@@ -14,11 +18,36 @@ from manabi_server.api import (
     jobs,
     modules,
     notes,
+    push,
+    schedule,
+    tasks,
     user,
+)
+from manabi_server.api import (
+    settings as settings_api,
 )
 from manabi_server.config import get_settings
 
-app = FastAPI(title="Manabi", docs_url="/api/docs", openapi_url="/api/openapi.json")
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    from manabi_server import db as db_mod
+    from manabi_server.services.scheduler import run_scheduler
+
+    db_mod.get_engine()
+    task = asyncio.create_task(run_scheduler(db_mod._sessionmaker))
+    yield
+    task.cancel()
+    with contextlib.suppress(asyncio.CancelledError):
+        await task
+
+
+app = FastAPI(
+    title="Manabi",
+    docs_url="/api/docs",
+    openapi_url="/api/openapi.json",
+    lifespan=lifespan,
+)
 
 app.include_router(health.router)
 app.include_router(user.router)
@@ -30,6 +59,11 @@ app.include_router(notes.router)
 app.include_router(artifacts.router)
 app.include_router(chat.router)
 app.include_router(canvas.router)
+app.include_router(schedule.router)
+app.include_router(calendar.router)
+app.include_router(tasks.router)
+app.include_router(push.router)
+app.include_router(settings_api.router)
 
 # Serve the built SPA (apps/web/dist) so one process on 0.0.0.0:56690 covers
 # API + website for every device on the tailnet. During `pnpm dev`, Vite

@@ -4,6 +4,7 @@ from pydantic import BaseModel
 from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from manabi_server.config import get_settings
 from manabi_server.db import get_db
 from manabi_server.security import get_default_user, require_csrf
 
@@ -40,10 +41,18 @@ class CourseOut(BaseModel):
     module_count: int
     document_count: int = 0
     card_count: int = 0
+    canvas_url: str | None = None
 
 
 class ReorderIn(BaseModel):
     ids: list[int]
+
+
+def canvas_course_url(canvas_course_id: int | None) -> str | None:
+    base = get_settings().canvas_base_url.rstrip("/")
+    if not base or not canvas_course_id:
+        return None
+    return f"{base}/courses/{canvas_course_id}"
 
 
 def _course_out(
@@ -61,6 +70,7 @@ def _course_out(
         module_count=module_count,
         document_count=document_count,
         card_count=card_count,
+        canvas_url=canvas_course_url(course.canvas_course_id),
     )
 
 

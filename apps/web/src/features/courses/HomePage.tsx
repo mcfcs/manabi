@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
-import { Plus } from "lucide-react";
+import { ExternalLink, Plus } from "lucide-react";
 import { type FormEvent, useState } from "react";
 
 import { Modal } from "../../components/Modal";
@@ -163,28 +163,41 @@ export function HomePage() {
       {courses.data && courses.data.length > 0 && (
         <div className="course-grid">
           {courses.data.map((course) => (
-            <Link
-              key={course.id}
-              to="/courses/$courseId"
-              params={{ courseId: String(course.id) }}
-              className="course-card"
-            >
-              <span
-                className="course-accent"
-                style={{ background: course.accent_color ?? "var(--accent-blue)" }}
-              />
-              <div className="course-card-body">
-                <span className="course-code">{course.code}</span>
-                <span className="course-name">{course.name}</span>
-                <span className="course-meta">
-                  {course.module_count}{" "}
-                  {course.module_count === 1 ? "module" : "modules"}
-                  {course.document_count > 0 && ` · ${course.document_count} docs`}
-                  {course.card_count > 0 && ` · ${course.card_count} cards`}
-                  {course.term ? ` · ${course.term}` : ""}
-                </span>
-              </div>
-            </Link>
+            <div key={course.id} className="course-card-wrap">
+              <Link
+                to="/courses/$courseId"
+                params={{ courseId: String(course.id) }}
+                className="course-card"
+              >
+                <span
+                  className="course-accent"
+                  style={{ background: course.accent_color ?? "var(--accent-blue)" }}
+                />
+                <div className="course-card-body">
+                  <span className="course-code">{course.code}</span>
+                  <span className="course-name">{course.name}</span>
+                  <span className="course-meta">
+                    {course.module_count}{" "}
+                    {course.module_count === 1 ? "module" : "modules"}
+                    {course.document_count > 0 && ` · ${course.document_count} docs`}
+                    {course.card_count > 0 && ` · ${course.card_count} cards`}
+                    {course.term ? ` · ${course.term}` : ""}
+                  </span>
+                </div>
+              </Link>
+              {course.canvas_url && (
+                <a
+                  className="icon-btn course-canvas-link"
+                  href={course.canvas_url}
+                  target="_blank"
+                  rel="noreferrer"
+                  aria-label={`Open ${course.code} in Canvas`}
+                  title="Open in Canvas"
+                >
+                  <ExternalLink size={14} strokeWidth={1.5} />
+                </a>
+              )}
+            </div>
           ))}
         </div>
       )}

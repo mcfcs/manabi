@@ -1,0 +1,80 @@
+"""App settings (single row): semester window, Google ICS feed, reminders."""
+
+from datetime import date, datetime
+
+from fastapi import APIRouter, Depends
+from manabi_core.models import AppSettings, GcalEvent
+from pydantic import BaseModel
+from sqlalchemy import delete
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from manabi_server.config import get_settings
+from manabi_server.db import get_db
+from manabi_server.security import require_csrf
+
+router = APIRouter(prefix="/api/settings", tags=["settings"])
+
+
+class SettingsOut(BaseModel):
+    semester_start: date
+    semester_end: date
+    gcal_configured: bool
+    gcal_url_tail: str | None  # last chars only — the URL is a secret
+    gcal_last_synced_at: datetime | None
+    gcal_last_error: str | None
+    class_reminders: bool
+    push_configured: bool  # VAPID keys present in .env
+
+
+class SettingsPatch(BaseModel):
+    semester_start: date | None = None
+    semester_end: date | None = None
+    gcal_ics_url: str | None = None  # "" clears the feed
+    class_reminders: bool | None = None
+
+
+async def get_app_settings(db: AsyncSession) -> AppSettings:
+    row = await db.get(AppSettings, 1)
+    assert row is not None  # seeded by migration 0011
+    return row
+
+
+def _out(row: AppSettings) -> SettingsOut:
+    env = get_settings()
+    return SettingsOut(
+        semester_start=row.semester_start,
+        semester_end=row.semester_end,
+        gcal_configured=bool(row.gcal_ics_url),
+        gcal_url_tail=f"…{row.gcal_ics_url[-18:]}" if row.gcal_ics_url else None,
+        gcal_last_synced_at=row.gcal_last_synced_at,
+        gcal_last_error=row.gcal_last_error,
+        class_reminders=row.class_reminders,
+        push_configured=bool(env.vapid_public_key and env.vapid_private_key),
+    )
+
+
+@router.get("")
+async def read_settings(db: AsyncSession = Depends(get_db)) -> SettingsOut:
+    return _out(await get_app_settings(db))
+
+
+@router.patch("", dependencies=[Depends(require_csrf)])
+async def patch_settings(
+    data: SettingsPatch, db: AsyncSession = Depends(get_db)
+) -> SettingsOut:
+    row = await get_app_settings(db)
+    if data.semester_start is not None:
+        row.semester_start = data.semester_start
+    if data.semester_end is not None:
+        row.semester_end = data.semester_end
+    if data.class_reminders is not None:
+        row.class_reminders = data.class_reminders
+    if data.gcal_ics_url is not None:
+        url = data.gcal_ics_url.strip()
+        row.gcal_ics_url = url or None
+        row.gcal_last_synced_at = None
+        row.gcal_last_error = None
+        if not url:
+            await db.execute(delete(GcalEvent))
+    await db.commit()
+    return _out(row)

@@ -17,6 +17,10 @@ class Settings(CoreSettings):
     # Canvas LMS importer — token stays server-side only
     canvas_base_url: str = ""  # e.g. https://ateneo.instructure.com
     canvas_access_token: str = ""
+    # Web Push (generate with: uv run vapid --gen  then  uv run vapid --applicationServerKey)
+    vapid_public_key: str = ""  # base64url application server key
+    vapid_private_key: str = ""
+    vapid_sub: str = "mailto:gregoriodelfinpascua@gmail.com"
     app_origin: str = "http://localhost:5173"
     # Extra origins accepted by the CSRF Origin check (dev servers etc.)
     extra_origins: list[str] = ["http://localhost:5173", "http://127.0.0.1:5173"]

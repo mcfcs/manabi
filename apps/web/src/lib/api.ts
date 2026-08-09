@@ -93,6 +93,108 @@ export interface CourseOut {
   module_count: number;
   document_count: number;
   card_count: number;
+  canvas_url: string | null;
+}
+
+// ── Increment 9: schedule / calendar / tasks / settings ─────────────────
+
+export interface ScheduleBlockOut {
+  id: number;
+  course_id: number;
+  code: string;
+  name: string;
+  accent_color: string | null;
+  day_of_week: number;
+  start_minute: number;
+  end_minute: number;
+  location: string | null;
+}
+
+export interface UnscheduledCourseOut {
+  course_id: number;
+  code: string;
+  name: string;
+  instructor: string | null;
+  accent_color: string | null;
+  canvas_url: string | null;
+}
+
+export interface ScheduleOut {
+  blocks: ScheduleBlockOut[];
+  unscheduled: UnscheduledCourseOut[];
+}
+
+export interface MeetingOut {
+  date: string;
+  course_id: number;
+  code: string;
+  accent_color: string | null;
+  start_minute: number;
+  end_minute: number;
+  location: string | null;
+}
+
+export interface CalendarEventOut {
+  id: number;
+  title: string;
+  notes: string | null;
+  course_id: number | null;
+  date: string;
+  start_minute: number | null;
+  end_minute: number | null;
+  repeat_weekly: boolean;
+  repeat_until: string | null;
+}
+
+export interface GcalEventOut {
+  date: string;
+  title: string;
+  start_minute: number | null;
+  end_minute: number | null;
+  location: string | null;
+}
+
+export interface DayMarkOut {
+  date: string;
+  course_id: number | null;
+  mode: "sync" | "async";
+  note: string | null;
+}
+
+export interface CalendarMonthOut {
+  ym: string;
+  semester_start: string;
+  semester_end: string;
+  meetings: MeetingOut[];
+  events: CalendarEventOut[];
+  gcal: GcalEventOut[];
+  marks: DayMarkOut[];
+  gcal_configured: boolean;
+}
+
+export interface TaskOut {
+  id: number;
+  title: string;
+  notes: string | null;
+  course_id: number | null;
+  course_code: string | null;
+  course_accent_color: string | null;
+  due_date: string | null;
+  due_minute: number | null;
+  done: boolean;
+  source: "manual" | "canvas";
+  created_at: string;
+}
+
+export interface SettingsOut {
+  semester_start: string;
+  semester_end: string;
+  gcal_configured: boolean;
+  gcal_url_tail: string | null;
+  gcal_last_synced_at: string | null;
+  gcal_last_error: string | null;
+  class_reminders: boolean;
+  push_configured: boolean;
 }
 
 export interface ModuleOut {

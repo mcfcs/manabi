@@ -6,16 +6,20 @@ Provenance and module isolation live in this module; see docs/plan.
 """
 
 import enum
-from datetime import datetime
+from datetime import date, datetime
 
 from pgvector.sqlalchemy import Vector
 from sqlalchemy import (
     JSON,
     BigInteger,
+    Boolean,
+    CheckConstraint,
+    Date,
     DateTime,
     Enum,
     ForeignKey,
     Index,
+    SmallInteger,
     String,
     Text,
     UniqueConstraint,
@@ -73,6 +77,7 @@ class Course(Base, TimestampMixin):
     accent_color: Mapped[str | None] = mapped_column(String(16))
     position: Mapped[int] = mapped_column(nullable=False, default=0)
     archived_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    canvas_course_id: Mapped[int | None] = mapped_column(BigInteger)
 
     modules: Mapped[list["Module"]] = relationship(
         back_populates="course", order_by="Module.position"
@@ -515,3 +520,144 @@ class AINodeHeartbeat(Base):
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
     gpu_info: Mapped[dict | None] = mapped_column(JSON)
+
+
+# ── Increment 9: schedule, calendar, tasks, push ──────────────────────────
+# Timezone rule: calendar-shaped data stores naive local (Asia/Manila) values
+# as DATE + minutes-since-midnight INT columns. Audit fields (done_at, …)
+# stay timestamptz. Conversions happen only at boundaries (Canvas, Google).
+
+
+class ScheduleBlock(Base, TimestampMixin):
+    """One weekly class meeting (a course can have several)."""
+
+    __tablename__ = "schedule_blocks"
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    course_id: Mapped[int] = mapped_column(
+        BigInteger, ForeignKey("courses.id", ondelete="CASCADE"), nullable=False
+    )
+    day_of_week: Mapped[int] = mapped_column(SmallInteger, nullable=False)  # 0=Mon
+    start_minute: Mapped[int] = mapped_column(nullable=False)
+    end_minute: Mapped[int] = mapped_column(nullable=False)
+    location: Mapped[str | None] = mapped_column(String(64))
+
+    __table_args__ = (
+        Index("ix_schedule_blocks_course_id", "course_id"),
+        CheckConstraint("end_minute > start_minute", name="ck_schedule_block_range"),
+    )
+
+
+class AppSettings(Base):
+    """Single-row app configuration (id always 1)."""
+
+    __tablename__ = "app_settings"
+
+    id: Mapped[int] = mapped_column(SmallInteger, primary_key=True)
+    semester_start: Mapped[date] = mapped_column(Date, nullable=False)
+    semester_end: Mapped[date] = mapped_column(Date, nullable=False)
+    gcal_ics_url: Mapped[str | None] = mapped_column(Text)
+    gcal_last_synced_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    gcal_last_error: Mapped[str | None] = mapped_column(Text)
+    class_reminders: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+
+
+class CalendarEvent(Base, TimestampMixin):
+    """User-created event: one-off or weekly-repeating until a date."""
+
+    __tablename__ = "calendar_events"
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    user_id: Mapped[int] = mapped_column(
+        BigInteger, ForeignKey("users.id", ondelete="CASCADE"), nullable=False
+    )
+    title: Mapped[str] = mapped_column(String(255), nullable=False)
+    notes: Mapped[str | None] = mapped_column(Text)
+    course_id: Mapped[int | None] = mapped_column(
+        BigInteger, ForeignKey("courses.id", ondelete="SET NULL")
+    )
+    date: Mapped[date] = mapped_column(Date, nullable=False)
+    start_minute: Mapped[int | None] = mapped_column()  # both NULL = all-day
+    end_minute: Mapped[int | None] = mapped_column()
+    repeat_weekly: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    repeat_until: Mapped[date | None] = mapped_column(Date)
+
+    __table_args__ = (Index("ix_calendar_events_date", "date"),)
+
+
+class DayMark(Base):
+    """Sync/async declaration for a date — whole day (course_id NULL) or one course."""
+
+    __tablename__ = "day_marks"
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    date: Mapped[date] = mapped_column(Date, nullable=False)
+    course_id: Mapped[int | None] = mapped_column(
+        BigInteger, ForeignKey("courses.id", ondelete="CASCADE")
+    )
+    mode: Mapped[str] = mapped_column(String(8), nullable=False)  # sync | async
+    note: Mapped[str | None] = mapped_column(String(255))
+
+    __table_args__ = (
+        UniqueConstraint(
+            "date", "course_id", name="uq_day_marks_date_course",
+            postgresql_nulls_not_distinct=True,
+        ),
+    )
+
+
+class GcalEvent(Base):
+    """Read-only cache of the user's Google Calendar (secret ICS feed).
+    Wiped and rewritten on every fetch — never edited locally."""
+
+    __tablename__ = "gcal_events"
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    uid: Mapped[str] = mapped_column(String(512), nullable=False)
+    title: Mapped[str] = mapped_column(String(512), nullable=False)
+    date: Mapped[date] = mapped_column(Date, nullable=False)
+    start_minute: Mapped[int | None] = mapped_column()  # NULL = all-day
+    end_minute: Mapped[int | None] = mapped_column()
+    location: Mapped[str | None] = mapped_column(String(255))
+
+    __table_args__ = (Index("ix_gcal_events_date", "date"),)
+
+
+class StudyTask(Base, TimestampMixin):
+    """User task, optionally imported from a Canvas assignment."""
+
+    __tablename__ = "tasks"
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    user_id: Mapped[int] = mapped_column(
+        BigInteger, ForeignKey("users.id", ondelete="CASCADE"), nullable=False
+    )
+    title: Mapped[str] = mapped_column(String(512), nullable=False)
+    notes: Mapped[str | None] = mapped_column(Text)
+    course_id: Mapped[int | None] = mapped_column(
+        BigInteger, ForeignKey("courses.id", ondelete="SET NULL")
+    )
+    due_date: Mapped[date | None] = mapped_column(Date)
+    due_minute: Mapped[int | None] = mapped_column()
+    done_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    source: Mapped[str] = mapped_column(String(16), nullable=False, default="manual")
+    canvas_assignment_id: Mapped[int | None] = mapped_column(BigInteger, unique=True)
+    notified_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+    __table_args__ = (Index("ix_tasks_due_date", "due_date"),)
+
+
+class PushSubscription(Base, TimestampMixin):
+    """Web Push subscription (one row per browser/device install)."""
+
+    __tablename__ = "push_subscriptions"
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    user_id: Mapped[int] = mapped_column(
+        BigInteger, ForeignKey("users.id", ondelete="CASCADE"), nullable=False
+    )
+    endpoint: Mapped[str] = mapped_column(Text, unique=True, nullable=False)
+    p256dh: Mapped[str] = mapped_column(String(255), nullable=False)
+    auth: Mapped[str] = mapped_column(String(255), nullable=False)
+    user_agent: Mapped[str | None] = mapped_column(String(255))
+    last_success_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))

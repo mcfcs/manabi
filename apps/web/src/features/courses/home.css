@@ -102,3 +102,20 @@
   outline: 2px solid var(--ink);
   outline-offset: 2px;
 }
+
+/* Canvas link overlays the card corner — cannot nest inside the router Link */
+.course-card-wrap {
+  position: relative;
+}
+.course-card-wrap > .course-card {
+  width: 100%;
+}
+.course-canvas-link {
+  position: absolute;
+  top: var(--s-2);
+  right: var(--s-2);
+  color: var(--ink-faint);
+}
+.course-canvas-link:hover {
+  color: var(--accent-blue-deep);
+}

@@ -4,6 +4,7 @@ import {
   ArrowDown,
   ArrowUp,
   ChevronLeft,
+  ExternalLink,
   FileText,
   Pencil,
   Plus,
@@ -249,6 +250,18 @@ export function CoursePage() {
           <h1>{course ? `${course.code} · ${course.name}` : "…"}</h1>
           {course?.term && <p className="course-head-meta">{course.term}</p>}
         </div>
+        {course?.canvas_url && (
+          <a
+            className="icon-btn"
+            href={course.canvas_url}
+            target="_blank"
+            rel="noreferrer"
+            aria-label="Open in Canvas"
+            title="Open in Canvas"
+          >
+            <ExternalLink size={16} strokeWidth={1.5} />
+          </a>
+        )}
         <button
           className="icon-btn danger course-delete"
           onClick={() => removeCourse.mutate(false)}
