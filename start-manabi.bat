@@ -63,11 +63,13 @@ if "!NEED_BUILD!"=="1" (
 echo [web]      built
 
 REM ── 5. Services (each in its own window, skipped if already running) ──
-netstat -ano | findstr /r /c:":56690 .*LISTENING" >nul 2>&1
+REM Health-check the port: healthy API → skip; zombie holder → kill, then start.
+powershell -NoProfile -Command ^
+  "$c = Get-NetTCPConnection -LocalPort 56690 -State Listen -ErrorAction SilentlyContinue; if (-not $c) { exit 1 }; try { $r = Invoke-WebRequest -Uri 'http://localhost:56690/api/health' -UseBasicParsing -TimeoutSec 3; if ($r.StatusCode -eq 200) { exit 0 } } catch {}; $c | Select-Object -ExpandProperty OwningProcess -Unique | ForEach-Object { Stop-Process -Id $_ -Force -ErrorAction SilentlyContinue }; Start-Sleep -Seconds 1; exit 1"
 if errorlevel 1 (
     start "Manabi API" cmd /k uv run --package manabi-server uvicorn manabi_server.main:app --host 0.0.0.0 --port 56690
 ) else (
-    echo [api]      already running on port 56690 - not starting another
+    echo [api]      already running and healthy on port 56690 - not starting another
 )
 
 powershell -NoProfile -Command "exit ((Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -match 'manabi_ai\.worker' }).Count)" >nul 2>&1

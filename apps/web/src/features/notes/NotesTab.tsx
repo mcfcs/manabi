@@ -1,4 +1,4 @@
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Mathematics } from "@tiptap/extension-mathematics";
 import { Table } from "@tiptap/extension-table";
 import { TableCell } from "@tiptap/extension-table-cell";
@@ -75,23 +75,28 @@ export function NotesTab({ moduleId }: { moduleId: string }) {
     refetchOnWindowFocus: false,
   });
 
+  const queryClient = useQueryClient();
   const save = useCallback(
     async (pmJson: Record<string, unknown>) => {
       setSaveState("saving");
       try {
         // keepalive: the flush from pagehide must survive navigation
-        await api.put(
+        const saved = await api.put<NoteOut>(
           `/api/modules/${moduleId}/note`,
           { pm_json: pmJson },
           { keepalive: true },
         );
+        // Keep the cache mirroring the server — otherwise returning to this
+        // tab re-initializes the editor from a stale pre-save snapshot
+        // (and typing into that would overwrite the real note).
+        queryClient.setQueryData(["note", moduleId], saved);
         pendingRef.current = null;
         setSaveState("saved");
       } catch {
         setSaveState("error");
       }
     },
-    [moduleId],
+    [moduleId, queryClient],
   );
 
   const editor = useEditor(

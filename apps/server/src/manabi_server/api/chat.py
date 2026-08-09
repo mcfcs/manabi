@@ -173,7 +173,7 @@ async def post_message(
 
     # Retrieval happens here (app server owns the embedding model)
     vec = (await asyncio.to_thread(embed_texts, [content], is_query=True))[0]
-    hits = await retrieve(db, [thread.module_id], vec, content, k=8)
+    hits = await retrieve(db, [thread.module_id], vec, content, k=5)
 
     job = Job(
         user_id=user.id,

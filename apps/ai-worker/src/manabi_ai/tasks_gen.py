@@ -680,6 +680,7 @@ async def define_term(
                 ctx.source_text,
                 prompts.DEFINE_TERM_SCHEMA,
                 preview,
+                model=get_settings().effective_chat_model,
             )
             if not result.get("found") or not result.get("definition"):
                 raise GenerationError(
@@ -742,7 +743,7 @@ async def chat_answer(job_id: int, thread_id: int, chunk_ids: list[int]) -> None
                         select(ChatMessage)
                         .where(ChatMessage.thread_id == thread_id)
                         .order_by(ChatMessage.id.desc())
-                        .limit(9)
+                        .limit(7)
                     )
                 )
                 .scalars()
@@ -756,6 +757,7 @@ async def chat_answer(job_id: int, thread_id: int, chunk_ids: list[int]) -> None
                 if c.id in wanted
             ]
             ctx = build_context(chunks, None) if chunks else None
+            notes = await _load_notes_text(db, [thread.module_id])
 
             conversation = "\n\n".join(
                 f"{'STUDENT' if m.role == ChatRole.user else 'ASSISTANT'}: {m.content}"
@@ -763,12 +765,24 @@ async def chat_answer(job_id: int, thread_id: int, chunk_ids: list[int]) -> None
             )
             user_prompt = (
                 (ctx.source_text if ctx else "SOURCE MATERIAL: (none retrieved)")
+                + (
+                    f"\n\nSTUDENT NOTES (the student's own notes — reference "
+                    f"with 'According to your notes', never cite as a source):\n"
+                    f"{notes.strip()[:4000]}"
+                    if notes
+                    else ""
+                )
                 + "\n\nCONVERSATION:\n"
                 + conversation
             )
+            settings = get_settings()
             await _progress(db, job, 30, "Answering")
             result = await generate_structured(
-                prompts.CHAT_PROMPT, user_prompt, prompts.CHAT_SCHEMA, preview
+                prompts.CHAT_PROMPT,
+                user_prompt,
+                prompts.CHAT_SCHEMA,
+                preview,
+                model=settings.effective_chat_model,
             )
 
             answer = (result.get("answer") or "").strip()
@@ -802,8 +816,9 @@ async def chat_answer(job_id: int, thread_id: int, chunk_ids: list[int]) -> None
                     role=ChatRole.assistant,
                     content=answer,
                     grounded=grounded,
-                    general_knowledge=bool(result.get("general_knowledge_used"))
-                    or not grounded,
+                    # only explicit general knowledge gets the amber badge —
+                    # notes-derived answers say "According to your notes" instead
+                    general_knowledge=bool(result.get("general_knowledge_used")),
                     citations=citations_snapshot or None,
                     job_id=job.id,
                 )

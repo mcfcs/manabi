@@ -29,15 +29,19 @@ async def generate_structured(
     user: str,
     schema: dict,
     on_preview: PreviewWriter | None = None,
+    model: str | None = None,
 ) -> dict:
     """JSON-schema-constrained generation, streamed. `on_preview` receives the
     accumulated output text (throttled) so users can watch generation live.
-    2 re-asks on invalid output."""
+    2 re-asks on invalid output. `model` overrides the default (e.g. the
+    faster chat model for interactive tasks)."""
     settings = get_settings()
     last_error: Exception | None = None
     for attempt in range(3):
         try:
-            content = await _stream_chat(settings, system, user, schema, on_preview)
+            content = await _stream_chat(
+                settings, system, user, schema, on_preview, model
+            )
             return json.loads(content)
         except (json.JSONDecodeError, KeyError) as exc:
             last_error = exc
@@ -50,7 +54,12 @@ async def generate_structured(
 
 
 async def _stream_chat(
-    settings, system: str, user: str, schema: dict, on_preview: PreviewWriter | None
+    settings,
+    system: str,
+    user: str,
+    schema: dict,
+    on_preview: PreviewWriter | None,
+    model: str | None = None,
 ) -> str:
     accumulated: list[str] = []
     last_flush = 0.0
@@ -60,7 +69,7 @@ async def _stream_chat(
             "POST",
             f"{settings.ollama_url}/api/chat",
             json={
-                "model": settings.generation_model,
+                "model": model or settings.generation_model,
                 "messages": [
                     {"role": "system", "content": system},
                     {"role": "user", "content": user},
