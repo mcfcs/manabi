@@ -34,7 +34,8 @@ async def main() -> None:
     logging.basicConfig(level=logging.INFO)
     await asyncio.to_thread(_startup_embedding_sweep)
     async with app.open_async():
-        await app.run_worker_async(queues=["cpu"], concurrency=1)
+        # 2 = two documents can parse in parallel (sync tasks run in threads)
+        await app.run_worker_async(queues=["cpu"], concurrency=2)
 
 
 if __name__ == "__main__":

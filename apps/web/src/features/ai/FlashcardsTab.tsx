@@ -198,9 +198,32 @@ export function FlashcardsTab({ moduleId }: { moduleId: string }) {
     queryFn: () => api.get<DeckOut | null>(`/api/modules/${moduleId}/flashcards`),
   });
 
-  const gen = useGenerationJob(() =>
-    queryClient.invalidateQueries({ queryKey: ["deck", moduleId] }),
-  );
+  const gen = useGenerationJob(moduleId, "generate_flashcards", () => {
+    queryClient.invalidateQueries({ queryKey: ["deck", moduleId] });
+    queryClient.invalidateQueries({ queryKey: ["deck-versions", moduleId] });
+  });
+
+  const [showHistory, setShowHistory] = useState(false);
+  const [viewingVersion, setViewingVersion] = useState<number | null>(null);
+  const versions = useQuery({
+    queryKey: ["deck-versions", moduleId],
+    queryFn: () =>
+      api.get<
+        {
+          artifact_id: number;
+          generated_at: string;
+          item_count: number;
+          model_name: string;
+        }[]
+      >(`/api/modules/${moduleId}/artifacts?type=flashcard_deck`),
+    enabled: showHistory,
+  });
+  const oldDeck = useQuery({
+    queryKey: ["artifact", viewingVersion],
+    queryFn: () =>
+      api.get<DeckOut & { generated_at: string }>(`/api/artifacts/${viewingVersion}`),
+    enabled: viewingVersion != null,
+  });
 
   const generate = useMutation({
     mutationFn: () =>
@@ -221,7 +244,8 @@ export function FlashcardsTab({ moduleId }: { moduleId: string }) {
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ["deck", moduleId] }),
   });
 
-  const d = deck.data;
+  const viewingOld = viewingVersion != null && oldDeck.data != null;
+  const d = viewingOld ? oldDeck.data : deck.data;
   const activeCards = d?.cards.filter((c) => c.status === "active") ?? [];
 
   if (reviewing && activeCards.length > 0) {
@@ -237,6 +261,15 @@ export function FlashcardsTab({ moduleId }: { moduleId: string }) {
             {d.cards.length} cards · {d.model_name}
           </span>
           <span className="gen-head-spacer" />
+          <button
+            className={`btn${showHistory ? " active" : ""}`}
+            onClick={() => {
+              setShowHistory((v) => !v);
+              if (showHistory) setViewingVersion(null);
+            }}
+          >
+            History
+          </button>
           <button
             className="btn"
             onClick={() => setReviewing(true)}
@@ -255,6 +288,39 @@ export function FlashcardsTab({ moduleId }: { moduleId: string }) {
             <Sparkle size={15} strokeWidth={1.75} /> Regenerate
           </button>
         </header>
+      )}
+
+      {showHistory && versions.data && (
+        <div className="version-list">
+          {versions.data.map((v) => (
+            <button
+              key={v.artifact_id}
+              className={`version-item${
+                (viewingVersion ?? deck.data?.artifact_id) === v.artifact_id
+                  ? " current"
+                  : ""
+              }`}
+              onClick={() =>
+                setViewingVersion(
+                  v.artifact_id === deck.data?.artifact_id ? null : v.artifact_id,
+                )
+              }
+            >
+              {new Date(v.generated_at).toLocaleString()} · {v.item_count} cards ·{" "}
+              {v.model_name}
+              {v.artifact_id === deck.data?.artifact_id && " (latest)"}
+            </button>
+          ))}
+        </div>
+      )}
+
+      {viewingOld && (
+        <p className="version-banner">
+          Viewing an older deck —{" "}
+          <button className="link-btn" onClick={() => setViewingVersion(null)}>
+            back to latest
+          </button>
+        </p>
       )}
 
       {!aiOnline && (gen.running || !d) && <AiOfflineBanner />}
@@ -308,6 +374,7 @@ export function FlashcardsTab({ moduleId }: { moduleId: string }) {
                   {card.edited && <span className="badge stale">edited</span>}
                 </span>
               </div>
+              {viewingOld ? null : (
               <div className="doc-actions">
                 <button
                   className="icon-btn"
@@ -332,6 +399,7 @@ export function FlashcardsTab({ moduleId }: { moduleId: string }) {
                   <Trash2 size={15} strokeWidth={1.5} />
                 </button>
               </div>
+              )}
             </div>
           ))}
         </div>

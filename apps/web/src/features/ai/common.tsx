@@ -5,12 +5,24 @@ import { useEffect, useState } from "react";
 
 import {
   api,
+  type ActiveJobOut,
   type CitationOut,
   type HealthOut,
   type JobOut,
   type Staleness,
 } from "../../lib/api";
 import "./ai.css";
+
+/** Queued/running generation jobs for a module — polled so progress
+ * survives tab switches and page reloads. */
+export function useActiveJobs(moduleId: string) {
+  return useQuery({
+    queryKey: ["active-jobs", moduleId],
+    queryFn: () => api.get<ActiveJobOut[]>(`/api/modules/${moduleId}/active-jobs`),
+    refetchInterval: (query) =>
+      (query.state.data?.length ?? 0) > 0 ? 2000 : 15_000,
+  });
+}
 
 /** Poll a generation job until it reaches a terminal state. */
 export function useJob(jobId: number | null) {
@@ -25,15 +37,30 @@ export function useJob(jobId: number | null) {
   });
 }
 
-/** Track a generation job from defer to completion; fires onDone once. */
-export function useGenerationJob(onDone: () => void) {
+/** Track a generation job from defer to completion; fires onDone once.
+ * Resumes automatically from the server's active-jobs list, so progress
+ * survives navigating away and full page reloads. */
+export function useGenerationJob(
+  moduleId: string,
+  jobType: string,
+  onDone: () => void,
+) {
   const [jobId, setJobId] = useState<number | null>(null);
+  const active = useActiveJobs(moduleId);
+
+  // adopt a server-side in-flight job of this type (resume after nav/reload)
+  const serverJob = active.data?.find((j) => j.job_type === jobType);
+  useEffect(() => {
+    if (jobId == null && serverJob != null) setJobId(serverJob.job_id);
+  }, [jobId, serverJob]);
+
   const job = useJob(jobId);
   const running =
-    jobId != null &&
-    (job.data == null ||
-      job.data.status === "queued" ||
-      job.data.status === "running");
+    (jobId != null &&
+      (job.data == null ||
+        job.data.status === "queued" ||
+        job.data.status === "running")) ||
+    serverJob != null;
 
   useEffect(() => {
     if (jobId != null && job.data?.status === "succeeded") {
@@ -72,7 +99,10 @@ export function CitationPill({ citation }: { citation: CitationOut }) {
     <Link
       to="/documents/$documentId"
       params={{ documentId: String(citation.document_id) }}
-      search={{ page: citation.page_start ?? 1 }}
+      search={{
+        page: citation.page_start ?? 1,
+        ...(citation.chunk_id != null ? { highlight: citation.chunk_id } : {}),
+      }}
       className={`citation-pill${weak ? " weak" : ""}`}
       title={
         weak

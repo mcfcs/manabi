@@ -2,8 +2,12 @@ import { useQuery } from "@tanstack/react-query";
 import { Link, useNavigate, useParams, useSearch } from "@tanstack/react-router";
 import { ChevronLeft } from "lucide-react";
 
+import { useState } from "react";
+
 import { api, type ModuleDetail } from "../../lib/api";
+import { useActiveJobs } from "../ai/common";
 import { FlashcardsTab } from "../ai/FlashcardsTab";
+import { GenerateAllModal } from "../ai/GenerateAllModal";
 import { QuizTab } from "../ai/QuizTab";
 import { SummaryTab } from "../ai/SummaryTab";
 import { MaterialsTab } from "../materials/MaterialsTab";
@@ -19,8 +23,17 @@ const TABS = [
   { key: "notes", label: "Notes" },
 ] as const;
 
+const JOB_LABELS: Record<string, string> = {
+  generate_summary: "Summary",
+  generate_flashcards: "Flashcards",
+  generate_quiz: "Quiz",
+};
+
 function Overview({ module }: { module: ModuleDetail }) {
   const navigate = useNavigate();
+  const [generating, setGenerating] = useState(false);
+  const active = useActiveJobs(String(module.id));
+
   return (
     <div className="module-overview">
       <p className="overview-stats">
@@ -31,6 +44,13 @@ function Overview({ module }: { module: ModuleDetail }) {
       <div className="overview-actions">
         <button
           className="btn btn-primary"
+          onClick={() => setGenerating(true)}
+          disabled={(active.data?.length ?? 0) > 0}
+        >
+          Generate study kit
+        </button>
+        <button
+          className="btn"
           onClick={() =>
             navigate({
               to: "/courses/$courseId/modules/$moduleId",
@@ -60,10 +80,33 @@ function Overview({ module }: { module: ModuleDetail }) {
           Open notes
         </button>
       </div>
+
+      {(active.data?.length ?? 0) > 0 && (
+        <div className="overview-jobs">
+          {active.data!.map((j) => (
+            <div key={j.job_id} className="overview-job">
+              <span className="overview-job-type">
+                {JOB_LABELS[j.job_type] ?? j.job_type}
+              </span>
+              <span className="overview-job-note">
+                {j.status === "queued" ? "queued" : (j.progress_note ?? "running…")}
+              </span>
+            </div>
+          ))}
+        </div>
+      )}
+
       <p className="overview-hint">
-        Summaries, flashcards, and quizzes arrive in the next increment — they
-        will be generated from the materials you upload here.
+        Your notes guide what the AI emphasizes — they are never treated as
+        source material.
       </p>
+
+      {generating && (
+        <GenerateAllModal
+          moduleId={String(module.id)}
+          onClose={() => setGenerating(false)}
+        />
+      )}
     </div>
   );
 }

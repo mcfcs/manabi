@@ -114,6 +114,8 @@ async def generate_summary(job_id: int, module_id: int) -> None:
             ).scalar_one()
 
             sections: list[dict] = []
+            key_terms: list[dict] = []
+            acronyms: list[dict] = []
             all_citations: list[tuple[str, list[ScopedChunk], str]] = []
             dropped = 0
             batches = batch_chunks(chunks)
@@ -147,13 +149,52 @@ async def generate_summary(job_id: int, module_id: int) -> None:
                         all_citations.append((ref, resolved.chunks, resolved.item["text"]))
                     sections.append({"title": section.get("title", ""), "blocks": blocks})
 
+                kept_terms, d = resolve_items(
+                    result.get("key_terms", []), ctx.index_map, {module_id}
+                )
+                dropped += d
+                for resolved in kept_terms:
+                    ref = f"kt:{len(key_terms)}"
+                    key_terms.append(
+                        {
+                            "term": resolved.item["term"],
+                            "definition": resolved.item["definition"],
+                        }
+                    )
+                    excerpt = f"{resolved.item['term']}: {resolved.item['definition']}"
+                    all_citations.append((ref, resolved.chunks, excerpt))
+
+                kept_acr, d = resolve_items(
+                    result.get("acronyms", []), ctx.index_map, {module_id}
+                )
+                dropped += d
+                for resolved in kept_acr:
+                    if any(
+                        a["acronym"].lower() == resolved.item["acronym"].lower()
+                        for a in acronyms
+                    ):
+                        continue
+                    ref = f"ac:{len(acronyms)}"
+                    acronyms.append(
+                        {
+                            "acronym": resolved.item["acronym"],
+                            "meaning": resolved.item["meaning"],
+                        }
+                    )
+                    excerpt = f"{resolved.item['acronym']} means {resolved.item['meaning']}"
+                    all_citations.append((ref, resolved.chunks, excerpt))
+
             await _progress(db, job, 85, "Validating citations")
             artifact = Artifact(
                 module_id=module_id,
                 artifact_type=ArtifactType.summary,
                 scope_module_ids=[module_id],
                 title=f"Study summary — {module.title}",
-                content={"sections": sections},
+                content={
+                    "sections": sections,
+                    "key_terms": key_terms,
+                    "acronyms": acronyms,
+                },
                 model_name=settings.generation_model,
                 prompt_version=prompts.PROMPT_VERSION,
                 source_chunk_ids=[c.id for c in chunks],

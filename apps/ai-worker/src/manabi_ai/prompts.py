@@ -5,14 +5,15 @@ outside the prompt: schema-constrained decoding, source-id resolution against
 the job's scope, and post-hoc support scoring.
 """
 
-PROMPT_VERSION = "v1"
+PROMPT_VERSION = "v2"
 
 _GROUNDING = """RULES — follow strictly:
 - Use ONLY the numbered SOURCE MATERIAL. Do not add outside knowledge.
 - Every item must cite the source numbers it is based on in "source_ids".
 - Cite only source numbers that actually support the statement.
-- STUDENT NOTES (if present) indicate what to emphasize; they are not a
-  source and must never appear in source_ids.
+- STUDENT NOTES (if present) indicate which topics to emphasize — but only
+  when those topics actually appear in the sources. Notes are not a source,
+  contribute no facts, and must never appear in source_ids.
 - Write in clear, exam-ready study English. Preserve exact definitions,
   terminology, and formulas from the sources."""
 
@@ -24,7 +25,19 @@ Organize the material into logical sections (not one per source — group by
 concept). Each section has a short title and 2-6 blocks. Each block is one
 focused paragraph (or a compact definition/list rendered as text).
 
+Also extract:
+- "key_terms": the most important terminology, each with its precise
+  definition exactly as the sources define it (5-15 terms when available).
+- "acronyms": every acronym/abbreviation used in the sources with its
+  expansion (empty list if none appear).
+
 Produce JSON matching the schema."""
+
+_CITED = {
+    "type": "array",
+    "minItems": 1,
+    "items": {"type": "integer"},
+}
 
 SUMMARY_SCHEMA = {
     "type": "object",
@@ -43,11 +56,7 @@ SUMMARY_SCHEMA = {
                             "type": "object",
                             "properties": {
                                 "text": {"type": "string"},
-                                "source_ids": {
-                                    "type": "array",
-                                    "minItems": 1,
-                                    "items": {"type": "integer"},
-                                },
+                                "source_ids": _CITED,
                             },
                             "required": ["text", "source_ids"],
                         },
@@ -55,9 +64,33 @@ SUMMARY_SCHEMA = {
                 },
                 "required": ["title", "blocks"],
             },
-        }
+        },
+        "key_terms": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "term": {"type": "string"},
+                    "definition": {"type": "string"},
+                    "source_ids": _CITED,
+                },
+                "required": ["term", "definition", "source_ids"],
+            },
+        },
+        "acronyms": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "acronym": {"type": "string"},
+                    "meaning": {"type": "string"},
+                    "source_ids": _CITED,
+                },
+                "required": ["acronym", "meaning", "source_ids"],
+            },
+        },
     },
-    "required": ["sections"],
+    "required": ["sections", "key_terms", "acronyms"],
 }
 
 FLASHCARDS_PROMPT = f"""You are creating {{count}} study flashcards for a university module.

@@ -132,6 +132,7 @@ export interface PageOut {
   has_render: boolean;
   width: number | null;
   height: number | null;
+  text_html: string | null;
 }
 
 export interface DocumentDetail extends DocumentOut {
@@ -180,6 +181,16 @@ export interface SummarySection {
   blocks: SummaryBlock[];
 }
 
+export interface KeyTerm {
+  term: string;
+  definition: string;
+}
+
+export interface Acronym {
+  acronym: string;
+  meaning: string;
+}
+
 export interface SummaryOut {
   artifact_id: number;
   title: string;
@@ -187,7 +198,34 @@ export interface SummaryOut {
   generated_at: string;
   staleness: Staleness;
   sections: SummarySection[];
+  key_terms: KeyTerm[];
+  acronyms: Acronym[];
   citations: Record<string, CitationOut[]>;
+}
+
+export interface ActiveJobOut {
+  job_id: number;
+  job_type: string;
+  status: string;
+  progress_pct: number | null;
+  progress_note: string | null;
+}
+
+export interface ArtifactVersion {
+  artifact_id: number;
+  artifact_type: string;
+  title: string;
+  model_name: string;
+  generated_at: string;
+  item_count: number;
+}
+
+export interface RegionOut {
+  page_no: number;
+  left: number;
+  top: number;
+  width: number;
+  height: number;
 }
 
 export interface CardOut {

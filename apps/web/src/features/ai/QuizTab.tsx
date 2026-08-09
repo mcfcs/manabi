@@ -272,7 +272,7 @@ export function QuizTab({
     enabled: playing != null,
   });
 
-  const gen = useGenerationJob(() => {
+  const gen = useGenerationJob(moduleId, "generate_quiz", () => {
     queryClient.invalidateQueries({ queryKey: ["quizzes", moduleId] });
     setConfiguring(false);
   });

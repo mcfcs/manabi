@@ -81,6 +81,31 @@
   color: var(--ink-faint);
 }
 
+.overview-jobs {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-1);
+  padding: var(--s-3);
+  border: 1px dashed var(--rule);
+  border-radius: var(--radius);
+}
+
+.overview-job {
+  display: flex;
+  gap: var(--s-3);
+  font-size: 13px;
+  align-items: baseline;
+}
+
+.overview-job-type {
+  font-weight: 600;
+  min-width: 84px;
+}
+
+.overview-job-note {
+  color: var(--ink-soft);
+}
+
 @media (max-width: 767px) {
   .tab {
     min-height: var(--touch-target);

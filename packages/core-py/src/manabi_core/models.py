@@ -157,6 +157,9 @@ class DocumentPage(Base):
     page_no: Mapped[int] = mapped_column(nullable=False)  # 1-based
     title: Mapped[str | None] = mapped_column(String(512))
     speaker_notes: Mapped[str | None] = mapped_column(Text)
+    # Sanitized rich text (<b>/<i>/<p>/<br> only). Native-layer styled text
+    # where available; OCR-derived from doc_elements for scanned pages.
+    text_html: Mapped[str | None] = mapped_column(Text)
     render_path: Mapped[str | None] = mapped_column(String(1024))
     thumb_path: Mapped[str | None] = mapped_column(String(1024))
     width: Mapped[int | None] = mapped_column()

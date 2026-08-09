@@ -10,6 +10,7 @@ from manabi_core.models import (
     ExtractStatus,
     Job,
     JobQueue,
+    JobStatus,
     Module,
     User,
 )
@@ -40,6 +41,7 @@ class PageOut(BaseModel):
     has_render: bool
     width: int | None
     height: int | None
+    text_html: str | None
 
 
 class DocumentOut(BaseModel):
@@ -144,13 +146,33 @@ async def list_documents(
     if in_flight:
         rows = (
             await db.execute(
-                select(Job.document_id, Job.progress_pct, Job.progress_note)
+                select(Job.document_id, Job.progress_pct, Job.progress_note, Job.status)
                 .where(Job.document_id.in_(in_flight))
                 .order_by(Job.document_id, Job.id.desc())
                 .distinct(Job.document_id)
             )
         ).all()
-        progress = {doc_id: (pct, note) for doc_id, pct, note in rows}
+        # queue position for docs still waiting for a worker slot
+        queued_ids = (
+            (
+                await db.execute(
+                    select(Job.document_id)
+                    .where(
+                        Job.job_type == "process_document",
+                        Job.status == JobStatus.queued,
+                    )
+                    .order_by(Job.id)
+                )
+            )
+            .scalars()
+            .all()
+        )
+        position = {doc_id: i for i, doc_id in enumerate(queued_ids)}
+        for doc_id, pct, note, status in rows:
+            if status == JobStatus.queued:
+                ahead = position.get(doc_id, 0)
+                note = f"Queued — {ahead} ahead" if ahead else "Queued — next up"
+            progress[doc_id] = (pct, note)
     return [_doc_out(d, progress=progress.get(d.id)) for d in docs]
 
 
@@ -233,6 +255,7 @@ async def document_detail(
                 has_render=p.render_path is not None,
                 width=p.width,
                 height=p.height,
+                text_html=p.text_html,
             )
             for p in pages
         ],
@@ -297,6 +320,75 @@ async def retry_processing(
     job = await _enqueue_processing(db, user.id, doc)
     await db.commit()
     return _doc_out(doc, job.id)
+
+
+class RegionOut(BaseModel):
+    page_no: int
+    # top-left-origin fractions of the page (0..1), ready to overlay
+    left: float
+    top: float
+    width: float
+    height: float
+
+
+@router.get("/chunks/{chunk_id}/regions")
+async def chunk_regions(
+    chunk_id: int,
+    user: User = Depends(get_default_user),
+    db: AsyncSession = Depends(get_db),
+) -> list[RegionOut]:
+    """Bounding boxes of the elements a chunk was built from — used by the
+    viewer to highlight the cited passage on the rendered page."""
+    from manabi_core.models import Chunk, Course, DocElement
+
+    chunk = (
+        await db.execute(
+            select(Chunk)
+            .join(Module, Module.id == Chunk.module_id)
+            .join(Course, Course.id == Module.course_id)
+            .where(Chunk.id == chunk_id, Course.user_id == user.id)
+        )
+    ).scalar_one_or_none()
+    if chunk is None:
+        raise HTTPException(status_code=404, detail="Chunk not found")
+
+    rows = (
+        await db.execute(
+            select(DocElement, DocumentPage)
+            .join(DocumentPage, DocumentPage.id == DocElement.page_id)
+            .where(DocElement.id.in_(chunk.element_ids))
+        )
+    ).all()
+
+    regions: list[RegionOut] = []
+    for el, page in rows:
+        bbox = el.bbox
+        if not bbox or not page.width or not page.height:
+            continue
+        # Docling bboxes: bottom-left origin, page points; renders are 2× points.
+        pts_w = page.width / 2
+        pts_h = page.height / 2
+        try:
+            left = max(0.0, min(1.0, bbox["l"] / pts_w))
+            right = max(0.0, min(1.0, bbox["r"] / pts_w))
+            y_top = max(bbox["t"], bbox["b"])
+            y_bottom = min(bbox["t"], bbox["b"])
+            top = max(0.0, min(1.0, (pts_h - y_top) / pts_h))
+            bottom = max(0.0, min(1.0, (pts_h - y_bottom) / pts_h))
+        except (KeyError, TypeError, ZeroDivisionError):
+            continue
+        if right - left <= 0 or bottom - top <= 0:
+            continue
+        regions.append(
+            RegionOut(
+                page_no=page.page_no,
+                left=round(left, 4),
+                top=round(top, 4),
+                width=round(right - left, 4),
+                height=round(bottom - top, 4),
+            )
+        )
+    return regions
 
 
 class DocumentPatch(BaseModel):

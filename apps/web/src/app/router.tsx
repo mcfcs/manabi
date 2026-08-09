@@ -56,8 +56,13 @@ const documentRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "/documents/$documentId",
   component: DocumentViewer,
-  validateSearch: (search: Record<string, unknown>): { page: number } => ({
+  validateSearch: (
+    search: Record<string, unknown>,
+  ): { page: number; highlight?: number } => ({
     page: Number(search.page) >= 1 ? Number(search.page) : 1,
+    ...(Number(search.highlight) >= 1
+      ? { highlight: Number(search.highlight) }
+      : {}),
   }),
 });
 

@@ -6,20 +6,34 @@ import {
   Download,
   LayoutGrid,
   MessageSquareText,
+  Type,
   X,
 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 
-import { api, type DocumentDetail, type ModuleDetail } from "../../lib/api";
+import {
+  api,
+  type DocumentDetail,
+  type ModuleDetail,
+  type RegionOut,
+} from "../../lib/api";
 import "./viewer.css";
 
 export function DocumentViewer() {
   const { documentId } = useParams({ from: "/documents/$documentId" });
-  const { page } = useSearch({ from: "/documents/$documentId" });
+  const { page, highlight } = useSearch({ from: "/documents/$documentId" });
   const navigate = useNavigate();
   const [showGrid, setShowGrid] = useState(false);
   const [showNotes, setShowNotes] = useState(false);
+  const [showText, setShowText] = useState(false);
   const touchStartX = useRef<number | null>(null);
+
+  const regions = useQuery({
+    queryKey: ["regions", highlight],
+    queryFn: () => api.get<RegionOut[]>(`/api/chunks/${highlight}/regions`),
+    enabled: highlight != null,
+    staleTime: Infinity,
+  });
 
   const doc = useQuery({
     queryKey: ["document", documentId],
@@ -88,6 +102,14 @@ export function DocumentViewer() {
             </button>
           )}
           <button
+            className={`icon-btn${showText ? " active" : ""}`}
+            onClick={() => setShowText((v) => !v)}
+            aria-label="Extracted text"
+            title="Extracted text — selectable and searchable, even for scanned PDFs"
+          >
+            <Type size={17} strokeWidth={1.5} />
+          </button>
+          <button
             className={`icon-btn${showGrid ? " active" : ""}`}
             onClick={() => setShowGrid((v) => !v)}
             aria-label="All pages"
@@ -139,12 +161,49 @@ export function DocumentViewer() {
             touchStartX.current = null;
           }}
         >
-          {current?.has_render ? (
-            <img
-              className="viewer-page"
-              src={`/api/documents/${documentId}/pages/${page}/render`}
-              alt={`${isSlides ? "Slide" : "Page"} ${page}`}
-            />
+          {showText ? (
+            <div className="viewer-text-panel">
+              <h3 className="viewer-text-head">
+                Extracted text — {isSlides ? "slide" : "page"} {page}
+              </h3>
+              {current?.text_html ? (
+                <div
+                  className="viewer-text-content"
+                  // sanitized server-side: only <b>/<i>/<p>/<br>, all escaped
+                  dangerouslySetInnerHTML={{ __html: current.text_html }}
+                />
+              ) : (
+                <p className="viewer-fallback-hint">
+                  No extracted text for this {isSlides ? "slide" : "page"} yet.
+                </p>
+              )}
+            </div>
+          ) : current?.has_render ? (
+            <span className="viewer-page-wrap">
+              <img
+                className="viewer-page"
+                src={`/api/documents/${documentId}/pages/${page}/render`}
+                alt={`${isSlides ? "Slide" : "Page"} ${page}`}
+              />
+              {(regions.data ?? [])
+                .filter((r) => r.page_no === page)
+                .map((r, i) => (
+                  <span
+                    key={i}
+                    className="viewer-highlight"
+                    style={{
+                      left: `${r.left * 100}%`,
+                      top: `${r.top * 100}%`,
+                      width: `${r.width * 100}%`,
+                      height: `${r.height * 100}%`,
+                    }}
+                  />
+                ))}
+              {highlight != null &&
+                (regions.data ?? []).some((r) => r.page_no === page) && (
+                  <span className="viewer-highlight-chip">cited passage</span>
+                )}
+            </span>
           ) : (
             <div className="viewer-text-fallback">
               <h2>{current?.title ?? `${isSlides ? "Slide" : "Page"} ${page}`}</h2>

@@ -32,3 +32,96 @@
   display: block;
   line-height: 1.9;
 }
+
+/* ── Key terms ──────────────────────────────────────────────── */
+
+.key-terms {
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-3);
+}
+
+.key-term dt {
+  font-family: var(--font-ui);
+  font-weight: 700;
+  font-size: 14px;
+}
+.key-term dd {
+  margin: 2px 0 0;
+}
+
+/* ── Acronyms ───────────────────────────────────────────────── */
+
+.acronym-grid {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-2);
+}
+
+.acronym {
+  display: flex;
+  gap: var(--s-3);
+  align-items: baseline;
+}
+
+.acronym-short {
+  font-family: var(--font-mono);
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--accent-red);
+  min-width: 72px;
+}
+
+.acronym-long {
+  font-size: 15px;
+}
+
+/* ── History ────────────────────────────────────────────────── */
+
+.version-list {
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--rule);
+  border-radius: var(--radius);
+  overflow: hidden;
+}
+
+.version-item {
+  padding: var(--s-2) var(--s-3);
+  border: none;
+  border-bottom: 1px solid var(--rule);
+  background: var(--surface-raised);
+  text-align: left;
+  font-size: 13px;
+  color: var(--ink-soft);
+}
+.version-item:last-child {
+  border-bottom: none;
+}
+.version-item:hover {
+  background: var(--surface);
+}
+.version-item.current {
+  color: var(--accent-blue-deep);
+  background: var(--accent-blue-wash);
+}
+
+.version-banner {
+  margin: 0;
+  padding: var(--s-2) var(--s-3);
+  font-size: 13px;
+  background: var(--stale-wash);
+  color: var(--stale);
+  border-radius: var(--radius-sm);
+}
+
+.gen-hint {
+  font-size: 12px;
+  color: var(--ink-faint);
+}
+
+.btn.active {
+  border-color: var(--accent-blue);
+  color: var(--accent-blue-deep);
+}

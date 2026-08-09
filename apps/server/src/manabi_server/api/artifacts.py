@@ -126,6 +126,22 @@ async def _enqueue_generation(
     task_name: str,
     **task_kwargs,
 ) -> Job:
+    # Duplicate-proof: an identical generation already in flight is returned
+    # instead of queued twice.
+    from manabi_core.models import JobStatus
+
+    existing = (
+        await db.execute(
+            select(Job).where(
+                Job.module_id == module.id,
+                Job.job_type == job_type,
+                Job.status.in_([JobStatus.queued, JobStatus.running]),
+            )
+        )
+    ).scalar_one_or_none()
+    if existing is not None:
+        return existing
+
     chunks = await load_context_chunks(db, [module.id])
     if not chunks:
         raise HTTPException(
@@ -149,6 +165,222 @@ async def _enqueue_generation(
     return job
 
 
+# ── Whole-module generation ───────────────────────────────────────────────
+
+
+class GenerateAllIn(BaseModel):
+    summary: bool = True
+    flashcards_count: int | None = 12
+    quiz_count: int | None = None
+    quiz_types: list[str] = ["mcq", "tf", "short"]
+
+
+@router.post("/modules/{module_id}/generate-all", dependencies=[Depends(require_csrf)])
+async def generate_all(
+    config: GenerateAllIn,
+    module: Module = Depends(get_owned_module),
+    user: User = Depends(get_default_user),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """Queue the selected artifact generations; the GPU worker runs them in
+    order. Each is duplicate-proof via _enqueue_generation."""
+    jobs: dict[str, int] = {}
+    if config.summary:
+        job = await _enqueue_generation(
+            db, user, module, "generate_summary", GENERATE_SUMMARY_TASK,
+            module_id=module.id,
+        )
+        jobs["summary"] = job.id
+    if config.flashcards_count:
+        job = await _enqueue_generation(
+            db, user, module, "generate_flashcards", GENERATE_FLASHCARDS_TASK,
+            module_id=module.id, count=max(4, min(30, config.flashcards_count)),
+        )
+        jobs["flashcards"] = job.id
+    if config.quiz_count:
+        types = [t for t in config.quiz_types if t in ("mcq", "tf", "short")] or ["mcq"]
+        job = await _enqueue_generation(
+            db, user, module, "generate_quiz", GENERATE_QUIZ_TASK,
+            module_ids=[module.id], types=types,
+            count=max(3, min(30, config.quiz_count)),
+        )
+        jobs["quiz"] = job.id
+    if not jobs:
+        raise HTTPException(status_code=422, detail="Nothing selected to generate")
+    return {"jobs": jobs}
+
+
+# ── Generation history ────────────────────────────────────────────────────
+
+
+class ArtifactVersion(BaseModel):
+    artifact_id: int
+    artifact_type: ArtifactType
+    title: str
+    model_name: str
+    generated_at: datetime
+    item_count: int
+
+
+@router.get("/modules/{module_id}/artifacts")
+async def list_artifact_versions(
+    type: ArtifactType,
+    module: Module = Depends(get_owned_module),
+    db: AsyncSession = Depends(get_db),
+) -> list[ArtifactVersion]:
+    artifacts = (
+        (
+            await db.execute(
+                select(Artifact)
+                .where(Artifact.module_id == module.id, Artifact.artifact_type == type)
+                .order_by(Artifact.id.desc())
+            )
+        )
+        .scalars()
+        .all()
+    )
+    out = []
+    for a in artifacts:
+        if a.artifact_type == ArtifactType.summary:
+            count = sum(len(s.get("blocks", [])) for s in a.content.get("sections", []))
+        elif a.artifact_type == ArtifactType.flashcard_deck:
+            count = len(
+                (
+                    await db.execute(
+                        select(Flashcard.id).where(Flashcard.artifact_id == a.id)
+                    )
+                ).all()
+            )
+        else:
+            count = len(
+                (
+                    await db.execute(
+                        select(QuizQuestion.id).where(QuizQuestion.artifact_id == a.id)
+                    )
+                ).all()
+            )
+        out.append(
+            ArtifactVersion(
+                artifact_id=a.id,
+                artifact_type=a.artifact_type,
+                title=a.title,
+                model_name=a.model_name,
+                generated_at=a.created_at,
+                item_count=count,
+            )
+        )
+    return out
+
+
+async def _get_owned_artifact(
+    artifact_id: int,
+    user: User = Depends(get_default_user),
+    db: AsyncSession = Depends(get_db),
+) -> Artifact:
+    artifact = (
+        await db.execute(
+            select(Artifact)
+            .join(Module, Module.id == Artifact.module_id)
+            .join(Course, Course.id == Module.course_id)
+            .where(Artifact.id == artifact_id, Course.user_id == user.id)
+        )
+    ).scalar_one_or_none()
+    if artifact is None:
+        raise HTTPException(status_code=404, detail="Artifact not found")
+    return artifact
+
+
+@router.get("/artifacts/{artifact_id}")
+async def get_artifact_version(
+    artifact: Artifact = Depends(_get_owned_artifact), db: AsyncSession = Depends(get_db)
+) -> dict:
+    """Historical artifact rendered in the same shape as the live endpoints."""
+    citations = await _citations_by_ref(db, artifact.id)
+    base = {
+        "artifact_id": artifact.id,
+        "artifact_type": artifact.artifact_type,
+        "title": artifact.title,
+        "model_name": artifact.model_name,
+        "generated_at": artifact.created_at,
+        "staleness": await _staleness(db, artifact),
+        "citations": {k: [c.model_dump() for c in v] for k, v in citations.items()},
+    }
+    if artifact.artifact_type == ArtifactType.summary:
+        base["sections"] = artifact.content.get("sections", [])
+        base["key_terms"] = artifact.content.get("key_terms", [])
+        base["acronyms"] = artifact.content.get("acronyms", [])
+    elif artifact.artifact_type == ArtifactType.flashcard_deck:
+        cards = (
+            (
+                await db.execute(
+                    select(Flashcard)
+                    .where(Flashcard.artifact_id == artifact.id)
+                    .order_by(Flashcard.ord, Flashcard.id)
+                )
+            )
+            .scalars()
+            .all()
+        )
+        base["cards"] = [
+            {
+                "id": c.id,
+                "front": c.front,
+                "back": c.back,
+                "status": c.status,
+                "edited": c.edited,
+                "citations": [x.model_dump() for x in citations.get(f"card:{c.ord}", [])],
+            }
+            for c in cards
+        ]
+    return base
+
+
+# ── Active generation jobs (resume after navigation/reload) ──────────────
+
+
+class ActiveJobOut(BaseModel):
+    job_id: int
+    job_type: str
+    status: str
+    progress_pct: int | None
+    progress_note: str | None
+
+
+@router.get("/modules/{module_id}/active-jobs")
+async def active_jobs(
+    module: Module = Depends(get_owned_module), db: AsyncSession = Depends(get_db)
+) -> list[ActiveJobOut]:
+    from manabi_core.models import JobStatus
+
+    jobs = (
+        (
+            await db.execute(
+                select(Job)
+                .where(
+                    Job.module_id == module.id,
+                    Job.job_type.in_(
+                        ["generate_summary", "generate_flashcards", "generate_quiz"]
+                    ),
+                    Job.status.in_([JobStatus.queued, JobStatus.running]),
+                )
+                .order_by(Job.id)
+            )
+        )
+        .scalars()
+        .all()
+    )
+    return [
+        ActiveJobOut(
+            job_id=j.id,
+            job_type=j.job_type,
+            status=j.status,
+            progress_pct=j.progress_pct,
+            progress_note=j.progress_note,
+        )
+        for j in jobs
+    ]
+
+
 # ── Summary ───────────────────────────────────────────────────────────────
 
 
@@ -159,6 +391,8 @@ class SummaryOut(BaseModel):
     generated_at: datetime
     staleness: str
     sections: list[dict]
+    key_terms: list[dict] = []
+    acronyms: list[dict] = []
     citations: dict[str, list[CitationOut]]
 
 
@@ -176,6 +410,8 @@ async def get_summary(
         generated_at=artifact.created_at,
         staleness=await _staleness(db, artifact),
         sections=artifact.content.get("sections", []),
+        key_terms=artifact.content.get("key_terms", []),
+        acronyms=artifact.content.get("acronyms", []),
         citations=await _citations_by_ref(db, artifact.id),
     )
 

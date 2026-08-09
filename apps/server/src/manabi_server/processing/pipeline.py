@@ -56,6 +56,11 @@ def run_pipeline(db: Session, document_id: int, job_id: int | None) -> None:
 
     doc.extract_status = ExtractStatus.processing
     doc.error = None
+    if job is not None:
+        from datetime import UTC, datetime
+
+        job.status = JobStatus.running
+        job.started_at = datetime.now(UTC)
     db.commit()
 
     done = STAGES.index(doc.extract_stage) + 1 if doc.extract_stage in STAGES else 0
@@ -68,6 +73,9 @@ def run_pipeline(db: Session, document_id: int, job_id: int | None) -> None:
         if done < 2:
             _progress(db, job, 45, "Rendering pages")
             _stage_render(db, doc, job)
+            from manabi_server.processing.text_html import build_text_html
+
+            build_text_html(db, doc.id)
             doc.extract_stage = "render"
             db.commit()
         if done < 3:
@@ -154,10 +162,22 @@ def _stage_structure(db: Session, doc: Document) -> None:
     db.commit()
 
 
-def _docling_parse(source: Path) -> dict:
-    from docling.document_converter import DocumentConverter
+_converter = None
 
-    result = DocumentConverter().convert(str(source))
+
+def _get_converter():
+    """Docling converter singleton — model initialization is expensive (tens of
+    seconds); pay it once per worker process, not once per document."""
+    global _converter
+    if _converter is None:
+        from docling.document_converter import DocumentConverter
+
+        _converter = DocumentConverter()
+    return _converter
+
+
+def _docling_parse(source: Path) -> dict:
+    result = _get_converter().convert(str(source))
     dl_doc = result.document
 
     elements: list[dict] = []
@@ -176,7 +196,9 @@ def _docling_parse(source: Path) -> dict:
                 bbox = {"l": bb.l, "t": bb.t, "r": bb.r, "b": bb.b}
         pages_seen.add(page_no)
 
-        text = (getattr(item, "text", "") or "").strip()
+        from manabi_server.processing.text_html import sanitize
+
+        text = sanitize(getattr(item, "text", "") or "").strip()
         table = None
         if "table" in label:
             element_type = "table"
@@ -226,17 +248,19 @@ def _linearize_table(table: dict) -> str:
 def _pptx_notes_and_titles(source: Path) -> tuple[dict[int, str], dict[int, str]]:
     from pptx import Presentation
 
+    from manabi_server.processing.text_html import sanitize
+
     notes: dict[int, str] = {}
     titles: dict[int, str] = {}
     prs = Presentation(str(source))
     for idx, slide in enumerate(prs.slides, start=1):
         try:
             if slide.shapes.title is not None and slide.shapes.title.text.strip():
-                titles[idx] = slide.shapes.title.text.strip()[:512]
+                titles[idx] = sanitize(slide.shapes.title.text).strip()[:512]
         except Exception:  # noqa: BLE001
             pass
         if slide.has_notes_slide:
-            text = slide.notes_slide.notes_text_frame.text.strip()
+            text = sanitize(slide.notes_slide.notes_text_frame.text).strip()
             if text:
                 notes[idx] = text
     return notes, titles

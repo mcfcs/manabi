@@ -10,7 +10,11 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import Session, sessionmaker
 
 from manabi_server.config import get_settings
-from manabi_server.jobs.queue import PROCESS_DOCUMENT_TASK, SCORE_SUPPORT_TASK
+from manabi_server.jobs.queue import (
+    EXTRACT_TEXT_HTML_TASK,
+    PROCESS_DOCUMENT_TASK,
+    SCORE_SUPPORT_TASK,
+)
 
 
 def _conninfo() -> str:
@@ -36,6 +40,15 @@ def process_document(document_id: int, job_id: int | None = None) -> None:
 
     with db_session() as db:
         run_pipeline(db, document_id, job_id)
+
+
+@app.task(name=EXTRACT_TEXT_HTML_TASK, queue="cpu", retry=2)
+def extract_text_html(document_id: int) -> None:
+    """Lightweight backfill: per-page rich text without re-running Docling."""
+    from manabi_server.processing.text_html import build_text_html
+
+    with db_session() as db:
+        build_text_html(db, document_id)
 
 
 @app.task(name=SCORE_SUPPORT_TASK, queue="cpu", retry=2)
