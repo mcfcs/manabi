@@ -146,6 +146,211 @@
   padding: 0 1px;
 }
 
+/* ── Extracted tables ───────────────────────────────────────── */
+
+.viewer-text-content table {
+  border-collapse: collapse;
+  margin: var(--s-3) 0;
+  font-family: var(--font-ui);
+  font-size: 13px;
+  width: 100%;
+}
+.viewer-text-content th,
+.viewer-text-content td {
+  border: 1px solid var(--rule);
+  padding: 4px 10px;
+  text-align: left;
+}
+.viewer-text-content th {
+  background: var(--surface);
+  font-weight: 600;
+}
+
+/* ── Annotations ────────────────────────────────────────────── */
+
+.viewer-text-content mark.annot {
+  cursor: pointer;
+  border-radius: 2px;
+  padding: 0 1px;
+}
+.viewer-text-content mark.annot.has-note {
+  border-bottom: 2px dotted var(--ink-soft);
+}
+mark.annot-yellow, .annot-swatch.annot-yellow, .annot-item-dot.annot-yellow {
+  background: #f8e8a0;
+}
+mark.annot-blue, .annot-swatch.annot-blue, .annot-item-dot.annot-blue {
+  background: #c4d7f2;
+}
+mark.annot-green, .annot-swatch.annot-green, .annot-item-dot.annot-green {
+  background: #c9e5c9;
+}
+mark.annot-red, .annot-swatch.annot-red, .annot-item-dot.annot-red {
+  background: #f2c4bd;
+}
+
+.annot-popover {
+  position: fixed;
+  z-index: 60;
+  background: var(--surface-raised);
+  border: 1px solid var(--rule);
+  border-radius: var(--radius);
+  padding: var(--s-2);
+  box-shadow: 0 4px 16px rgba(28, 36, 52, 0.15);
+}
+
+.annot-popover-row {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+}
+
+.annot-swatch {
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  border: 1px solid var(--rule);
+  padding: 0;
+}
+.annot-swatch:hover {
+  outline: 2px solid var(--ink);
+  outline-offset: 1px;
+}
+
+.annot-note-form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-2);
+  width: 240px;
+}
+
+.annot-note-input {
+  min-height: 0;
+  padding: var(--s-2);
+  font-family: var(--font-reading);
+  font-size: 13px;
+  resize: vertical;
+}
+
+.annot-editor {
+  position: fixed;
+  bottom: calc(var(--s-5) + env(safe-area-inset-bottom));
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 60;
+  width: min(380px, 92vw);
+  background: var(--surface-raised);
+  border: 1px solid var(--rule);
+  border-radius: var(--radius);
+  padding: var(--s-4);
+  box-shadow: 0 6px 24px rgba(28, 36, 52, 0.18);
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-3);
+}
+.annot-editor header {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  color: var(--ink-soft);
+  font-size: 12px;
+}
+.annot-editor-quote {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-style: italic;
+}
+
+.annot-panel {
+  position: fixed;
+  right: var(--s-4);
+  top: 80px;
+  bottom: 80px;
+  width: min(300px, 85vw);
+  z-index: 55;
+  background: var(--surface-raised);
+  border: 1px solid var(--rule);
+  border-radius: var(--radius);
+  padding: var(--s-3);
+  overflow-y: auto;
+  box-shadow: 0 4px 16px rgba(28, 36, 52, 0.1);
+}
+.annot-panel header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-weight: 600;
+  font-size: 13px;
+  margin-bottom: var(--s-2);
+}
+.annot-panel-empty {
+  font-size: 13px;
+  color: var(--ink-faint);
+}
+
+.annot-item {
+  display: flex;
+  gap: var(--s-2);
+  width: 100%;
+  padding: var(--s-2);
+  border: none;
+  border-bottom: 1px solid var(--rule);
+  background: none;
+  text-align: left;
+}
+.annot-item:hover {
+  background: var(--surface);
+}
+.annot-item-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  margin-top: 4px;
+}
+.annot-item-body {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+.annot-item-quote {
+  font-size: 12.5px;
+  font-family: var(--font-reading);
+  font-style: italic;
+  color: var(--ink);
+}
+.annot-item-note {
+  font-size: 12px;
+  color: var(--ink-soft);
+}
+.annot-item-page {
+  font-size: 11px;
+  color: var(--ink-faint);
+}
+
+.text-panel-tools {
+  display: flex;
+  justify-content: flex-end;
+}
+
+.page-text-edit {
+  min-height: 0;
+  font-family: var(--font-reading);
+  font-size: 13.5px;
+  line-height: 1.5;
+  resize: vertical;
+}
+
+.viewer-text-head {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+}
+
 .term-legend {
   margin: 0;
   padding: var(--s-1) var(--s-3);

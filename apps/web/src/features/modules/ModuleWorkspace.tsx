@@ -2,9 +2,10 @@ import { useQuery } from "@tanstack/react-query";
 import { Link, useNavigate, useParams, useSearch } from "@tanstack/react-router";
 import { ChevronLeft } from "lucide-react";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
 import { api, type ModuleDetail } from "../../lib/api";
+import { trackRecentModule } from "../../lib/recents";
 import { useActiveJobs } from "../ai/common";
 import { FlashcardsTab } from "../ai/FlashcardsTab";
 import { GenerateAllModal } from "../ai/GenerateAllModal";
@@ -201,6 +202,16 @@ export function ModuleWorkspace() {
     queryFn: () => api.get<ModuleDetail>(`/api/modules/${moduleId}`),
   });
   const module = detail.data;
+
+  useEffect(() => {
+    if (module) {
+      trackRecentModule({
+        moduleId: module.id,
+        courseId: module.course_id,
+        title: `${module.course_code} · ${module.title}`,
+      });
+    }
+  }, [module]);
 
   return (
     <div className="module-page">

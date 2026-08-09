@@ -51,6 +51,40 @@ async def create_echo_job(
     return _to_out(job)
 
 
+@router.get("/active")
+async def global_active_jobs(
+    user: User = Depends(get_default_user), db: AsyncSession = Depends(get_db)
+) -> list[dict]:
+    """All in-flight AI jobs with module context — powers the sidebar
+    activity indicator."""
+    from manabi_core.models import Module
+
+    rows = (
+        await db.execute(
+            select(Job, Module.title, Module.course_id)
+            .outerjoin(Module, Module.id == Job.module_id)
+            .where(
+                Job.user_id == user.id,
+                Job.status.in_([JobStatus.queued, JobStatus.running]),
+                Job.job_type != "process_document",
+            )
+            .order_by(Job.id)
+        )
+    ).all()
+    return [
+        {
+            "job_id": j.id,
+            "job_type": j.job_type,
+            "status": j.status,
+            "progress_note": j.progress_note,
+            "module_id": j.module_id,
+            "module_title": title,
+            "course_id": course_id,
+        }
+        for j, title, course_id in rows
+    ]
+
+
 @router.get("/{job_id}")
 async def get_job(
     job_id: int, user: User = Depends(get_default_user), db: AsyncSession = Depends(get_db)

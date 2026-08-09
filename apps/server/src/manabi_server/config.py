@@ -14,6 +14,9 @@ class Settings(CoreSettings):
     embedding_model: str = "qwen3-embedding:0.6b"
     embedding_dim: int = 1024
     support_weak_threshold: float = 0.45
+    # Canvas LMS importer — token stays server-side only
+    canvas_base_url: str = ""  # e.g. https://ateneo.instructure.com
+    canvas_access_token: str = ""
     app_origin: str = "http://localhost:5173"
     # Extra origins accepted by the CSRF Origin check (dev servers etc.)
     extra_origins: list[str] = ["http://localhost:5173", "http://127.0.0.1:5173"]

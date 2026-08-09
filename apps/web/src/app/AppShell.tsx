@@ -1,9 +1,10 @@
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
-import { BookOpen, Home, Settings } from "lucide-react";
-import type { ReactNode } from "react";
+import { Home, Loader2 } from "lucide-react";
+import { type ReactNode, useEffect, useState } from "react";
 
-import { api, type HealthOut, type UserOut } from "../lib/api";
+import { api, type CourseOut, type HealthOut, type UserOut } from "../lib/api";
+import { getRecentModules } from "../lib/recents";
 import "./shell.css";
 
 function AiStatus() {
@@ -21,6 +22,67 @@ function AiStatus() {
   );
 }
 
+interface GlobalJob {
+  job_id: number;
+  job_type: string;
+  module_id: number | null;
+  module_title: string | null;
+  course_id: number | null;
+  progress_note: string | null;
+}
+
+function Activity() {
+  const jobs = useQuery({
+    queryKey: ["global-active-jobs"],
+    queryFn: () => api.get<GlobalJob[]>("/api/jobs/active"),
+    refetchInterval: (q) => ((q.state.data?.length ?? 0) > 0 ? 4000 : 30_000),
+  });
+  const active = jobs.data ?? [];
+  if (active.length === 0) return null;
+  const first = active[0];
+  return (
+    <Link
+      to="/courses/$courseId/modules/$moduleId"
+      params={{
+        courseId: String(first.course_id ?? ""),
+        moduleId: String(first.module_id ?? ""),
+      }}
+      search={{ tab: "overview" }}
+      className="rail-activity"
+      title={active.map((j) => `${j.job_type} — ${j.module_title}`).join("\n")}
+    >
+      <Loader2 size={13} strokeWidth={1.75} className="spin" />
+      <span>
+        generating{active.length > 1 ? ` ×${active.length}` : ""}
+        {first.module_title ? ` · ${first.module_title.slice(0, 16)}` : ""}
+      </span>
+    </Link>
+  );
+}
+
+function UpdateToast() {
+  const [visible, setVisible] = useState(false);
+  useEffect(() => {
+    const show = () => setVisible(true);
+    window.addEventListener("manabi-sw-update", show);
+    return () => window.removeEventListener("manabi-sw-update", show);
+  }, []);
+  if (!visible) return null;
+  return (
+    <div className="update-toast">
+      <span>A new version of Manabi is ready.</span>
+      <button
+        className="btn btn-primary"
+        onClick={() =>
+          (window as unknown as { manabiUpdateSW?: () => void }).manabiUpdateSW?.()
+        }
+      >
+        Reload
+      </button>
+    </div>
+  );
+}
+
 export function AppShell({
   user,
   children,
@@ -28,6 +90,13 @@ export function AppShell({
   user: UserOut;
   children: ReactNode;
 }) {
+  const courses = useQuery({
+    queryKey: ["courses"],
+    queryFn: () => api.get<CourseOut[]>("/api/courses"),
+    staleTime: 30_000,
+  });
+  const recents = getRecentModules();
+
   return (
     <div className="shell">
       <nav className="rail" aria-label="Main">
@@ -39,25 +108,58 @@ export function AppShell({
         </Link>
 
         <div className="rail-links">
-          <Link to="/" className="rail-link" activeProps={{ className: "rail-link active" }}>
-            <BookOpen size={18} strokeWidth={1.5} />
-            <span>Courses</span>
-          </Link>
+          <span className="rail-heading">Courses</span>
+          {(courses.data ?? []).map((c) => (
+            <Link
+              key={c.id}
+              to="/courses/$courseId"
+              params={{ courseId: String(c.id) }}
+              className="rail-link rail-course"
+              activeProps={{ className: "rail-link rail-course active" }}
+            >
+              <span
+                className="rail-course-dot"
+                style={{ background: c.accent_color ?? "var(--accent-blue)" }}
+              />
+              <span className="rail-course-code">{c.code}</span>
+            </Link>
+          ))}
+          {courses.data?.length === 0 && (
+            <span className="rail-empty">no courses yet</span>
+          )}
+
+          {recents.length > 0 && (
+            <>
+              <span className="rail-heading rail-heading-gap">Recent</span>
+              {recents.map((r) => (
+                <Link
+                  key={r.moduleId}
+                  to="/courses/$courseId/modules/$moduleId"
+                  params={{
+                    courseId: String(r.courseId),
+                    moduleId: String(r.moduleId),
+                  }}
+                  search={{ tab: "overview" }}
+                  className="rail-link rail-recent"
+                >
+                  <span className="rail-recent-title">{r.title}</span>
+                </Link>
+              ))}
+            </>
+          )}
         </div>
 
         <div className="rail-foot">
+          <Activity />
           <AiStatus />
           <div className="rail-user mono" title={user.email}>
             {user.email}
           </div>
-          <button className="rail-link rail-settings" type="button">
-            <Settings size={18} strokeWidth={1.5} />
-            <span>Settings</span>
-          </button>
         </div>
       </nav>
 
       <main className="content">{children}</main>
+      <UpdateToast />
 
       <nav className="bottom-bar" aria-label="Main">
         <Link to="/" className="bottom-link" activeProps={{ className: "bottom-link active" }}>

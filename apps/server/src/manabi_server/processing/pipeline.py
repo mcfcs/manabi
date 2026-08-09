@@ -123,8 +123,9 @@ def _stage_structure(db: Session, doc: Document) -> None:
     db.commit()
 
     source = files.resolve(doc.storage_path)
-    parsed = _docling_parse(source)
+    parsed = _docling_parse(source, cache_key=doc.content_hash)
     parsed["elements"] = _fix_reading_order(parsed["elements"])
+    parsed["elements"] = _strip_boilerplate(parsed["elements"])
 
     notes_by_page: dict[int, str] = {}
     titles_by_page: dict[int, str] = {}
@@ -161,6 +162,44 @@ def _stage_structure(db: Session, doc: Document) -> None:
         )
     doc.page_count = page_count
     db.commit()
+
+
+def _strip_boilerplate(elements: list[dict]) -> list[dict]:
+    """Drop repeating header/footer lines (copyright notices, 'Page N', …)
+    that appear on a large fraction of pages. Runs before persist, so the
+    cleanup reaches elements, chunks, and AI context alike. build_text_html
+    applies the same rules (shared helpers) to the native text-layer views."""
+    from manabi_server.processing.text_html import (
+        REPEAT_MAX_LEN,
+        repeat_key,
+        repeated_keys,
+    )
+
+    per_page: dict[int, set[str]] = {}
+    for el in elements:
+        keys = per_page.setdefault(el["page_no"], set())
+        text = (el.get("text") or "").strip()
+        if text and len(text) <= REPEAT_MAX_LEN:
+            keys.add(repeat_key(text))
+
+    boilerplate = repeated_keys(per_page)
+    if not boilerplate:
+        return elements
+
+    kept = [
+        el
+        for el in elements
+        if not (
+            (el.get("text") or "").strip()
+            and len((el.get("text") or "").strip()) <= REPEAT_MAX_LEN
+            and repeat_key(el["text"]) in boilerplate
+        )
+    ]
+    log.info(
+        "stripped %d boilerplate elements (%d distinct lines across %d pages)",
+        len(elements) - len(kept), len(boilerplate), len(per_page),
+    )
+    return kept
 
 
 INVERSION_TOLERANCE_PTS = 5
@@ -214,13 +253,48 @@ def _get_converter():
     seconds); pay it once per worker process, not once per document."""
     global _converter
     if _converter is None:
-        from docling.document_converter import DocumentConverter
+        import os
 
-        _converter = DocumentConverter()
+        from docling.datamodel.base_models import InputFormat
+        from docling.datamodel.pipeline_options import (
+            AcceleratorOptions,
+            PdfPipelineOptions,
+        )
+        from docling.document_converter import DocumentConverter, PdfFormatOption
+
+        # Docling defaults to 4 threads; the layout/OCR/table models are the
+        # pipeline's dominant cost, so use the whole machine.
+        opts = PdfPipelineOptions(
+            accelerator_options=AcceleratorOptions(num_threads=os.cpu_count() or 4)
+        )
+        _converter = DocumentConverter(
+            format_options={InputFormat.PDF: PdfFormatOption(pipeline_options=opts)}
+        )
     return _converter
 
 
-def _docling_parse(source: Path) -> dict:
+def _parse_cache_path(cache_key: str) -> Path:
+    return files.storage_root() / "parse-cache" / f"{cache_key}.json"
+
+
+def _docling_parse(source: Path, cache_key: str | None = None) -> dict:
+    """Parse via Docling, memoized on the file's content hash: the model pass
+    is deterministic per file, so retries and re-extractions (e.g. after a
+    chunking or cleanup change) skip minutes of CPU work."""
+    import json
+
+    cache_path = _parse_cache_path(cache_key) if cache_key else None
+    if cache_path is not None and cache_path.exists():
+        try:
+            raw = json.loads(cache_path.read_text(encoding="utf-8"))
+            return {
+                "elements": raw["elements"],
+                "titles": {int(k): v for k, v in raw["titles"].items()},
+                "pages": set(raw["pages"]),
+            }
+        except Exception:  # noqa: BLE001 — corrupt cache → re-parse
+            log.warning("parse cache unreadable, re-parsing: %s", cache_path)
+
     result = _get_converter().convert(str(source))
     dl_doc = result.document
 
@@ -276,6 +350,22 @@ def _docling_parse(source: Path) -> dict:
         elements.append(
             {"type": element_type, "text": text, "page_no": page_no, "bbox": bbox, "table": table}
         )
+
+    if cache_path is not None:
+        try:
+            cache_path.parent.mkdir(parents=True, exist_ok=True)
+            cache_path.write_text(
+                json.dumps(
+                    {
+                        "elements": elements,
+                        "titles": titles,
+                        "pages": sorted(pages_seen),
+                    }
+                ),
+                encoding="utf-8",
+            )
+        except Exception:  # noqa: BLE001 — cache is an optimization only
+            log.warning("could not write parse cache: %s", cache_path)
 
     return {"elements": elements, "titles": titles, "pages": pages_seen}
 

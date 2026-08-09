@@ -233,6 +233,14 @@ export interface ArtifactVersion {
   item_count: number;
 }
 
+export interface AnnotationOut {
+  id: number;
+  page_no: number;
+  quote: string;
+  note: string | null;
+  color: string;
+}
+
 export interface ChatThreadOut {
   id: number;
   title: string;

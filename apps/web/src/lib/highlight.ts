@@ -18,3 +18,37 @@ export function countTermsPresent(fullText: string, terms: string[]): number {
   const lower = fullText.toLowerCase();
   return terms.filter((t) => lower.includes(t.toLowerCase())).length;
 }
+
+export interface AnnotationMark {
+  id: number;
+  quote: string;
+  color: string;
+  hasNote: boolean;
+}
+
+/** Wrap each annotation's quote (first occurrence, case-insensitive) in a
+ * clickable <mark>. Tag-safe: only text segments are touched. */
+export function highlightAnnotations(html: string, annots: AnnotationMark[]): string {
+  let out = html;
+  for (const a of annots) {
+    const quote = a.quote.trim();
+    if (quote.length < 3) continue;
+    const escaped = quote.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const re = new RegExp(escaped, "i");
+    let done = false;
+    out = out
+      .split(/(<[^>]*>)/g)
+      .map((seg) => {
+        if (done || seg.startsWith("<")) return seg;
+        const m = seg.match(re);
+        if (!m) return seg;
+        done = true;
+        return seg.replace(
+          re,
+          `<mark class="annot annot-${a.color}${a.hasNote ? " has-note" : ""}" data-annot="${a.id}">${m[0]}</mark>`,
+        );
+      })
+      .join("");
+  }
+  return out;
+}

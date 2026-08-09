@@ -433,6 +433,167 @@ async def citation_regions(
     return await _regions_for_elements(db, element_ids)
 
 
+# ── Annotations (highlight + note on extracted text) ─────────────────────
+
+
+class AnnotationIn(BaseModel):
+    page_no: int
+    quote: str
+    note: str | None = None
+    color: str = "yellow"
+
+
+class AnnotationPatch(BaseModel):
+    note: str | None = None
+    color: str | None = None
+
+
+class AnnotationOut(BaseModel):
+    id: int
+    page_no: int
+    quote: str
+    note: str | None
+    color: str
+
+
+@router.get("/documents/{document_id}/annotations")
+async def list_annotations(
+    doc: Document = Depends(_get_owned_document), db: AsyncSession = Depends(get_db)
+) -> list[AnnotationOut]:
+    from manabi_core.models import Annotation
+
+    rows = (
+        (
+            await db.execute(
+                select(Annotation)
+                .where(Annotation.document_id == doc.id)
+                .order_by(Annotation.page_no, Annotation.id)
+            )
+        )
+        .scalars()
+        .all()
+    )
+    return [
+        AnnotationOut(id=a.id, page_no=a.page_no, quote=a.quote, note=a.note, color=a.color)
+        for a in rows
+    ]
+
+
+@router.post(
+    "/documents/{document_id}/annotations", dependencies=[Depends(require_csrf)]
+)
+async def create_annotation(
+    data: AnnotationIn,
+    doc: Document = Depends(_get_owned_document),
+    db: AsyncSession = Depends(get_db),
+) -> AnnotationOut:
+    from manabi_core.models import Annotation
+
+    quote = data.quote.strip()
+    if not quote:
+        raise HTTPException(status_code=422, detail="Empty selection")
+    annotation = Annotation(
+        document_id=doc.id,
+        page_no=data.page_no,
+        quote=quote[:2000],
+        note=data.note,
+        color=data.color if data.color in ("yellow", "blue", "red", "green") else "yellow",
+    )
+    db.add(annotation)
+    await db.commit()
+    return AnnotationOut(
+        id=annotation.id,
+        page_no=annotation.page_no,
+        quote=annotation.quote,
+        note=annotation.note,
+        color=annotation.color,
+    )
+
+
+async def _get_owned_annotation(
+    annotation_id: int,
+    user: User = Depends(get_default_user),
+    db: AsyncSession = Depends(get_db),
+):
+    from manabi_core.models import Annotation, Course
+
+    annotation = (
+        await db.execute(
+            select(Annotation)
+            .join(Document, Document.id == Annotation.document_id)
+            .join(Module, Module.id == Document.module_id)
+            .join(Course, Course.id == Module.course_id)
+            .where(Annotation.id == annotation_id, Course.user_id == user.id)
+        )
+    ).scalar_one_or_none()
+    if annotation is None:
+        raise HTTPException(status_code=404, detail="Annotation not found")
+    return annotation
+
+
+@router.patch("/annotations/{annotation_id}", dependencies=[Depends(require_csrf)])
+async def update_annotation(
+    data: AnnotationPatch,
+    annotation=Depends(_get_owned_annotation),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    if data.note is not None:
+        annotation.note = data.note or None
+    if data.color in ("yellow", "blue", "red", "green"):
+        annotation.color = data.color
+    await db.commit()
+    return {"ok": True}
+
+
+@router.delete("/annotations/{annotation_id}", dependencies=[Depends(require_csrf)])
+async def delete_annotation(
+    annotation=Depends(_get_owned_annotation), db: AsyncSession = Depends(get_db)
+) -> dict:
+    await db.delete(annotation)
+    await db.commit()
+    return {"ok": True}
+
+
+# ── Manual page-text editing ──────────────────────────────────────────────
+
+
+class PageTextIn(BaseModel):
+    text: str
+
+
+@router.patch(
+    "/documents/{document_id}/pages/{page_no}/text",
+    dependencies=[Depends(require_csrf)],
+)
+async def edit_page_text(
+    page_no: int,
+    data: PageTextIn,
+    doc: Document = Depends(_get_owned_document),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """User cleanup of extracted text. Plain text in → sanitized paragraphs;
+    a marker comment prevents re-extraction from silently clobbering it."""
+    import html as html_mod
+
+    page = (
+        await db.execute(
+            select(DocumentPage).where(
+                DocumentPage.document_id == doc.id, DocumentPage.page_no == page_no
+            )
+        )
+    ).scalar_one_or_none()
+    if page is None:
+        raise HTTPException(status_code=404, detail="Page not found")
+
+    paragraphs = [p.strip() for p in data.text.split("\n\n") if p.strip()]
+    body = "".join(
+        f"<p>{html_mod.escape(p).replace(chr(10), '<br>')}</p>" for p in paragraphs
+    )
+    page.text_html = f"<!--user-edited-->{body}"
+    await db.commit()
+    return {"ok": True}
+
+
 class DocumentPatch(BaseModel):
     ai_included: bool
 

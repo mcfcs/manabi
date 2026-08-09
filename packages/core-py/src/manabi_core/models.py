@@ -394,6 +394,26 @@ class NoteSnapshot(Base, TimestampMixin):
     pm_json: Mapped[dict] = mapped_column(JSONB, nullable=False)
 
 
+class Annotation(Base, TimestampMixin):
+    """User highlight (+ optional note) on a document's extracted text.
+    Anchored by exact quote + page number — resilient to re-renders; if the
+    text is later re-extracted and the quote no longer matches, the
+    annotation surfaces as 'unanchored' instead of being lost."""
+
+    __tablename__ = "annotations"
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    document_id: Mapped[int] = mapped_column(
+        BigInteger, ForeignKey("documents.id", ondelete="CASCADE"), nullable=False
+    )
+    page_no: Mapped[int] = mapped_column(nullable=False)
+    quote: Mapped[str] = mapped_column(Text, nullable=False)
+    note: Mapped[str | None] = mapped_column(Text)
+    color: Mapped[str] = mapped_column(String(16), nullable=False, default="yellow")
+
+    __table_args__ = (Index("ix_annotations_document_id", "document_id"),)
+
+
 class ChatThread(Base, TimestampMixin):
     """Per-module chat conversations; history persists with the module."""
 

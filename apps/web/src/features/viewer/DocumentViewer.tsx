@@ -1,4 +1,6 @@
-import { useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+
+import { Modal } from "../../components/Modal";
 import { Link, useNavigate, useParams, useSearch } from "@tanstack/react-router";
 import {
   ChevronLeft,
@@ -8,6 +10,8 @@ import {
   Highlighter,
   LayoutGrid,
   MessageSquareText,
+  NotebookPen,
+  Pencil,
   Square,
   Type,
   X,
@@ -16,13 +20,25 @@ import { useEffect, useRef, useState } from "react";
 
 import {
   api,
+  type AnnotationOut,
   type DocumentDetail,
   type ModuleDetail,
   type PageOut,
   type RegionOut,
   type SummaryOut,
 } from "../../lib/api";
-import { countTermsPresent, highlightTerms } from "../../lib/highlight";
+import {
+  countTermsPresent,
+  highlightAnnotations,
+  highlightTerms,
+} from "../../lib/highlight";
+import {
+  AnnotationEditor,
+  AnnotationsPanel,
+  type PendingSelection,
+  SelectionPopover,
+  useAnnotations,
+} from "./annotations";
 import "./viewer.css";
 
 type ViewMode = "single" | "scroll" | "grid";
@@ -71,18 +87,61 @@ function PageImage({
   );
 }
 
-function PageText({ page, terms }: { page: PageOut; terms?: string[] }) {
+function PageText({
+  page,
+  terms,
+  annotations,
+  onSelect,
+  onAnnotClick,
+}: {
+  page: PageOut;
+  terms?: string[];
+  annotations?: AnnotationOut[];
+  onSelect?: (sel: PendingSelection) => void;
+  onAnnotClick?: (id: number) => void;
+}) {
   if (!page.text_html) {
     return <p className="viewer-fallback-hint">No extracted text for this page yet.</p>;
   }
-  const html = terms?.length
-    ? highlightTerms(page.text_html, terms)
-    : page.text_html;
+  let html = page.text_html;
+  if (annotations?.length) {
+    html = highlightAnnotations(
+      html,
+      annotations.map((a) => ({
+        id: a.id,
+        quote: a.quote,
+        color: a.color,
+        hasNote: !!a.note,
+      })),
+    );
+  }
+  if (terms?.length) {
+    html = highlightTerms(html, terms);
+  }
   return (
     <div
       className="viewer-text-content"
-      // sanitized server-side: escaped text with only b/i/p/br + margin style
+      // sanitized server-side: escaped text; b/i/p/br/code/table + margin style
       dangerouslySetInnerHTML={{ __html: html }}
+      onMouseUp={() => {
+        if (!onSelect) return;
+        const sel = window.getSelection();
+        const text = sel?.toString().trim() ?? "";
+        if (!text || text.length < 3 || !sel?.rangeCount) return;
+        const rect = sel.getRangeAt(0).getBoundingClientRect();
+        onSelect({
+          quote: text.slice(0, 2000),
+          pageNo: page.page_no,
+          x: Math.min(rect.left + rect.width / 2, window.innerWidth - 180),
+          y: Math.max(8, rect.top - 48),
+        });
+      }}
+      onClick={(e) => {
+        const target = e.target as HTMLElement;
+        if (target.dataset.annot && onAnnotClick) {
+          onAnnotClick(Number(target.dataset.annot));
+        }
+      }}
     />
   );
 }
@@ -100,6 +159,19 @@ export function DocumentViewer() {
   const [visiblePage, setVisiblePage] = useState(page);
   const touchStartX = useRef<number | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
+
+  // Annotations
+  const annots = useAnnotations(documentId);
+  const [selection, setSelection] = useState<PendingSelection | null>(null);
+  const [editingAnnot, setEditingAnnot] = useState<number | null>(null);
+  const [showAnnotPanel, setShowAnnotPanel] = useState(false);
+  const [editingPageText, setEditingPageText] = useState<number | null>(null);
+  const annotsByPage = new Map<number, AnnotationOut[]>();
+  for (const a of annots.list.data ?? []) {
+    annotsByPage.set(a.page_no, [...(annotsByPage.get(a.page_no) ?? []), a]);
+  }
+  const editingAnnotation =
+    (annots.list.data ?? []).find((a) => a.id === editingAnnot) ?? null;
 
   function setMode(m: ViewMode) {
     localStorage.setItem("manabi-viewer-mode", m);
@@ -239,6 +311,16 @@ export function DocumentViewer() {
           >
             <Type size={17} strokeWidth={1.5} />
           </button>
+          {showText && (
+            <button
+              className={`icon-btn${showAnnotPanel ? " active" : ""}`}
+              onClick={() => setShowAnnotPanel((v) => !v)}
+              aria-label="Annotations"
+              title="Your highlights and notes on this document"
+            >
+              <NotebookPen size={17} strokeWidth={1.5} />
+            </button>
+          )}
           {showText && termList.length > 0 && (
             <button
               className={`icon-btn${showMarks ? " active" : ""}`}
@@ -343,7 +425,23 @@ export function DocumentViewer() {
               </div>
               {showText && (
                 <div className="scroll-text">
-                  <PageText page={p} terms={activeTerms} />
+                  <div className="text-panel-tools">
+                    <button
+                      className="icon-btn"
+                      onClick={() => setEditingPageText(p.page_no)}
+                      aria-label="Edit extracted text"
+                      title="Edit this page's extracted text"
+                    >
+                      <Pencil size={13} strokeWidth={1.5} />
+                    </button>
+                  </div>
+                  <PageText
+                    page={p}
+                    terms={activeTerms}
+                    annotations={annotsByPage.get(p.page_no)}
+                    onSelect={setSelection}
+                    onAnnotClick={setEditingAnnot}
+                  />
                 </div>
               )}
             </div>
@@ -366,8 +464,22 @@ export function DocumentViewer() {
             <div className="viewer-text-panel">
               <h3 className="viewer-text-head">
                 Extracted text — {isSlides ? "slide" : "page"} {page}
+                <button
+                  className="icon-btn"
+                  onClick={() => setEditingPageText(page)}
+                  aria-label="Edit extracted text"
+                  title="Edit this page's extracted text"
+                >
+                  <Pencil size={13} strokeWidth={1.5} />
+                </button>
               </h3>
-              <PageText page={current} terms={activeTerms} />
+              <PageText
+                page={current}
+                terms={activeTerms}
+                annotations={annotsByPage.get(page)}
+                onSelect={setSelection}
+                onAnnotClick={setEditingAnnot}
+              />
             </div>
           ) : current?.has_render ? (
             <PageImage documentId={documentId} page={current} regions={regionList} />
@@ -440,6 +552,122 @@ export function DocumentViewer() {
           </span>
         </footer>
       )}
+
+      {selection && (
+        <SelectionPopover
+          selection={selection}
+          onHighlight={(color, note) => {
+            annots.create.mutate({
+              page_no: selection.pageNo,
+              quote: selection.quote,
+              note,
+              color,
+            });
+            setSelection(null);
+            window.getSelection()?.removeAllRanges();
+          }}
+          onDismiss={() => setSelection(null)}
+        />
+      )}
+
+      {editingAnnotation && (
+        <AnnotationEditor
+          annotation={editingAnnotation}
+          onSave={(note) => {
+            annots.update.mutate({ id: editingAnnotation.id, note });
+            setEditingAnnot(null);
+          }}
+          onDelete={() => {
+            annots.remove.mutate(editingAnnotation.id);
+            setEditingAnnot(null);
+          }}
+          onClose={() => setEditingAnnot(null)}
+        />
+      )}
+
+      {showAnnotPanel && (
+        <AnnotationsPanel
+          annotations={annots.list.data ?? []}
+          onJump={(a) => {
+            goTo(a.page_no);
+            if (mode === "scroll") {
+              scrollRef.current
+                ?.querySelector(`[data-page-no="${a.page_no}"]`)
+                ?.scrollIntoView({ block: "start" });
+            }
+          }}
+          onClose={() => setShowAnnotPanel(false)}
+        />
+      )}
+
+      {editingPageText != null && (
+        <PageTextEditModal
+          documentId={documentId}
+          page={d.pages.find((p) => p.page_no === editingPageText)!}
+          onClose={() => setEditingPageText(null)}
+        />
+      )}
     </div>
+  );
+}
+
+function PageTextEditModal({
+  documentId,
+  page,
+  onClose,
+}: {
+  documentId: string;
+  page: PageOut;
+  onClose: () => void;
+}) {
+  const queryClient = useQueryClient();
+  const [text, setText] = useState(() =>
+    (page.text_html ?? "")
+      .replace(/<\/p>/g, "\n\n")
+      .replace(/<br\s*\/?>/g, "\n")
+      .replace(/<[^>]*>/g, "")
+      .replace(/&amp;/g, "&")
+      .replace(/&lt;/g, "<")
+      .replace(/&gt;/g, ">")
+      .replace(/&quot;/g, '"')
+      .replace(/&#x27;/g, "'")
+      .trim(),
+  );
+  const save = useMutation({
+    mutationFn: () =>
+      api.patch(`/api/documents/${documentId}/pages/${page.page_no}/text`, { text }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["document", documentId] });
+      onClose();
+    },
+  });
+  return (
+    <Modal title={`Edit extracted text — page ${page.page_no}`} onClose={onClose}>
+      <div className="modal-form">
+        <textarea
+          className="input page-text-edit"
+          value={text}
+          onChange={(e) => setText(e.target.value)}
+          rows={16}
+        />
+        <p className="gen-hint">
+          Blank lines separate paragraphs. Your edit replaces the extracted
+          text for reading and won't be overwritten by re-extraction.
+        </p>
+        {save.isError && <p className="error-text">{(save.error as Error).message}</p>}
+        <div className="modal-actions">
+          <button className="btn" onClick={onClose}>
+            Cancel
+          </button>
+          <button
+            className="btn btn-primary"
+            disabled={save.isPending}
+            onClick={() => save.mutate()}
+          >
+            Save text
+          </button>
+        </div>
+      </div>
+    </Modal>
   );
 }

@@ -6,6 +6,7 @@ from fastapi.staticfiles import StaticFiles
 
 from manabi_server.api import (
     artifacts,
+    canvas,
     chat,
     courses,
     documents,
@@ -28,6 +29,7 @@ app.include_router(documents.router)
 app.include_router(notes.router)
 app.include_router(artifacts.router)
 app.include_router(chat.router)
+app.include_router(canvas.router)
 
 # Serve the built SPA (apps/web/dist) so one process on 0.0.0.0:56690 covers
 # API + website for every device on the tailnet. During `pnpm dev`, Vite

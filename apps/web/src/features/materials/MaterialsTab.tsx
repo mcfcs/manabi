@@ -4,6 +4,7 @@ import {
   AlertCircle,
   Brain,
   CheckCircle2,
+  CloudDownload,
   FileText,
   Loader2,
   Presentation,
@@ -15,6 +16,7 @@ import { useRef, useState } from "react";
 
 import { Modal } from "../../components/Modal";
 import { api, type DocumentOut } from "../../lib/api";
+import { CanvasImportModal } from "./CanvasImportModal";
 import "./materials.css";
 
 function formatBytes(n: number): string {
@@ -52,6 +54,7 @@ export function MaterialsTab({ moduleId }: { moduleId: string }) {
   const fileInput = useRef<HTMLInputElement>(null);
   const [uploadError, setUploadError] = useState<string | null>(null);
   const [deleting, setDeleting] = useState<DocumentOut | null>(null);
+  const [importing, setImporting] = useState(false);
 
   const docs = useQuery({
     queryKey: ["documents", moduleId],
@@ -131,6 +134,9 @@ export function MaterialsTab({ moduleId }: { moduleId: string }) {
             e.target.value = "";
           }}
         />
+        <button className="btn canvas-import-btn" onClick={() => setImporting(true)}>
+          <CloudDownload size={15} strokeWidth={1.75} /> Import from Canvas
+        </button>
         {upload.isPending && (
           <p className="upload-status">
             <Loader2 size={14} className="spin" /> Uploading…
@@ -217,6 +223,10 @@ export function MaterialsTab({ moduleId }: { moduleId: string }) {
           </div>
         ))}
       </div>
+
+      {importing && (
+        <CanvasImportModal moduleId={moduleId} onClose={() => setImporting(false)} />
+      )}
 
       {deleting && (
         <Modal title={`Remove "${deleting.filename}"?`} onClose={() => setDeleting(null)}>

@@ -72,11 +72,15 @@ if errorlevel 1 (
     echo [api]      already running and healthy on port 56690 - not starting another
 )
 
-powershell -NoProfile -Command "exit ((Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -match 'manabi_ai\.worker' }).Count)" >nul 2>&1
-if not errorlevel 1 (
-    start "Manabi AI worker" cmd /k uv run python -m manabi_ai.worker
+if "%SKIP_GPU_WORKER%"=="1" (
+    echo [worker]   SKIP_GPU_WORKER=1 - GPU worker runs on phillmyeol
 ) else (
-    echo [worker]   AI worker already running - not starting another
+    powershell -NoProfile -Command "exit ((Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -match 'manabi_ai\.worker' }).Count)" >nul 2>&1
+    if not errorlevel 1 (
+        start "Manabi AI worker" cmd /k uv run python -m manabi_ai.worker
+    ) else (
+        echo [worker]   AI worker already running - not starting another
+    )
 )
 
 powershell -NoProfile -Command "exit ((Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -match 'manabi_server\.worker' }).Count)" >nul 2>&1
