@@ -9,6 +9,7 @@ import {
   disablePush,
   enablePush,
   getPushState,
+  pushBlocker,
   type PushState,
 } from "../../lib/push";
 
@@ -262,38 +263,80 @@ export function SettingsDialog({ onClose }: { onClose: () => void }) {
         </p>
 
         <h3 className="settings-heading">Notifications</h3>
+        <p className="settings-hint">
+          This device:{" "}
+          <b>
+            {pushState === "on" && "notifications on"}
+            {pushState === "off" && "notifications off"}
+            {pushState === "denied" && "blocked by the browser"}
+            {pushState === "unsupported" && "not available yet"}
+            {pushState === null && "checking…"}
+          </b>
+        </p>
         {pushState === "unsupported" && (
           <p className="settings-hint">
-            Push requires HTTPS (or localhost). Open Manabi over HTTPS — e.g.
-            via <code>tailscale serve</code> — and install it to your home
-            screen first.
+            {pushBlocker() === "insecure" && (
+              <>
+                Push needs a secure (HTTPS) address — you're on the plain-http
+                one. Open{" "}
+                <a href={`https://${window.location.hostname}${window.location.pathname}`}>
+                  https://{window.location.hostname}
+                </a>{" "}
+                instead (no port number), then enable here.
+              </>
+            )}
+            {pushBlocker() === "ios-install" && (
+              <>
+                On iPhone/iPad, notifications only work for installed web apps:
+                open the Share menu → <b>Add to Home Screen</b>, then launch
+                Manabi from that icon and enable notifications here.
+              </>
+            )}
+            {pushBlocker() === "no-api" && (
+              <>This browser doesn't support web push notifications.</>
+            )}
           </p>
         )}
         {pushState === "denied" && (
           <p className="settings-hint">
-            Notifications are blocked for this site — re-allow them in your
-            browser's site settings.
+            Re-allow notifications for this site in your browser settings
+            (padlock icon → Permissions → Notifications), then press "Check
+            again".
           </p>
         )}
-        {(pushState === "off" || pushState === "on") && (
-          <div className="settings-push-row">
+        <div className="settings-push-row">
+          {(pushState === "off" || pushState === "on") && (
             <button
               className="btn"
               onClick={() =>
-                (pushState === "on" ? disablePush() : enablePush()).then(
-                  setPushState,
-                )
+                (pushState === "on" ? disablePush() : enablePush())
+                  .then((s) => {
+                    setPushState(s);
+                    setPushNote(s === "on" ? "Notifications enabled on this device." : null);
+                  })
+                  .catch(() => {
+                    setPushNote("Couldn't subscribe — check the connection and try again.");
+                    getPushState().then(setPushState);
+                  })
               }
             >
               {pushState === "on" ? "Disable on this device" : "Enable on this device"}
             </button>
-            {pushState === "on" && (
-              <button className="btn" onClick={() => testPush.mutate()}>
-                Send test
-              </button>
-            )}
-          </div>
-        )}
+          )}
+          {pushState === "on" && (
+            <button className="btn" onClick={() => testPush.mutate()}>
+              Send test
+            </button>
+          )}
+          {(pushState === "denied" || pushState === "unsupported") && (
+            <button
+              className="btn"
+              onClick={() => getPushState().then(setPushState)}
+            >
+              Check again
+            </button>
+          )}
+        </div>
         {s && !s.push_configured && pushState !== "unsupported" && (
           <p className="settings-hint">
             Server keys missing — set VAPID_PUBLIC_KEY / VAPID_PRIVATE_KEY in

@@ -15,6 +15,24 @@ export function pushSupported(): boolean {
   );
 }
 
+/** Why push is unavailable — so the UI can give the exact next step instead
+ * of a generic dead end. null = nothing blocking. */
+export type PushBlocker = "insecure" | "ios-install" | "no-api" | null;
+
+export function pushBlocker(): PushBlocker {
+  if (!window.isSecureContext) return "insecure";
+  if (pushSupported()) return null;
+  const ios =
+    /iPad|iPhone|iPod/.test(navigator.userAgent) ||
+    (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
+  const standalone =
+    window.matchMedia("(display-mode: standalone)").matches ||
+    (navigator as { standalone?: boolean }).standalone === true;
+  // iOS Safari only exposes the Push API to home-screen-installed web apps
+  if (ios && !standalone) return "ios-install";
+  return "no-api";
+}
+
 export async function getPushState(): Promise<PushState> {
   if (!pushSupported()) return "unsupported";
   if (Notification.permission === "denied") return "denied";

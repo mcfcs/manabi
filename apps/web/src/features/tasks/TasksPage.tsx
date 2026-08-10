@@ -223,7 +223,11 @@ export function TasksPage() {
           <span>Get a push notification when tasks are due.</span>
           <button
             className="btn"
-            onClick={() => enablePush().then(setPushState)}
+            onClick={() =>
+              enablePush()
+                .then(setPushState)
+                .catch(() => getPushState().then(setPushState))
+            }
           >
             Enable
           </button>
