@@ -17,8 +17,10 @@ from sqlalchemy import (
     Date,
     DateTime,
     Enum,
+    Float,
     ForeignKey,
     Index,
+    LargeBinary,
     SmallInteger,
     String,
     Text,
@@ -251,6 +253,7 @@ class ArtifactType(enum.StrEnum):
     summary = "summary"
     flashcard_deck = "flashcard_deck"
     quiz = "quiz"
+    lecture = "lecture"
 
 
 class Artifact(Base, TimestampMixin):
@@ -436,6 +439,8 @@ class ChatThread(Base, TimestampMixin):
     module_id: Mapped[int] = mapped_column(
         BigInteger, ForeignKey("modules.id", ondelete="CASCADE"), nullable=False
     )
+    # Teacher persona (Steven) — changes voice, never grounding
+    teacher_mode: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     title: Mapped[str] = mapped_column(String(255), nullable=False)
 
     __table_args__ = (Index("ix_chat_threads_module_id", "module_id"),)
@@ -587,6 +592,7 @@ class AppSettings(Base):
     gcal_last_synced_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     gcal_last_error: Mapped[str | None] = mapped_column(Text)
     class_reminders: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    last_announcement_id: Mapped[int | None] = mapped_column(BigInteger)
 
 
 class CalendarEvent(Base, TimestampMixin):
@@ -694,3 +700,88 @@ class PushSubscription(Base, TimestampMixin):
     auth: Mapped[str] = mapped_column(String(255), nullable=False)
     user_agent: Mapped[str | None] = mapped_column(String(255))
     last_success_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+# ── Increment 10: teacher voice + spaced repetition ───────────────────────
+
+
+class LectureAudio(Base, TimestampMixin):
+    """Synthesized narration for one lecture segment (worker → Postgres →
+    app server; the GPU worker has no file path to app storage)."""
+
+    __tablename__ = "lecture_audio"
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    artifact_id: Mapped[int] = mapped_column(
+        BigInteger, ForeignKey("artifacts.id", ondelete="CASCADE"), nullable=False
+    )
+    segment_index: Mapped[int] = mapped_column(nullable=False)
+    audio: Mapped[bytes] = mapped_column(LargeBinary, nullable=False)
+    mime: Mapped[str] = mapped_column(String(64), nullable=False)
+    duration_ms: Mapped[int] = mapped_column(nullable=False)
+    voice: Mapped[str] = mapped_column(String(64), nullable=False)
+
+    __table_args__ = (
+        UniqueConstraint("artifact_id", "segment_index", name="uq_lecture_audio_segment"),
+    )
+
+
+class LectureCheckpointResult(Base):
+    """The student's answer to an in-lecture checkpoint question."""
+
+    __tablename__ = "lecture_checkpoint_results"
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    artifact_id: Mapped[int] = mapped_column(
+        BigInteger, ForeignKey("artifacts.id", ondelete="CASCADE"), nullable=False
+    )
+    segment_index: Mapped[int] = mapped_column(nullable=False)
+    correct: Mapped[bool] = mapped_column(Boolean, nullable=False)
+    answered_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+    __table_args__ = (
+        Index("ix_checkpoint_results_artifact", "artifact_id", "segment_index"),
+    )
+
+
+class CardReview(Base):
+    """SM-2-lite scheduling state, one row per flashcard."""
+
+    __tablename__ = "card_reviews"
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    flashcard_id: Mapped[int] = mapped_column(
+        BigInteger,
+        ForeignKey("flashcards.id", ondelete="CASCADE"),
+        nullable=False,
+        unique=True,
+    )
+    due_date: Mapped[date] = mapped_column(Date, nullable=False)
+    interval_days: Mapped[float] = mapped_column(Float, nullable=False, default=0)
+    ease: Mapped[float] = mapped_column(Float, nullable=False, default=2.5)
+    reps: Mapped[int] = mapped_column(nullable=False, default=0)
+    lapses: Mapped[int] = mapped_column(nullable=False, default=0)
+    last_rating: Mapped[str | None] = mapped_column(String(8))
+    reviewed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+    __table_args__ = (Index("ix_card_reviews_due", "due_date"),)
+
+
+class SpeechClip(Base, TimestampMixin):
+    """Synthesized audio for one chat message (teacher voice replies)."""
+
+    __tablename__ = "speech_clips"
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    chat_message_id: Mapped[int] = mapped_column(
+        BigInteger,
+        ForeignKey("chat_messages.id", ondelete="CASCADE"),
+        nullable=False,
+        unique=True,
+    )
+    audio: Mapped[bytes] = mapped_column(LargeBinary, nullable=False)
+    mime: Mapped[str] = mapped_column(String(64), nullable=False)
+    duration_ms: Mapped[int] = mapped_column(nullable=False)
+    voice: Mapped[str] = mapped_column(String(64), nullable=False)

@@ -21,6 +21,7 @@ import {
   type GcalEventOut,
   type MeetingOut,
 } from "../../lib/api";
+import { DayDetails } from "./DayDetails";
 import { DayPanel } from "./DayPanel";
 import { EventDialog } from "./EventDialog";
 import "./calendar.css";
@@ -212,7 +213,8 @@ function MeetingChip({ m, day }: { m: MeetingOut; day: DayData }) {
         mode === "sync" ? "online" : mode === "async" ? "async (no meeting)" : (m.location ?? "onsite")
       }`}
     >
-      {m.code.replace(/\s/g, "")} {fmtMin(m.start_minute)}
+      {m.code.replace(/\s/g, "")}
+      <span className="cal-chip-time"> {fmtMin(m.start_minute)}</span>
       {mode === "sync" && <Video size={9} strokeWidth={2} className="cal-chip-video" />}
     </span>
   );
@@ -254,7 +256,7 @@ function MonthView({
                   className={`cal-mark ${wholeDayMark.mode}`}
                   title={`All classes ${wholeDayMark.mode} this day`}
                 >
-                  classes {wholeDayMark.mode}
+                  {wholeDayMark.mode}
                 </span>
               )}
             </span>
@@ -299,10 +301,12 @@ function WeekView({
   weekStart,
   byDay,
   onSelectDay,
+  onOpenDay,
 }: {
   weekStart: string;
   byDay: Map<string, DayData>;
   onSelectDay: (d: string) => void;
+  onOpenDay: (d: string) => void;
 }) {
   const today = todayStr();
   const days = Array.from({ length: 7 }, (_, i) => addDays(weekStart, i));
@@ -356,17 +360,18 @@ function WeekView({
             </button>
             <div className="week-allday">
               {allDay.map((item, i) => (
-                <span
+                <button
                   key={i}
-                  className="cal-chip gcal"
+                  className="cal-chip gcal chip-btn"
                   style={{
                     background: `color-mix(in srgb, ${item.color} 15%, transparent)`,
                     color: item.color,
                   }}
                   title={item.title}
+                  onClick={() => onOpenDay(date)}
                 >
                   {item.title}
-                </span>
+                </button>
               ))}
             </div>
             <div className="week-day-body">
@@ -384,6 +389,9 @@ function WeekView({
                   <div
                     key={`m${i}`}
                     className={`week-block${mode === "async" ? " async" : ""}`}
+                    role="button"
+                    tabIndex={0}
+                    onClick={() => onOpenDay(date)}
                     style={{
                       top: `${((m.start_minute - WEEK_START_MIN) / WEEK_SPAN) * 100}%`,
                       height: `${((m.end_minute - m.start_minute) / WEEK_SPAN) * 100}%`,
@@ -416,6 +424,9 @@ function WeekView({
                   <div
                     key={`e${e.id}-${e.date}`}
                     className="week-block event-block"
+                    role="button"
+                    tabIndex={0}
+                    onClick={() => onOpenDay(date)}
                     style={{
                       top: `${((e.start_minute! - WEEK_START_MIN) / WEEK_SPAN) * 100}%`,
                       height: `${(((e.end_minute ?? e.start_minute! + 60) - e.start_minute!) / WEEK_SPAN) * 100}%`,
@@ -431,6 +442,9 @@ function WeekView({
                   <div
                     key={`g${i}`}
                     className="week-block gcal-block"
+                    role="button"
+                    tabIndex={0}
+                    onClick={() => onOpenDay(date)}
                     style={{
                       top: `${((g.start_minute! - WEEK_START_MIN) / WEEK_SPAN) * 100}%`,
                       height: `${(((g.end_minute ?? g.start_minute! + 60) - g.start_minute!) / WEEK_SPAN) * 100}%`,
@@ -451,87 +465,25 @@ function WeekView({
   );
 }
 
-function DayView({ date, day }: { date: string; day: DayData }) {
-  const items: {
-    minute: number | null;
-    end: number | null;
-    label: string;
-    sub: string;
-    kind: string;
-    accent?: string | null;
-    url?: string | null;
-  }[] = [
-    ...day.meetings.map((m) => {
-      const mode = meetingMode(m, day);
-      return {
-        minute: m.start_minute as number | null,
-        end: m.end_minute as number | null,
-        label: m.code,
-        sub:
-          mode === "sync"
-            ? "online"
-            : mode === "async"
-              ? "async — no meeting"
-              : (m.location ?? "onsite"),
-        kind: `meeting ${mode}`,
-        accent: m.accent_color,
-        url: mode === "sync" ? m.meeting_url : null,
-      };
-    }),
-    ...day.tasks.map((t) => ({
-      minute: t.due_minute,
-      end: null,
-      label: `☐ ${t.title}`,
-      sub: t.course_code ?? "task",
-      kind: "task",
-      accent: t.accent_color,
-      url: null,
-    })),
-    ...day.events.map((e) => ({
-      minute: e.start_minute,
-      end: e.end_minute,
-      label: e.title,
-      sub: e.notes ?? "",
-      kind: "event",
-      accent: null,
-      url: null,
-    })),
-    ...day.gcal.map((g) => ({
-      minute: g.start_minute,
-      end: g.end_minute,
-      label: g.title,
-      sub: [g.calendar, g.location].filter(Boolean).join(" · "),
-      kind: "gcal",
-      accent: feedColor(g.calendar),
-      url: null,
-    })),
-  ].sort((a, b) => (a.minute ?? -1) - (b.minute ?? -1));
-
+function DayView({
+  date,
+  day,
+  onAddEvent,
+  onEditEvent,
+}: {
+  date: string;
+  day: DayData;
+  onAddEvent: () => void;
+  onEditEvent: (e: CalendarEventOut) => void;
+}) {
   return (
     <div className="dayview">
-      {items.length === 0 && <p className="dayview-empty">Nothing on {date}.</p>}
-      {items.map((it, i) => (
-        <div key={i} className={`dayview-row ${it.kind}`}>
-          <span className="dayview-time mono">
-            {it.minute != null
-              ? `${fmtMin(it.minute)}${it.end != null ? `–${fmtMin(it.end)}` : ""}`
-              : "all-day"}
-          </span>
-          <span
-            className="dayview-dot"
-            style={it.accent ? { background: it.accent } : undefined}
-          />
-          <span className="dayview-label">
-            {it.label}
-            {it.sub && <span className="dayview-sub"> {it.sub}</span>}
-          </span>
-          {it.url && (
-            <a className="btn dayview-join" href={it.url} target="_blank" rel="noreferrer">
-              <Video size={14} strokeWidth={1.75} /> Join
-            </a>
-          )}
-        </div>
-      ))}
+      <DayDetails
+        date={date}
+        data={day}
+        onAddEvent={onAddEvent}
+        onEditEvent={onEditEvent}
+      />
     </div>
   );
 }
@@ -720,10 +672,18 @@ export function CalendarPage() {
         <WeekView
           weekStart={weekStart}
           byDay={byDay}
-          onSelectDay={(d) => setSelectedDay(d)}
+          onSelectDay={(d) => go({ view: "day", d })}
+          onOpenDay={setSelectedDay}
         />
       )}
-      {view === "day" && <DayView date={anchor} day={byDay.get(anchor) ?? EMPTY_DAY} />}
+      {view === "day" && (
+        <DayView
+          date={anchor}
+          day={byDay.get(anchor) ?? EMPTY_DAY}
+          onAddEvent={() => setEditingEvent({ date: anchor })}
+          onEditEvent={(e) => setEditingEvent(e)}
+        />
+      )}
 
       {selectedDay && data && (
         <DayPanel

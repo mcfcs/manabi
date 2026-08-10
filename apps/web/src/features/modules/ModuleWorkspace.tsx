@@ -14,6 +14,7 @@ import { QuizTab } from "../ai/QuizTab";
 import { SummaryTab } from "../ai/SummaryTab";
 import { MaterialsTab } from "../materials/MaterialsTab";
 import { NotesTab } from "../notes/NotesTab";
+import { TeacherTab } from "../teacher/TeacherTab";
 import "./module.css";
 
 const TABS = [
@@ -22,11 +23,14 @@ const TABS = [
   { key: "summary", label: "Summary" },
   { key: "cards", label: "Cards" },
   { key: "quiz", label: "Quiz" },
+  { key: "teacher", label: "Teacher" },
   { key: "chat", label: "Chat" },
   { key: "notes", label: "Notes" },
 ] as const;
 
 const JOB_LABELS: Record<string, string> = {
+  teach_module: "Lecture",
+  synthesize_lecture: "Lecture audio",
   generate_summary: "Summary",
   generate_flashcards: "Flashcards",
   generate_quiz: "Quiz",
@@ -251,6 +255,7 @@ export function ModuleWorkspace() {
       {module && tab === "summary" && <SummaryTab moduleId={moduleId} />}
       {module && tab === "cards" && <FlashcardsTab moduleId={moduleId} />}
       {module && tab === "quiz" && <QuizTab moduleId={moduleId} courseId={courseId} />}
+      {module && tab === "teacher" && <TeacherTab moduleId={moduleId} />}
       {module && tab === "chat" && <ChatTab moduleId={moduleId} />}
       {module && tab === "notes" && <NotesTab moduleId={moduleId} />}
     </div>

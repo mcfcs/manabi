@@ -177,3 +177,15 @@ a.doc-link:hover .doc-name {
 .doc-row.ai-excluded .doc-icon {
   opacity: 0.55;
 }
+
+@media (max-width: 767px) {
+  .doc-row {
+    flex-wrap: wrap;
+  }
+  .doc-row .doc-link {
+    flex-basis: calc(100% - 30px);
+  }
+  .doc-actions {
+    margin-left: auto;
+  }
+}

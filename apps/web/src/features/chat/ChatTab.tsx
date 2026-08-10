@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Link } from "@tanstack/react-router";
-import { MessageSquarePlus, SendHorizontal, Trash2 } from "lucide-react";
+import { Link, useNavigate, useSearch } from "@tanstack/react-router";
+import { GraduationCap, MessageSquarePlus, SendHorizontal, Trash2 } from "lucide-react";
 import { type FormEvent, useEffect, useRef, useState } from "react";
 
 import {
@@ -31,10 +31,13 @@ function CitePill({ c }: { c: NonNullable<ChatMessageOut["citations"]>[number] }
 
 export function ChatTab({ moduleId }: { moduleId: string }) {
   const queryClient = useQueryClient();
+  const navigate = useNavigate();
+  const search = useSearch({ from: "/courses/$courseId/modules/$moduleId" });
   const aiOnline = useAiOnline();
   const [activeThread, setActiveThread] = useState<number | null>(null);
   const [input, setInput] = useState("");
   const [error, setError] = useState<string | null>(null);
+  const askHandled = useRef(false);
   const bottomRef = useRef<HTMLDivElement>(null);
 
   const threads = useQuery({
@@ -48,6 +51,36 @@ export function ChatTab({ moduleId }: { moduleId: string }) {
       setActiveThread(threads.data[0].id);
     }
   }, [threads.data, activeThread]);
+
+  // "Ask Steven" deep link from the document viewer: create a teacher-mode
+  // thread pre-seeded with the quoted passage.
+  useEffect(() => {
+    const ask = (search as { ask?: string }).ask;
+    if (!ask || askHandled.current) return;
+    askHandled.current = true;
+    (async () => {
+      const t = await api.post<ChatThreadOut>(
+        `/api/modules/${moduleId}/chat/threads`,
+      );
+      await api.patch(`/api/chat/threads/${t.id}`, {
+        teacher_mode: true,
+        title: "Ask Steven",
+      });
+      queryClient.invalidateQueries({ queryKey: ["chat-threads", moduleId] });
+      setActiveThread(t.id);
+      const r = await api.post<{ job_id: number }>(
+        `/api/chat/threads/${t.id}/messages`,
+        { content: ask },
+      );
+      answering.start(r.job_id);
+      navigate({
+        to: ".",
+        search: (prev: Record<string, unknown>) => ({ ...prev, ask: undefined }),
+        replace: true,
+      });
+    })().catch(() => undefined);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [search]);
 
   const messages = useQuery({
     queryKey: ["chat-messages", activeThread],
@@ -81,6 +114,14 @@ export function ChatTab({ moduleId }: { moduleId: string }) {
       setActiveThread(null);
     },
   });
+
+  const toggleTeacher = useMutation({
+    mutationFn: (v: { id: number; teacher_mode: boolean }) =>
+      api.patch(`/api/chat/threads/${v.id}`, { teacher_mode: v.teacher_mode }),
+    onSuccess: () =>
+      queryClient.invalidateQueries({ queryKey: ["chat-threads", moduleId] }),
+  });
+  const activeThreadObj = threads.data?.find((t) => t.id === activeThread);
 
   const send = useMutation({
     mutationFn: (content: string) =>
@@ -152,6 +193,22 @@ export function ChatTab({ moduleId }: { moduleId: string }) {
 
       <section className="chat-main">
         {!aiOnline && <AiOfflineBanner />}
+
+        {activeThreadObj && (
+          <button
+            className={`chat-teacher-toggle${activeThreadObj.teacher_mode ? " on" : ""}`}
+            onClick={() =>
+              toggleTeacher.mutate({
+                id: activeThreadObj.id,
+                teacher_mode: !activeThreadObj.teacher_mode,
+              })
+            }
+            title="Steven mode: answers delivered in character — grounding rules unchanged"
+          >
+            <GraduationCap size={14} strokeWidth={1.75} />
+            Steven mode {activeThreadObj.teacher_mode ? "on" : "off"}
+          </button>
+        )}
 
         <div className="chat-messages">
           {(messages.data ?? []).length === 0 && !answering.running && (

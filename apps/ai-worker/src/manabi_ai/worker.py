@@ -12,6 +12,7 @@ import sys
 from sqlalchemy import text
 
 import manabi_ai.tasks_gen  # noqa: F401 — registers generation tasks
+import manabi_ai.tasks_tts  # noqa: F401 — registers voice tasks
 from manabi_ai.app import app
 from manabi_ai.config import get_settings
 from manabi_ai.db import session_factory
@@ -27,13 +28,16 @@ async def _heartbeat_loop() -> None:
                 await db.execute(
                     text(
                         """
-                        INSERT INTO ai_node_heartbeats (worker_name, last_seen_at)
-                        VALUES (:name, now())
+                        INSERT INTO ai_node_heartbeats (worker_name, last_seen_at, gpu_info)
+                        VALUES (:name, now(), cast(:info AS json))
                         ON CONFLICT (worker_name)
-                        DO UPDATE SET last_seen_at = now()
+                        DO UPDATE SET last_seen_at = now(), gpu_info = cast(:info AS json)
                         """
                     ),
-                    {"name": settings.worker_name},
+                    {
+                        "name": settings.worker_name,
+                        "info": f'{{"tts": {str(settings.tts_enabled).lower()}}}',
+                    },
                 )
                 await db.commit()
         except Exception as exc:  # noqa: BLE001 — keep beating through transient DB drops

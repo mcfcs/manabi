@@ -25,6 +25,7 @@ dependencies = [
     "icalendar>=6",
     "recurring-ical-events>=3",
     "pywebpush>=2.4.0",
+    "faster-whisper>=1.2.1",
 ]
 
 [dependency-groups]

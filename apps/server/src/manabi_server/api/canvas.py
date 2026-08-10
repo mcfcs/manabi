@@ -113,16 +113,12 @@ def _html_to_text(html_text: str) -> str:
     return re.sub(r"\n{3,}", "\n\n", "\n".join(lines)).strip()
 
 
-@router.get("/announcements")
-async def canvas_announcements(
-    course_id: int | None = None,
-    limit: int = 5,
-    user: User = Depends(get_default_user),
-    db: AsyncSession = Depends(get_db),
+async def fetch_announcements(
+    db: AsyncSession, user_id: int, course_id: int | None = None, limit: int = 5
 ) -> list[AnnouncementOut]:
-    """Latest announcements across all Canvas-linked courses (or one)."""
+    """Shared fetch core — used by the API route and the scheduler poll."""
     query = select(Course).where(
-        Course.user_id == user.id,
+        Course.user_id == user_id,
         Course.archived_at.is_(None),
         Course.canvas_course_id.is_not(None),
     )
@@ -162,6 +158,17 @@ async def canvas_announcements(
         )
     out.sort(key=lambda x: x.posted_at or "", reverse=True)
     return out[: max(1, min(limit, 20))]
+
+
+@router.get("/announcements")
+async def canvas_announcements(
+    course_id: int | None = None,
+    limit: int = 5,
+    user: User = Depends(get_default_user),
+    db: AsyncSession = Depends(get_db),
+) -> list[AnnouncementOut]:
+    """Latest announcements across all Canvas-linked courses (or one)."""
+    return await fetch_announcements(db, user.id, course_id, limit)
 
 
 IMPORTABLE_TYPES = (

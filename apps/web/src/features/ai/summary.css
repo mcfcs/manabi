@@ -171,3 +171,12 @@
 .terms-find .input {
   min-height: 36px;
 }
+
+@media (max-width: 767px) {
+  .acronym-grid {
+    grid-template-columns: 1fr;
+  }
+  .key-terms {
+    flex-wrap: wrap;
+  }
+}

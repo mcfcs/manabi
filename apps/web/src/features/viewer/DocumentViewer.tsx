@@ -588,6 +588,21 @@ export function DocumentViewer() {
             window.getSelection()?.removeAllRanges();
           }}
           onDismiss={() => setSelection(null)}
+          onAsk={() => {
+            const quote = selection.quote.slice(0, 400);
+            setSelection(null);
+            navigate({
+              to: "/courses/$courseId/modules/$moduleId",
+              params: {
+                courseId: String(module.data?.course_id ?? d.module_id),
+                moduleId: String(d.module_id),
+              },
+              search: {
+                tab: "chat",
+                ask: `On page ${selection.pageNo} of ${d.filename} it says: "${quote}" — walk me through this.`,
+              },
+            });
+          }}
         />
       )}
 

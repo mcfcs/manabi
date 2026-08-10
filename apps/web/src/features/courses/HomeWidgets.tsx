@@ -1,6 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
-import { CalendarClock, ListTodo, Video } from "lucide-react";
+import { CalendarClock, Flame, Layers, ListTodo, Video } from "lucide-react";
 
 import {
   api,
@@ -8,6 +8,64 @@ import {
   type ScheduleOut,
   type TaskOut,
 } from "../../lib/api";
+
+interface StatsOut {
+  streak_days: number;
+  reviews_total: number;
+  quizzes_taken: number;
+  avg_quiz_score: number | null;
+  checkpoints_answered: number;
+  days: { date: string; reviews: number; quizzes: number }[];
+}
+
+function StatsStrip() {
+  const stats = useQuery({
+    queryKey: ["stats"],
+    queryFn: () => api.get<StatsOut>("/api/stats"),
+    staleTime: 5 * 60_000,
+  });
+  const reviewDue = useQuery({
+    queryKey: ["review-due-count"],
+    queryFn: () => api.get<{ count: number }>("/api/review/due-count"),
+  });
+  const s = stats.data;
+  if (!s) return null;
+  const max = Math.max(...s.days.map((d) => d.reviews + d.quizzes), 1);
+  return (
+    <div className="stats-strip">
+      <span className="stats-item" title="Consecutive days with study activity">
+        <Flame
+          size={15}
+          strokeWidth={1.75}
+          className={s.streak_days > 0 ? "streak-on" : undefined}
+        />
+        <b>{s.streak_days}</b> day streak
+      </span>
+      <Link to="/review" className="stats-item" title="Flashcards due for review">
+        <Layers size={15} strokeWidth={1.75} />
+        <b>{reviewDue.data?.count ?? 0}</b> cards due
+      </Link>
+      {s.avg_quiz_score != null && (
+        <span className="stats-item" title={`${s.quizzes_taken} quizzes taken`}>
+          quiz avg <b>{s.avg_quiz_score}%</b>
+        </span>
+      )}
+      <span className="stats-bars" aria-label="Activity, last 14 days">
+        {s.days.map((d) => (
+          <span
+            key={d.date}
+            className="stats-bar"
+            style={{
+              height: `${Math.max(8, ((d.reviews + d.quizzes) / max) * 100)}%`,
+              opacity: d.reviews + d.quizzes > 0 ? 1 : 0.25,
+            }}
+            title={`${d.date}: ${d.reviews} reviews, ${d.quizzes} quizzes`}
+          />
+        ))}
+      </span>
+    </div>
+  );
+}
 
 function fmt(minute: number): string {
   return `${Math.floor(minute / 60)}:${String(minute % 60).padStart(2, "0")}`;
@@ -68,10 +126,11 @@ export function HomeWidgets() {
     .sort((a, b) => (a.due_date! < b.due_date! ? -1 : 1))
     .slice(0, 5);
 
-  if (!next && due.length === 0) return null;
-
   return (
-    <div className="home-widgets">
+    <>
+      <StatsStrip />
+      {(next || due.length > 0) && (
+        <div className="home-widgets">
       {next && (
         <Link to="/schedule" className="home-widget">
           <span className="home-widget-head">
@@ -140,6 +199,8 @@ export function HomeWidgets() {
           ))}
         </Link>
       )}
-    </div>
+        </div>
+      )}
+    </>
   );
 }

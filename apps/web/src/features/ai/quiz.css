@@ -191,3 +191,18 @@
   margin: 0;
   color: var(--ink-soft);
 }
+
+@media (max-width: 767px) {
+  .quiz-options.tf {
+    flex-wrap: wrap;
+  }
+  .quiz-options.tf .btn {
+    flex: 1 1 100%;
+  }
+}
+
+.quiz-results-actions {
+  display: flex;
+  gap: var(--s-2);
+  justify-content: center;
+}

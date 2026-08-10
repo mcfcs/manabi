@@ -19,7 +19,10 @@ from manabi_server.api import (
     modules,
     notes,
     push,
+    review,
     schedule,
+    search,
+    stats,
     tasks,
     user,
 )
@@ -63,6 +66,9 @@ app.include_router(schedule.router)
 app.include_router(calendar.router)
 app.include_router(tasks.router)
 app.include_router(push.router)
+app.include_router(review.router)
+app.include_router(search.router)
+app.include_router(stats.router)
 app.include_router(settings_api.router)
 
 # Serve the built SPA (apps/web/dist) so one process on 0.0.0.0:56690 covers

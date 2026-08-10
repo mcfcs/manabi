@@ -603,3 +603,88 @@
   border: none;
   border-radius: 50%;
 }
+
+/* ── Mobile calendar (audit-verified) ──────────────────────── */
+
+.cal-mark {
+  white-space: nowrap; /* fixes the CLA/SYN wrap seen on mobile */
+}
+.cal-filter-wrap {
+  gap: 1px; /* swatch hugs its pill */
+}
+
+@media (max-width: 767px) {
+  .cal-nav h1 {
+    font-size: 18px;
+    min-width: 0;
+  }
+  .cal-actions .btn {
+    padding: 0 var(--s-2);
+    font-size: 12px;
+    min-height: 32px;
+  }
+  .cal-views {
+    align-self: flex-start;
+  }
+  .cal-filter {
+    font-size: 11px;
+    padding: 1px var(--s-2);
+  }
+
+  /* Month cells: compact; code-only chips (times hidden), no "…" */
+  .cal-cell {
+    min-height: 62px;
+    padding: 2px;
+  }
+  .cal-daynum {
+    font-size: 11px;
+  }
+  .cal-chip {
+    font-size: 9px;
+    line-height: 1.6;
+    padding: 0 2px;
+    text-overflow: clip;
+  }
+  .cal-chip-time {
+    display: none;
+  }
+  .cal-chip-video {
+    display: none;
+  }
+  .cal-mark {
+    font-size: 8.5px;
+    padding: 0 3px;
+  }
+
+  .week-block span {
+    font-size: 10px;
+  }
+  .dayview-time {
+    width: 74px;
+    font-size: 11px;
+  }
+}
+
+/* ── Shared day details (panel + full-page day view) ───────── */
+
+.chip-btn {
+  border: none;
+  font: inherit;
+  cursor: pointer;
+  text-align: left;
+}
+.week-block {
+  cursor: pointer;
+}
+.day-details {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-4);
+}
+.dayview .day-details {
+  max-width: 640px;
+}
+.dayview .day-panel-add {
+  align-self: flex-start;
+  margin-top: var(--s-2);
+}

@@ -10,6 +10,7 @@ import { CoursePage } from "../features/courses/CoursePage";
 import { HomePage } from "../features/courses/HomePage";
 import { ModuleWorkspace } from "../features/modules/ModuleWorkspace";
 import { SchedulePage } from "../features/schedule/SchedulePage";
+import { ReviewPage } from "../features/review/ReviewPage";
 import { TasksPage } from "../features/tasks/TasksPage";
 import { DocumentViewer } from "../features/viewer/DocumentViewer";
 import { AppGate } from "./AppGate";
@@ -40,6 +41,7 @@ export type ModuleTab =
   | "summary"
   | "cards"
   | "quiz"
+  | "teacher"
   | "chat"
   | "notes";
 
@@ -49,6 +51,7 @@ const MODULE_TABS = [
   "summary",
   "cards",
   "quiz",
+  "teacher",
   "chat",
   "notes",
 ];
@@ -57,10 +60,15 @@ const moduleRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "/courses/$courseId/modules/$moduleId",
   component: ModuleWorkspace,
-  validateSearch: (search: Record<string, unknown>): { tab: ModuleTab } => ({
+  validateSearch: (
+    search: Record<string, unknown>,
+  ): { tab: ModuleTab; ask?: string } => ({
     tab: (MODULE_TABS.includes(search.tab as string)
       ? search.tab
       : "overview") as ModuleTab,
+    ...(typeof search.ask === "string" && search.ask
+      ? { ask: search.ask }
+      : {}),
   }),
 });
 
@@ -110,6 +118,12 @@ const tasksRoute = createRoute({
   component: TasksPage,
 });
 
+const reviewRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "/review",
+  component: ReviewPage,
+});
+
 const routeTree = rootRoute.addChildren([
   homeRoute,
   courseRoute,
@@ -118,6 +132,7 @@ const routeTree = rootRoute.addChildren([
   scheduleRoute,
   calendarRoute,
   tasksRoute,
+  reviewRoute,
 ]);
 
 export const router = createRouter({ routeTree });

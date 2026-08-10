@@ -49,10 +49,12 @@ export function SelectionPopover({
   selection,
   onHighlight,
   onDismiss,
+  onAsk,
 }: {
   selection: PendingSelection;
   onHighlight: (color: string, note?: string) => void;
   onDismiss: () => void;
+  onAsk?: () => void;
 }) {
   const [noting, setNoting] = useState(false);
   const [note, setNote] = useState("");
@@ -104,6 +106,18 @@ export function SelectionPopover({
           >
             <NotebookPen size={15} strokeWidth={1.5} />
           </button>
+          {onAsk && (
+            <button
+              className="annot-act annot-ask"
+              onMouseDown={(e) => {
+                e.preventDefault();
+                onAsk();
+              }}
+              title="Ask Steven about this passage"
+            >
+              Ask Steven
+            </button>
+          )}
         </div>
       )}
     </div>

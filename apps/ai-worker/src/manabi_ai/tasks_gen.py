@@ -777,8 +777,13 @@ async def chat_answer(job_id: int, thread_id: int, chunk_ids: list[int]) -> None
             )
             settings = get_settings()
             await _progress(db, job, 30, "Answering")
+            chat_prompt = (
+                prompts.TEACHER_CHAT_PROMPT
+                if getattr(thread, "teacher_mode", False)
+                else prompts.CHAT_PROMPT
+            )
             result = await generate_structured(
-                prompts.CHAT_PROMPT,
+                chat_prompt,
                 user_prompt,
                 prompts.CHAT_SCHEMA,
                 preview,
@@ -834,3 +839,177 @@ async def chat_answer(job_id: int, thread_id: int, chunk_ids: list[int]) -> None
             await db.rollback()
             await _fail(db, job, exc)
             raise
+
+
+# ── Teacher lecture ───────────────────────────────────────────────────────
+
+_MD_CHARS = str.maketrans({"*": "", "#": "", "`": "", "[": "", "]": "", "|": " "})
+
+
+def sanitize_spoken(text: str) -> str:
+    """Belt-and-suspenders TTS cleanup on top of the prompt rules: strip
+    markdown remnants and drop code-looking lines."""
+    lines = []
+    for line in (text or "").split("\n"):
+        stripped = line.strip()
+        symbol_share = (
+            sum(stripped.count(c) for c in ";{}()=<>") / max(len(stripped), 1)
+        )
+        if line.startswith(("    ", "\t")) and symbol_share > 0.08:
+            continue  # code block leak — narrated version exists in prose
+        lines.append(stripped.translate(_MD_CHARS))
+    return " ".join(x for x in lines if x).strip()
+
+
+@app.task(name="manabi_ai.tasks.teach_module", queue="gpu", retry=1)
+async def teach_module(
+    job_id: int, module_id: int, mode: str = "standard", chunk_ids: list[int] | None = None
+) -> None:
+    """Generate a Steven Starphase lecture over the module (or, for
+    remediation, over an explicit chunk subset)."""
+    settings = get_settings()
+    async with session_factory()() as db:
+        job = await _start(db, job_id)
+        preview = _preview_writer(db, job)
+        try:
+            chunks = await load_context_chunks(db, [module_id])
+            if chunk_ids:
+                wanted = set(chunk_ids)
+                chunks = [c for c in chunks if c.id in wanted] or chunks
+            module = (
+                await db.execute(select(Module).where(Module.id == module_id))
+            ).scalar_one()
+
+            # The latest summary's section titles act as the lecture syllabus
+            summary = (
+                await db.execute(
+                    select(Artifact)
+                    .where(
+                        Artifact.module_id == module_id,
+                        Artifact.artifact_type == ArtifactType.summary,
+                    )
+                    .order_by(Artifact.id.desc())
+                    .limit(1)
+                )
+            ).scalar_one_or_none()
+            syllabus = (
+                "; ".join(
+                    s.get("title", "")
+                    for s in (summary.content or {}).get("sections", [])
+                )
+                if summary
+                else "(no summary yet — derive the arc from the sources)"
+            )
+
+            base_prompt = (
+                prompts.TEACH_PROMPT.replace("{persona}", prompts.STEVEN_PERSONA)
+                .replace(
+                    "{mode_directive}",
+                    prompts.TEACH_MODES.get(mode, prompts.TEACH_MODES["standard"]),
+                )
+                .replace("{syllabus}", syllabus)
+            )
+
+            segments: list[dict] = []
+            all_citations: list[tuple[str, list[ScopedChunk], str]] = []
+            dropped = 0
+
+            batches = batch_chunks(chunks)
+            for bi, batch in enumerate(batches):
+                await _progress(
+                    db, job, 15 + int(60 * bi / len(batches)),
+                    f"Steven is preparing the lesson ({bi + 1}/{len(batches)})"
+                    if len(batches) > 1
+                    else "Steven is preparing the lesson",
+                )
+                story = (
+                    "; ".join(s["title"] for s in segments[-6:])
+                    if segments
+                    else "(lecture opening — greet the student and lay out the road)"
+                )
+                position_note = (
+                    "\nThis is the FINAL batch of material — close the lecture."
+                    if bi == len(batches) - 1
+                    else ""
+                )
+                ctx = build_context(batch, None)
+                result = await generate_structured(
+                    base_prompt.replace("{story_so_far}", story) + position_note,
+                    ctx.source_text,
+                    prompts.LECTURE_SCHEMA,
+                    preview,
+                )
+                kept, d = resolve_items(
+                    result.get("segments", []), ctx.index_map, {module_id}
+                )
+                dropped += d
+                for resolved in kept:
+                    idx = len(segments)
+                    spoken = sanitize_spoken(resolved.item.get("spoken_text", ""))
+                    if not spoken:
+                        continue
+                    seg = {
+                        "title": resolved.item.get("title", f"Segment {idx + 1}"),
+                        "spoken_text": spoken,
+                        "display_text": resolved.item.get("display_text", ""),
+                        "chunk_ids": [c.id for c in resolved.chunks],
+                    }
+                    cp = resolved.item.get("checkpoint")
+                    if cp and cp.get("question") and cp.get("answer"):
+                        seg["checkpoint"] = {
+                            "question": cp["question"],
+                            "answer": cp["answer"],
+                        }
+                    segments.append(seg)
+                    all_citations.append(
+                        (f"seg:{idx}", resolved.chunks, spoken[:400])
+                    )
+
+            if not segments:
+                raise GenerationError("No lecture segments survived validation")
+
+            await _progress(db, job, 88, "Validating citations")
+            elements_by_chunk = await _elements_for_chunks(
+                db, [c for _, cited, _ in all_citations for c in cited]
+            )
+            artifact = Artifact(
+                module_id=module_id,
+                artifact_type=ArtifactType.lecture,
+                scope_module_ids=[module_id],
+                title=f"Lecture — {module.title}",
+                content={"segments": segments, "mode": mode},
+                model_name=settings.generation_model,
+                prompt_version=prompts.PROMPT_VERSION,
+                source_chunk_ids=[c.id for c in chunks],
+                source_fingerprint=source_fingerprint(chunks),
+                module_version_at_gen=module.content_version,
+                job_id=job.id,
+            )
+            db.add(artifact)
+            await db.flush()
+            for ref, cited, excerpt in all_citations:
+                for row in _citation_rows(
+                    artifact.id, ref, cited, excerpt, elements_by_chunk
+                ):
+                    db.add(row)
+            await _finish(db, job, artifact.id, dropped)
+
+            # Voice renders behind the text when TTS is configured
+            if settings.tts_enabled:
+                audio_job = Job(
+                    user_id=job.user_id,
+                    job_type="synthesize_lecture",
+                    queue=job.queue,
+                    module_id=module_id,
+                )
+                db.add(audio_job)
+                await db.flush()
+                pg_job = await app.configure_task(
+                    "manabi_ai.tasks.synthesize_lecture", queue="gpu"
+                ).defer_async(job_id=audio_job.id, artifact_id=artifact.id)
+                audio_job.procrastinate_job_id = pg_job
+                await db.commit()
+        except (GenerationError, Exception) as exc:  # noqa: BLE001
+            log.exception("lecture generation failed")
+            await db.rollback()
+            await _fail(db, job, exc)

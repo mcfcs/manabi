@@ -299,3 +299,18 @@
   color: var(--accent-blue);
   background: var(--accent-blue-wash, rgba(40, 81, 143, 0.1));
 }
+
+@media (max-width: 767px) {
+  .sched-block-actions {
+    position: static;
+    opacity: 1;
+    margin-left: auto;
+    order: 10;
+  }
+  .schedule-list .sched-block {
+    flex-direction: row;
+    align-items: center;
+    gap: var(--s-2);
+    flex-wrap: wrap;
+  }
+}

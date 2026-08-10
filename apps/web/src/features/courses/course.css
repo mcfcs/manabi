@@ -280,3 +280,76 @@ a.course-file-name:hover {
     opacity: 1;
   }
 }
+
+/* ── Mobile (audit-verified fixes) ─────────────────────────── */
+@media (max-width: 767px) {
+  /* Header: title full-width, actions in their own row below —
+     buttons no longer overlap the wrapped title */
+  .course-head {
+    flex-wrap: wrap;
+    gap: var(--s-2) var(--s-3);
+    margin-bottom: var(--s-4);
+  }
+  .course-head-text {
+    flex-basis: calc(100% - 18px);
+    min-width: 0;
+  }
+  .course-head-text h1 {
+    font-size: 20px;
+    line-height: 1.25;
+  }
+  .course-head > .icon-btn,
+  .course-head > a.icon-btn,
+  .course-head > .course-canvas-files,
+  .course-head > .course-delete {
+    order: 5; /* all actions drop below the title as a row */
+  }
+  .course-head-accent {
+    align-self: stretch;
+  }
+
+  /* Module rows: link line + actions line (was ~400px wide, overflowed) */
+  .module-row {
+    flex-wrap: wrap;
+  }
+  .module-row .module-link {
+    flex-basis: calc(100% - 32px);
+    min-width: 0;
+  }
+  .module-actions {
+    margin-left: 32px;
+  }
+  .module-actions .icon-btn {
+    width: 36px;
+    height: 36px;
+  }
+
+  /* Canvas file manager rows: name on line 1, controls on line 2 */
+  .canvas-mgr-row {
+    grid-template-columns: 1fr 44px 36px;
+    grid-template-areas:
+      "name name name"
+      "dest extract ai";
+    row-gap: var(--s-1);
+  }
+  .canvas-mgr-row .canvas-mgr-name {
+    grid-area: name;
+  }
+  .canvas-mgr-row .canvas-mgr-dest {
+    grid-area: dest;
+  }
+  .canvas-mgr-row input[type="checkbox"]:nth-of-type(1) {
+    grid-area: extract;
+  }
+  .canvas-mgr-row input[type="checkbox"]:nth-of-type(2) {
+    grid-area: ai;
+  }
+  .canvas-mgr-headrow {
+    display: none; /* headers don't map to the 2-line layout */
+  }
+
+  .course-file-card {
+    max-width: 100%;
+    width: 100%;
+  }
+}

@@ -17,6 +17,7 @@ from datetime import timedelta
 from manabi_core.models import AppSettings, Course, ScheduleBlock, StudyTask
 from sqlalchemy import select
 
+from manabi_server.config import get_settings
 from manabi_server.services.gcal import fetch_gcal
 from manabi_server.services.push import send_to_all
 from manabi_server.timeutil import now_manila, today_manila
@@ -63,13 +64,58 @@ async def _tick(sessionmaker) -> None:
 
         # 2. gcal re-poll
         app = await db.get(AppSettings, 1)
-        if app is not None and app.gcal_ics_url:
+        if app is not None and (
+            app.gcal_ics_url or get_settings().gcal_ics_urls
+        ):
             stale = (
                 app.gcal_last_synced_at is None
                 or now - app.gcal_last_synced_at > timedelta(minutes=30)
             )
             if stale:
                 await fetch_gcal(db)
+
+        # 2b. Canvas announcements poll (~30 min cadence via minute check)
+        if app is not None and 7 <= now.hour < 22 and now.minute < 5:
+            try:
+                from manabi_core.models import User
+
+                from manabi_server.api.canvas import fetch_announcements
+
+                user = (
+                    await db.execute(select(User).order_by(User.id).limit(1))
+                ).scalar_one_or_none()
+                if user is not None:
+                    anns = await fetch_announcements(db, user.id, limit=10)
+                    fresh = [
+                        a
+                        for a in anns
+                        if app.last_announcement_id is None
+                        or a.id > app.last_announcement_id
+                    ]
+                    if anns:
+                        newest = max(a.id for a in anns)
+                        if app.last_announcement_id is None:
+                            # first run: baseline silently, no notification storm
+                            app.last_announcement_id = newest
+                            await db.commit()
+                        elif fresh:
+                            first = fresh[0]
+                            body = f"{first.course_code}: {first.title}" + (
+                                f" (+{len(fresh) - 1} more)" if len(fresh) > 1 else ""
+                            )
+                            await send_to_all(
+                                db,
+                                {
+                                    "title": "New Canvas announcement",
+                                    "body": body,
+                                    "tag": "manabi-announcement",
+                                    "url": "/",
+                                },
+                            )
+                            app.last_announcement_id = newest
+                            await db.commit()
+            except Exception:  # noqa: BLE001 — canvas down must not kill ticks
+                log.exception("announcement poll failed")
 
         # 3. class reminders (10–15 min ahead; 5-min tick → fires once)
         if app is not None and app.class_reminders:

@@ -14,10 +14,21 @@ class WorkerSettings(CoreSettings):
     chat_model: str = ""
     worker_name: str = "phillmyeol"
     heartbeat_interval_seconds: int = 15
+    # Teacher voice (GPT-SoVITS api_v2 or compatible). Empty tts_url = voice
+    # disabled; lectures fall back to reading mode.
+    tts_url: str = ""
+    tts_voice: str = "steven"
+    tts_ref_audio: str = ""  # path (on this machine) to a 3-10s reference wav
+    tts_ref_text: str = ""  # exact transcript of the reference clip
+    tts_speed: float = 1.0
 
     @property
     def effective_chat_model(self) -> str:
         return self.chat_model or self.generation_model
+
+    @property
+    def tts_enabled(self) -> bool:
+        return bool(self.tts_url and self.tts_ref_audio)
 
 
 @lru_cache

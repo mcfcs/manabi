@@ -300,6 +300,31 @@ export interface DeleteConsequences {
   notes: number;
 }
 
+// ── Teacher lectures ──────────────────────────────────────────
+
+export interface LectureSegmentOut {
+  index: number;
+  title: string;
+  display_text: string;
+  spoken_text: string;
+  checkpoint: { question: string; answer: string } | null;
+  audio_ready: boolean;
+  duration_ms: number | null;
+  citations: CitationOut[];
+}
+
+export interface LectureOut {
+  artifact_id: number;
+  title: string;
+  mode: string;
+  model_name: string;
+  generated_at: string;
+  staleness: string;
+  voice_available: boolean;
+  audio_job_active: boolean;
+  segments: LectureSegmentOut[];
+}
+
 // ── AI artifacts ──────────────────────────────────────────────
 
 export type Staleness = "fresh" | "stale" | "incomplete";
@@ -384,6 +409,7 @@ export interface AnnotationOut {
 export interface ChatThreadOut {
   id: number;
   title: string;
+  teacher_mode: boolean;
   created_at: string;
 }
 

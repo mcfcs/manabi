@@ -562,3 +562,9 @@ mark.annot-red, .annot-swatch.annot-red, .annot-item-dot.annot-red {
   border-radius: var(--radius-sm);
   background: var(--surface);
 }
+
+@media (max-width: 767px) {
+  .viewer-original {
+    min-height: 70dvh;
+  }
+}

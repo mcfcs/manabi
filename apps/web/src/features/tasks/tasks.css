@@ -52,7 +52,7 @@
   width: 140px;
   flex-shrink: 0;
 }
-@media (max-width: 600px) {
+@media (max-width: 767px) {
   .task-quickadd {
     flex-wrap: wrap;
   }

@@ -123,9 +123,21 @@
 .course-card-actions:focus-within {
   opacity: 1;
 }
-@media (pointer: coarse) {
+/* Touch: keep actions visible but move them into normal flow at the
+   card's bottom edge so they never sit on top of the title */
+@media (pointer: coarse), (max-width: 767px) {
   .course-card-actions {
+    position: static;
     opacity: 1;
+    justify-content: flex-end;
+    padding: 0 var(--s-2) var(--s-2);
+    margin-top: calc(-1 * var(--s-2));
+  }
+  .course-card-wrap {
+    display: flex;
+    flex-direction: column;
+    background: var(--surface-raised);
+    border-radius: var(--radius);
   }
 }
 .course-card-actions .icon-btn {
@@ -328,4 +340,48 @@
   to {
     background-position: -200% 0;
   }
+}
+
+/* ── Stats strip ───────────────────────────────────────────── */
+
+.stats-strip {
+  display: flex;
+  align-items: center;
+  gap: var(--s-4);
+  flex-wrap: wrap;
+  padding: var(--s-2) var(--s-4);
+  background: var(--surface-raised);
+  border: 1px solid var(--rule);
+  border-radius: var(--radius);
+  font-size: 13px;
+  color: var(--ink-soft);
+  margin-bottom: var(--s-3);
+}
+.stats-item {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s-1);
+  color: var(--ink-soft);
+}
+a.stats-item:hover {
+  color: var(--accent-blue-deep);
+  text-decoration: none;
+}
+.stats-item b {
+  color: var(--ink);
+}
+.streak-on {
+  color: var(--accent-red);
+}
+.stats-bars {
+  display: flex;
+  align-items: flex-end;
+  gap: 2px;
+  height: 24px;
+  margin-left: auto;
+}
+.stats-bar {
+  width: 6px;
+  background: var(--accent-blue);
+  border-radius: 2px 2px 0 0;
 }

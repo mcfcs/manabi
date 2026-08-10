@@ -18,6 +18,8 @@ from manabi_core.models import (
     FlashcardStatus,
     Job,
     JobQueue,
+    LectureAudio,
+    LectureCheckpointResult,
     Module,
     QuizAttempt,
     QuizQuestion,
@@ -35,6 +37,7 @@ from manabi_server.jobs.queue import (
     GENERATE_FLASHCARDS_TASK,
     GENERATE_QUIZ_TASK,
     GENERATE_SUMMARY_TASK,
+    TEACH_MODULE_TASK,
     defer_task,
 )
 from manabi_server.security import get_default_user, require_csrf
@@ -970,3 +973,218 @@ async def update_attempt(
         attempt.finished_at = datetime.now(UTC)
     await db.commit()
     return {"ok": True}
+
+
+# ── Teacher lectures ──────────────────────────────────────────────────────
+
+
+class LectureSegmentOut(BaseModel):
+    index: int
+    title: str
+    display_text: str
+    spoken_text: str
+    checkpoint: dict | None
+    audio_ready: bool
+    duration_ms: int | None
+    citations: list[CitationOut]
+
+
+class LectureOut(BaseModel):
+    artifact_id: int
+    title: str
+    mode: str
+    model_name: str
+    generated_at: datetime
+    staleness: str
+    voice_available: bool
+    audio_job_active: bool
+    segments: list[LectureSegmentOut]
+
+
+class TeachIn(BaseModel):
+    mode: str = "standard"
+
+
+async def _tts_available(db: AsyncSession) -> bool:
+    from manabi_core.models import AINodeHeartbeat
+
+    hb = (
+        await db.execute(
+            select(AINodeHeartbeat)
+            .order_by(AINodeHeartbeat.last_seen_at.desc())
+            .limit(1)
+        )
+    ).scalar_one_or_none()
+    return bool(hb and (hb.gpu_info or {}).get("tts"))
+
+
+@router.get("/modules/{module_id}/lecture")
+async def get_lecture(
+    module: Module = Depends(get_owned_module), db: AsyncSession = Depends(get_db)
+) -> LectureOut | None:
+    from manabi_core.models import JobStatus
+
+    artifact = await _latest_artifact(db, module.id, ArtifactType.lecture)
+    if artifact is None:
+        return None
+    citations = await _citations_by_ref(db, artifact.id)
+    audio_rows = {
+        r.segment_index: r
+        for r in (
+            await db.execute(
+                select(LectureAudio).where(LectureAudio.artifact_id == artifact.id)
+            )
+        ).scalars()
+    }
+    audio_job = (
+        await db.execute(
+            select(Job)
+            .where(
+                Job.module_id == module.id,
+                Job.job_type == "synthesize_lecture",
+                Job.status.in_([JobStatus.queued, JobStatus.running]),
+            )
+            .limit(1)
+        )
+    ).scalar_one_or_none()
+    segments = []
+    for i, seg in enumerate((artifact.content or {}).get("segments", [])):
+        row = audio_rows.get(i)
+        segments.append(
+            LectureSegmentOut(
+                index=i,
+                title=seg.get("title", f"Segment {i + 1}"),
+                display_text=seg.get("display_text", ""),
+                spoken_text=seg.get("spoken_text", ""),
+                checkpoint=seg.get("checkpoint"),
+                audio_ready=row is not None,
+                duration_ms=row.duration_ms if row else None,
+                citations=citations.get(f"seg:{i}", []),
+            )
+        )
+    return LectureOut(
+        artifact_id=artifact.id,
+        title=artifact.title or "Lecture",
+        mode=(artifact.content or {}).get("mode", "standard"),
+        model_name=artifact.model_name or "",
+        generated_at=artifact.created_at,
+        staleness=await _staleness(db, artifact),
+        voice_available=await _tts_available(db),
+        audio_job_active=audio_job is not None,
+        segments=segments,
+    )
+
+
+@router.post(
+    "/modules/{module_id}/lecture/generate", dependencies=[Depends(require_csrf)]
+)
+async def generate_lecture(
+    data: TeachIn,
+    module: Module = Depends(get_owned_module),
+    user: User = Depends(get_default_user),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    mode = data.mode if data.mode in ("standard", "cram", "deep_dive") else "standard"
+    job = await _enqueue_generation(
+        db,
+        user,
+        module,
+        "teach_module",
+        TEACH_MODULE_TASK,
+        module_id=module.id,
+        mode=mode,
+    )
+    return {"job_id": job.id}
+
+
+@router.post(
+    "/modules/{module_id}/lecture/remediate", dependencies=[Depends(require_csrf)]
+)
+async def remediate_lecture(
+    module: Module = Depends(get_owned_module),
+    user: User = Depends(get_default_user),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """Re-teach the chunks cited by checkpoints the student got wrong."""
+    artifact = await _latest_artifact(db, module.id, ArtifactType.lecture)
+    if artifact is None:
+        raise HTTPException(status_code=404, detail="No lecture yet")
+    missed = (
+        (
+            await db.execute(
+                select(LectureCheckpointResult.segment_index)
+                .where(
+                    LectureCheckpointResult.artifact_id == artifact.id,
+                    LectureCheckpointResult.correct.is_(False),
+                )
+                .distinct()
+            )
+        )
+        .scalars()
+        .all()
+    )
+    if not missed:
+        raise HTTPException(status_code=409, detail="No missed checkpoints to review")
+    segs = (artifact.content or {}).get("segments", [])
+    chunk_ids = sorted(
+        {cid for i in missed if i < len(segs) for cid in segs[i].get("chunk_ids", [])}
+    )
+    if not chunk_ids:
+        raise HTTPException(status_code=409, detail="Missed segments have no sources")
+    job = await _enqueue_generation(
+        db,
+        user,
+        module,
+        "teach_module",
+        TEACH_MODULE_TASK,
+        module_id=module.id,
+        mode="remediation",
+        chunk_ids=chunk_ids,
+    )
+    return {"job_id": job.id, "chunks": len(chunk_ids)}
+
+
+class CheckpointIn(BaseModel):
+    correct: bool
+
+
+@router.post(
+    "/artifacts/{artifact_id}/checkpoints/{segment_index}",
+    dependencies=[Depends(require_csrf)],
+)
+async def record_checkpoint(
+    segment_index: int,
+    data: CheckpointIn,
+    artifact: Artifact = Depends(_get_owned_artifact),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    db.add(
+        LectureCheckpointResult(
+            artifact_id=artifact.id, segment_index=segment_index, correct=data.correct
+        )
+    )
+    await db.commit()
+    return {"ok": True}
+
+
+@router.get("/artifacts/{artifact_id}/audio/{segment_index}")
+async def get_lecture_audio(
+    segment_index: int,
+    artifact: Artifact = Depends(_get_owned_artifact),
+    db: AsyncSession = Depends(get_db),
+) -> Response:
+    row = (
+        await db.execute(
+            select(LectureAudio).where(
+                LectureAudio.artifact_id == artifact.id,
+                LectureAudio.segment_index == segment_index,
+            )
+        )
+    ).scalar_one_or_none()
+    if row is None:
+        raise HTTPException(status_code=404, detail="Audio not synthesized yet")
+    return Response(
+        content=row.audio,
+        media_type=row.mime,
+        headers={"Cache-Control": "private, max-age=31536000, immutable"},
+    )

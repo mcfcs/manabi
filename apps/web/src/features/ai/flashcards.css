@@ -174,3 +174,12 @@
   display: flex;
   gap: var(--s-2);
 }
+
+@media (max-width: 767px) {
+  .card-row {
+    flex-wrap: wrap;
+  }
+  .count-picker {
+    flex-wrap: wrap;
+  }
+}

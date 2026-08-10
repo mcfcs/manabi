@@ -4,16 +4,28 @@ import {
   CalendarClock,
   CalendarDays,
   Home,
+  Layers,
   ListTodo,
   Loader2,
+  Search,
   Settings2,
 } from "lucide-react";
 import { type ReactNode, useEffect, useState } from "react";
 
+import { SearchPalette } from "../features/search/SearchPalette";
 import { SettingsDialog } from "../features/settings/SettingsDialog";
 import { api, type CourseOut, type HealthOut, type UserOut } from "../lib/api";
 import { getRecentModules } from "../lib/recents";
 import "./shell.css";
+
+function useReviewDueCount(): number {
+  const due = useQuery({
+    queryKey: ["review-due-count"],
+    queryFn: () => api.get<{ count: number }>("/api/review/due-count"),
+    refetchInterval: 5 * 60_000,
+  });
+  return due.data?.count ?? 0;
+}
 
 function useDueCount(): number {
   const due = useQuery({
@@ -119,7 +131,20 @@ export function AppShell({
   });
   const recents = getRecentModules();
   const dueCount = useDueCount();
+  const reviewDue = useReviewDueCount();
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [searchOpen, setSearchOpen] = useState(false);
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "k") {
+        e.preventDefault();
+        setSearchOpen((v) => !v);
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
 
   return (
     <div className="shell">
@@ -157,6 +182,20 @@ export function AppShell({
             <span>Tasks</span>
             <DueBadge count={dueCount} />
           </Link>
+          <Link
+            to="/review"
+            className="rail-link"
+            activeProps={{ className: "rail-link active" }}
+          >
+            <Layers size={16} strokeWidth={1.5} />
+            <span>Review</span>
+            <DueBadge count={reviewDue} />
+          </Link>
+          <button className="rail-link rail-search" onClick={() => setSearchOpen(true)}>
+            <Search size={16} strokeWidth={1.5} />
+            <span>Search</span>
+            <kbd className="rail-kbd">⌘K</kbd>
+          </button>
 
           <span className="rail-heading rail-heading-gap">Courses</span>
           {(courses.data ?? []).map((c) => (
@@ -220,6 +259,7 @@ export function AppShell({
       <main className="content">{children}</main>
       <UpdateToast />
       {settingsOpen && <SettingsDialog onClose={() => setSettingsOpen(false)} />}
+      {searchOpen && <SearchPalette onClose={() => setSearchOpen(false)} />}
 
       <nav className="bottom-bar" aria-label="Main">
         <Link to="/" className="bottom-link" activeProps={{ className: "bottom-link active" }}>
@@ -252,6 +292,17 @@ export function AppShell({
             <DueBadge count={dueCount} />
           </span>
           <span>Tasks</span>
+        </Link>
+        <Link
+          to="/review"
+          className="bottom-link"
+          activeProps={{ className: "bottom-link active" }}
+        >
+          <span className="bottom-link-icon">
+            <Layers size={20} strokeWidth={1.5} />
+            <DueBadge count={reviewDue} />
+          </span>
+          <span>Review</span>
         </Link>
       </nav>
     </div>

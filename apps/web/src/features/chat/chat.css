@@ -166,3 +166,23 @@
     max-height: none;
   }
 }
+
+.chat-teacher-toggle {
+  align-self: flex-start;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s-1);
+  border: 1px solid var(--rule);
+  background: none;
+  border-radius: 999px;
+  padding: 3px var(--s-3);
+  font-size: 12px;
+  color: var(--ink-soft);
+  cursor: pointer;
+  margin-bottom: var(--s-2);
+}
+.chat-teacher-toggle.on {
+  border-color: var(--accent-blue);
+  color: var(--accent-blue);
+  background: var(--accent-blue-wash, rgba(40, 81, 143, 0.08));
+}

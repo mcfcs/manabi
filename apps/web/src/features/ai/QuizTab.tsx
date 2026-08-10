@@ -1,4 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useNavigate } from "@tanstack/react-router";
 import { ChevronRight, ListChecks, Plus } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 
@@ -27,7 +28,15 @@ const TYPE_LABELS: Record<string, string> = {
 
 // ── Taking a quiz ─────────────────────────────────────────────
 
-function QuizPlayer({ quiz, onExit }: { quiz: QuizOut; onExit: () => void }) {
+function QuizPlayer({
+  quiz,
+  onExit,
+  onDebrief,
+}: {
+  quiz: QuizOut;
+  onExit: () => void;
+  onDebrief: (missed: string[]) => void;
+}) {
   const [index, setIndex] = useState(0);
   const [selected, setSelected] = useState<string | null>(null);
   const [checked, setChecked] = useState(false);
@@ -89,6 +98,9 @@ function QuizPlayer({ quiz, onExit }: { quiz: QuizOut; onExit: () => void }) {
 
   if (finished) {
     const right = results.filter(Boolean).length;
+    const missed = quiz.questions
+      .filter((_, i) => !results[i])
+      .map((q) => q.prompt);
     return (
       <div className="quiz-results">
         <h3>
@@ -101,9 +113,16 @@ function QuizPlayer({ quiz, onExit }: { quiz: QuizOut; onExit: () => void }) {
               ? "Solid — review the ones you missed."
               : "Worth another pass through the material."}
         </p>
-        <button className="btn btn-primary" onClick={onExit}>
-          Back to quizzes
-        </button>
+        <div className="quiz-results-actions">
+          {missed.length > 0 && (
+            <button className="btn" onClick={() => onDebrief(missed)}>
+              Steven's debrief
+            </button>
+          )}
+          <button className="btn btn-primary" onClick={onExit}>
+            Back to quizzes
+          </button>
+        </div>
       </div>
     );
   }
@@ -248,6 +267,7 @@ export function QuizTab({
   courseId: string;
 }) {
   const queryClient = useQueryClient();
+  const navigate = useNavigate();
   const aiOnline = useAiOnline();
   const [configuring, setConfiguring] = useState(false);
   const [types, setTypes] = useState<string[]>(["mcq", "tf", "short"]);
@@ -304,7 +324,26 @@ export function QuizTab({
   }
 
   if (playing != null && activeQuiz.data) {
-    return <QuizPlayer quiz={activeQuiz.data} onExit={() => setPlaying(null)} />;
+    return (
+      <QuizPlayer
+        quiz={activeQuiz.data}
+        onExit={() => setPlaying(null)}
+        onDebrief={(missed) => {
+          const list = missed
+            .slice(0, 6)
+            .map((q, i) => `${i + 1}. ${q}`)
+            .join(" ");
+          navigate({
+            to: "/courses/$courseId/modules/$moduleId",
+            params: { courseId, moduleId },
+            search: {
+              tab: "chat",
+              ask: `I just took a quiz and missed these questions: ${list} — debrief me: why are the right answers right, and what am I misunderstanding?`,
+            },
+          });
+        }}
+      />
+    );
   }
 
   return (

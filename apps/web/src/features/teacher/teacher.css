@@ -1,0 +1,236 @@
+.teacher-tab {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-4);
+  max-width: 760px;
+}
+
+.teacher-hero {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--s-3);
+  padding: var(--s-7) var(--s-4);
+  text-align: center;
+  background: var(--surface-raised);
+  border: 1px solid var(--rule);
+  border-radius: var(--radius);
+  color: var(--ink);
+}
+.teacher-hero h2 {
+  font-family: var(--font-display);
+  font-size: 22px;
+  margin: 0;
+}
+.teacher-hero p {
+  margin: 0;
+  color: var(--ink-soft);
+  font-size: 14px;
+  max-width: 44ch;
+}
+
+.teacher-modes {
+  display: flex;
+  gap: var(--s-2);
+  flex-wrap: wrap;
+  justify-content: center;
+}
+.teacher-mode {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: var(--s-2) var(--s-3);
+  border: 1px solid var(--rule);
+  background: none;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  font: inherit;
+  color: var(--ink-soft);
+  min-width: 130px;
+}
+.teacher-mode span {
+  font-size: 11.5px;
+  color: var(--ink-faint);
+}
+.teacher-mode.on {
+  border-color: var(--accent-blue);
+  color: var(--accent-blue);
+}
+
+.teacher-head {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+}
+.teacher-head-text {
+  flex: 1;
+  min-width: 0;
+}
+.teacher-head h2 {
+  font-family: var(--font-display);
+  font-size: 20px;
+  margin: 0;
+}
+.teacher-meta {
+  font-size: 12px;
+  color: var(--ink-faint);
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s-2);
+}
+
+.teacher-voice-note {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  font-size: 12.5px;
+  color: var(--ink-soft);
+  background: var(--surface);
+  border: 1px solid var(--rule);
+  border-radius: var(--radius-sm);
+  padding: var(--s-2) var(--s-3);
+  margin: 0;
+}
+
+/* ── Player ────────────────────────────────────────────────── */
+
+.lecture-player {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  padding: var(--s-2) var(--s-3);
+  background: var(--surface-raised);
+  border: 1px solid var(--rule);
+  border-radius: var(--radius);
+  position: sticky;
+  top: var(--s-2);
+  z-index: 10;
+}
+.lecture-play {
+  min-width: 44px;
+}
+.lecture-now {
+  flex: 1;
+  min-width: 0;
+  font-size: 13px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.lecture-speed {
+  min-height: 30px;
+  padding: 0 var(--s-2);
+  font-size: 12px;
+}
+
+/* ── Segments ──────────────────────────────────────────────── */
+
+.teacher-segments {
+  display: flex;
+  flex-direction: column;
+}
+.teacher-seg {
+  border-bottom: 1px solid var(--rule);
+}
+.teacher-seg-head {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  width: 100%;
+  padding: var(--s-3) var(--s-1);
+  border: none;
+  background: none;
+  font: inherit;
+  color: var(--ink);
+  text-align: left;
+  cursor: pointer;
+}
+.teacher-seg.open .teacher-seg-head {
+  color: var(--accent-blue-deep, var(--accent-blue));
+}
+.teacher-seg-no {
+  font-size: 11px;
+  color: var(--ink-faint);
+}
+.teacher-seg-title {
+  font-weight: 600;
+  font-size: 14.5px;
+}
+.teacher-seg-body {
+  padding: 0 var(--s-1) var(--s-4) calc(15px + var(--s-2) + var(--s-1));
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-3);
+  animation: manabi-fade-up 200ms var(--ease) both;
+}
+.teacher-spoken {
+  margin: 0;
+  font-family: var(--font-reading);
+  font-size: 15.5px;
+  line-height: 1.75;
+  white-space: pre-line;
+}
+.teacher-board {
+  background: var(--surface);
+  border-left: 3px solid var(--accent-blue);
+  border-radius: var(--radius-sm);
+  padding: var(--s-3);
+}
+.teacher-board-label {
+  display: block;
+  font-size: 10.5px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--ink-faint);
+  margin-bottom: var(--s-1);
+}
+.teacher-board p {
+  margin: 0;
+  font-size: 13.5px;
+  white-space: pre-line;
+}
+.teacher-cites {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--s-1);
+}
+
+/* ── Checkpoints ───────────────────────────────────────────── */
+
+.checkpoint {
+  border: 1px solid var(--stale);
+  border-radius: var(--radius-sm);
+  padding: var(--s-3);
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-2);
+  align-items: flex-start;
+}
+.checkpoint-label {
+  font-size: 10.5px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--stale);
+  font-weight: 700;
+}
+.checkpoint-q {
+  margin: 0;
+  font-weight: 600;
+}
+.checkpoint-a {
+  margin: 0;
+  font-size: 14px;
+  color: var(--ink-soft);
+}
+.checkpoint-selfgrade {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  font-size: 13px;
+}
+.checkpoint-recorded {
+  margin: 0;
+  font-size: 12.5px;
+  font-style: italic;
+  color: var(--ink-faint);
+}
