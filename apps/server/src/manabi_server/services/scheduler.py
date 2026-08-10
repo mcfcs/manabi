@@ -74,6 +74,23 @@ async def _tick(sessionmaker) -> None:
             if stale:
                 await fetch_gcal(db)
 
+        # 2a. Canvas task auto-sync (every other 5-min tick ≈ 10 min)
+        if now.minute % 10 < 5:
+            try:
+                from manabi_core.models import User
+
+                from manabi_server.api.tasks import sync_canvas_tasks
+
+                user = (
+                    await db.execute(select(User).order_by(User.id).limit(1))
+                ).scalar_one_or_none()
+                if user is not None:
+                    result = await sync_canvas_tasks(db, user)
+                    if result["created"]:
+                        log.info("canvas auto-sync: %s", result)
+            except Exception:  # noqa: BLE001 — canvas down must not kill ticks
+                log.exception("canvas task auto-sync failed")
+
         # 2b. Canvas announcements poll (~30 min cadence via minute check)
         if app is not None and 7 <= now.hour < 22 and now.minute < 5:
             try:

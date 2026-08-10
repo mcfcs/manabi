@@ -186,3 +186,21 @@
   color: var(--accent-blue);
   background: var(--accent-blue-wash, rgba(40, 81, 143, 0.08));
 }
+
+.chat-speak {
+  border: none;
+  background: none;
+  color: var(--ink-faint);
+  cursor: pointer;
+  padding: 2px;
+  margin-top: var(--s-1);
+  display: inline-flex;
+  align-items: center;
+}
+.chat-speak:hover {
+  color: var(--accent-blue);
+}
+.chat-speak.speaking {
+  color: var(--accent-blue);
+  animation: manabi-breathe 1.6s ease-in-out infinite;
+}

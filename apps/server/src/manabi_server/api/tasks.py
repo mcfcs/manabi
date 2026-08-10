@@ -160,13 +160,11 @@ async def delete_task(
     return {"ok": True}
 
 
-@router.post("/canvas-sync", dependencies=[Depends(require_csrf)])
-async def canvas_sync(
-    user: User = Depends(get_default_user), db: AsyncSession = Depends(get_db)
-) -> dict:
+async def sync_canvas_tasks(db: AsyncSession, user: User) -> dict:
     """Pull upcoming + overdue assignments from every Canvas-linked course.
     Canvas stays the source of truth for its own items: existing not-done
-    tasks get their title/due refreshed; done tasks are never resurrected."""
+    tasks get their title/due refreshed; done tasks are never resurrected.
+    Used by the endpoint AND the scheduler's 10-minute auto-sync."""
     from manabi_server.api.canvas import _canvas_get
 
     courses = [
@@ -223,3 +221,10 @@ async def canvas_sync(
                 updated += 1
     await db.commit()
     return {"created": created, "updated": updated, "courses_checked": len(courses)}
+
+
+@router.post("/canvas-sync", dependencies=[Depends(require_csrf)])
+async def canvas_sync(
+    user: User = Depends(get_default_user), db: AsyncSession = Depends(get_db)
+) -> dict:
+    return await sync_canvas_tasks(db, user)

@@ -815,25 +815,40 @@ async def chat_answer(job_id: int, thread_id: int, chunk_ids: list[int]) -> None
                 else:
                     grounded = False  # cited ids didn't resolve — don't fake it
 
-            db.add(
-                ChatMessage(
-                    thread_id=thread_id,
-                    role=ChatRole.assistant,
-                    content=answer,
-                    grounded=grounded,
-                    # only explicit general knowledge gets the amber badge —
-                    # notes-derived answers say "According to your notes" instead
-                    general_knowledge=bool(result.get("general_knowledge_used")),
-                    citations=citations_snapshot or None,
-                    job_id=job.id,
-                )
+            assistant_msg = ChatMessage(
+                thread_id=thread_id,
+                role=ChatRole.assistant,
+                content=answer,
+                grounded=grounded,
+                # only explicit general knowledge gets the amber badge —
+                # notes-derived answers say "According to your notes" instead
+                general_knowledge=bool(result.get("general_knowledge_used")),
+                citations=citations_snapshot or None,
+                job_id=job.id,
             )
+            db.add(assistant_msg)
             job.status = JobStatus.succeeded
             job.progress_pct = 100
             job.progress_note = "Done"
             job.preview = None
             job.finished_at = datetime.now(UTC)
             await db.commit()
+
+            # Steven speaks his own replies: teacher-mode threads auto-queue
+            # synthesis so the UI can just poll the audio endpoint.
+            if getattr(thread, "teacher_mode", False) and settings.tts_enabled:
+                speak_job = Job(
+                    user_id=job.user_id,
+                    job_type="speak_text",
+                    queue=job.queue,
+                    module_id=thread.module_id,
+                )
+                db.add(speak_job)
+                await db.flush()
+                speak_job.procrastinate_job_id = await app.configure_task(
+                    "manabi_ai.tasks.speak_text", queue="gpu"
+                ).defer_async(job_id=speak_job.id, message_id=assistant_msg.id)
+                await db.commit()
         except (GenerationError, Exception) as exc:  # noqa: BLE001
             log.exception("chat answer failed")
             await db.rollback()

@@ -1,6 +1,14 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useNavigate, useSearch } from "@tanstack/react-router";
-import { GraduationCap, MessageSquarePlus, SendHorizontal, Trash2 } from "lucide-react";
+import {
+  GraduationCap,
+  Loader2,
+  MessageSquarePlus,
+  SendHorizontal,
+  Trash2,
+  Volume2,
+  VolumeX,
+} from "lucide-react";
 import { type FormEvent, useEffect, useRef, useState } from "react";
 
 import {
@@ -37,6 +45,13 @@ export function ChatTab({ moduleId }: { moduleId: string }) {
   const [activeThread, setActiveThread] = useState<number | null>(null);
   const [input, setInput] = useState("");
   const [error, setError] = useState<string | null>(null);
+  const [voiceOn, setVoiceOn] = useState(
+    () => localStorage.getItem("manabi-chat-voice") === "1",
+  );
+  const [speakingId, setSpeakingId] = useState<number | null>(null);
+  const [pendingSpeakId, setPendingSpeakId] = useState<number | null>(null);
+  const audioRef = useRef<HTMLAudioElement>(null);
+  const autoPlayed = useRef<Set<number>>(new Set());
   const askHandled = useRef(false);
   const bottomRef = useRef<HTMLDivElement>(null);
 
@@ -122,6 +137,81 @@ export function ChatTab({ moduleId }: { moduleId: string }) {
       queryClient.invalidateQueries({ queryKey: ["chat-threads", moduleId] }),
   });
   const activeThreadObj = threads.data?.find((t) => t.id === activeThread);
+
+  function playMessage(id: number) {
+    const audio = audioRef.current;
+    if (!audio) return;
+    setSpeakingId(id);
+    audio.src = `/api/chat/messages/${id}/audio`;
+    audio.play().catch(() => setSpeakingId(null));
+  }
+
+  async function speakMessage(id: number, hasAudio: boolean) {
+    if (speakingId === id) {
+      audioRef.current?.pause();
+      setSpeakingId(null);
+      return;
+    }
+    if (hasAudio) {
+      playMessage(id);
+      return;
+    }
+    // trigger synthesis, then poll until the clip exists (~5-30s)
+    setPendingSpeakId(id);
+    try {
+      await api.post(`/api/chat/messages/${id}/speak`);
+      for (let i = 0; i < 40; i++) {
+        await new Promise((r) => setTimeout(r, 2500));
+        const head = await fetch(`/api/chat/messages/${id}/audio`, {
+          method: "GET",
+          credentials: "same-origin",
+        });
+        if (head.ok) {
+          queryClient.invalidateQueries({ queryKey: ["chat-messages", activeThread] });
+          playMessage(id);
+          break;
+        }
+      }
+    } finally {
+      setPendingSpeakId(null);
+    }
+  }
+
+  // Voice-on: auto-play Steven's newest reply once its clip lands (the
+  // worker auto-queues synthesis on teacher-mode threads)
+  useEffect(() => {
+    if (!voiceOn || !activeThreadObj?.teacher_mode) return;
+    const last = [...(messages.data ?? [])]
+      .reverse()
+      .find((m) => m.role === "assistant");
+    if (!last || autoPlayed.current.has(last.id)) return;
+    if (last.has_audio) {
+      autoPlayed.current.add(last.id);
+      playMessage(last.id);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [messages.data, voiceOn, activeThreadObj?.teacher_mode]);
+
+  // While a reply's audio is being synthesized in the background, keep
+  // refreshing so has_audio flips and the autoplay effect fires
+  useEffect(() => {
+    if (!voiceOn || !activeThreadObj?.teacher_mode) return;
+    const last = [...(messages.data ?? [])]
+      .reverse()
+      .find((m) => m.role === "assistant");
+    if (!last || last.has_audio || autoPlayed.current.has(last.id)) return;
+    const t = setInterval(
+      () =>
+        queryClient.invalidateQueries({ queryKey: ["chat-messages", activeThread] }),
+      3000,
+    );
+    const stop = setTimeout(() => clearInterval(t), 90_000);
+    return () => {
+      clearInterval(t);
+      clearTimeout(stop);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [messages.data, voiceOn, activeThreadObj?.teacher_mode, activeThread]);
 
   const send = useMutation({
     mutationFn: (content: string) =>
@@ -209,6 +299,33 @@ export function ChatTab({ moduleId }: { moduleId: string }) {
             Steven mode {activeThreadObj.teacher_mode ? "on" : "off"}
           </button>
         )}
+        {activeThreadObj?.teacher_mode && (
+          <button
+            className={`chat-teacher-toggle${voiceOn ? " on" : ""}`}
+            onClick={() => {
+              const next = !voiceOn;
+              setVoiceOn(next);
+              localStorage.setItem("manabi-chat-voice", next ? "1" : "0");
+              if (!next) {
+                audioRef.current?.pause();
+                setSpeakingId(null);
+              }
+            }}
+            title="Steven reads his replies aloud"
+          >
+            {voiceOn ? (
+              <Volume2 size={14} strokeWidth={1.75} />
+            ) : (
+              <VolumeX size={14} strokeWidth={1.75} />
+            )}
+            Voice {voiceOn ? "on" : "off"}
+          </button>
+        )}
+        <audio
+          ref={audioRef}
+          onEnded={() => setSpeakingId(null)}
+          onPause={() => setSpeakingId(null)}
+        />
 
         <div className="chat-messages">
           {(messages.data ?? []).length === 0 && !answering.running && (
@@ -235,6 +352,28 @@ export function ChatTab({ moduleId }: { moduleId: string }) {
                       <CitePill key={i} c={c} />
                     ))}
                   </div>
+                )}
+                {m.role === "assistant" && activeThreadObj?.teacher_mode && (
+                  <button
+                    className={`chat-speak${speakingId === m.id ? " speaking" : ""}`}
+                    onClick={() => speakMessage(m.id, m.has_audio)}
+                    disabled={pendingSpeakId === m.id}
+                    title={
+                      speakingId === m.id
+                        ? "Stop"
+                        : m.has_audio
+                          ? "Play as Steven"
+                          : "Synthesize + play as Steven"
+                    }
+                  >
+                    {pendingSpeakId === m.id ? (
+                      <Loader2 size={13} className="spin" />
+                    ) : speakingId === m.id ? (
+                      <VolumeX size={13} strokeWidth={1.75} />
+                    ) : (
+                      <Volume2 size={13} strokeWidth={1.75} />
+                    )}
+                  </button>
                 )}
               </div>
             </div>

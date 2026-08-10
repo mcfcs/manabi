@@ -46,6 +46,7 @@ class MessageOut(BaseModel):
     grounded: bool
     general_knowledge: bool
     citations: list | None
+    has_audio: bool = False
     created_at: datetime
 
 
@@ -149,17 +150,14 @@ async def delete_thread(
 async def list_messages(
     thread: ChatThread = Depends(_get_owned_thread), db: AsyncSession = Depends(get_db)
 ) -> list[MessageOut]:
-    messages = (
-        (
-            await db.execute(
-                select(ChatMessage)
-                .where(ChatMessage.thread_id == thread.id)
-                .order_by(ChatMessage.id)
-            )
+    rows = (
+        await db.execute(
+            select(ChatMessage, SpeechClip.id)
+            .outerjoin(SpeechClip, SpeechClip.chat_message_id == ChatMessage.id)
+            .where(ChatMessage.thread_id == thread.id)
+            .order_by(ChatMessage.id)
         )
-        .scalars()
-        .all()
-    )
+    ).all()
     return [
         MessageOut(
             id=m.id,
@@ -168,9 +166,10 @@ async def list_messages(
             grounded=m.grounded,
             general_knowledge=m.general_knowledge,
             citations=m.citations,
+            has_audio=clip_id is not None,
             created_at=m.created_at,
         )
-        for m in messages
+        for m, clip_id in rows
     ]
 
 

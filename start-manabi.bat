@@ -83,6 +83,20 @@ if "%SKIP_GPU_WORKER%"=="1" (
     )
 )
 
+REM ── Teacher voice: GPT-SoVITS TTS server (only where it is installed) ──
+REM Moves with the GPU worker; skipped automatically if C:\GPT-SoVITS is absent.
+if exist "C:\GPT-SoVITS\api_v2.py" (
+    powershell -NoProfile -Command "exit [int][bool](Get-NetTCPConnection -LocalPort 9880 -State Listen -ErrorAction SilentlyContinue)" >nul 2>&1
+    if not errorlevel 1 (
+        start "Manabi TTS (Steven)" cmd /k "cd /d C:\GPT-SoVITS && set PYTHONUTF8=1 && .venv\Scripts\python api_v2.py -a 127.0.0.1 -p 9880"
+        echo [tts]      Steven voice server starting on 127.0.0.1:9880
+    ) else (
+        echo [tts]      Steven voice server already running on 9880
+    )
+) else (
+    echo [tts]      GPT-SoVITS not installed here - Teacher runs in reading mode
+)
+
 powershell -NoProfile -Command "exit ((Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -match 'manabi_server\.worker' }).Count)" >nul 2>&1
 if not errorlevel 1 (
     start "Manabi CPU worker" cmd /k uv run python -m manabi_server.worker
@@ -94,7 +108,7 @@ REM ── 6. URLs ────────────────────�
 set TSIP=
 for /f "delims=" %%i in ('tailscale ip -4 2^>nul') do if not defined TSIP set TSIP=%%i
 echo.
-echo   Manabi is starting in three windows (API + AI worker + CPU worker).
+echo   Manabi is starting (API + AI worker + CPU worker + Steven TTS).
 echo.
 echo   This computer:   http://localhost:56690
 if defined TSIP (

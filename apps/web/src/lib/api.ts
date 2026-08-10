@@ -427,6 +427,7 @@ export interface ChatMessageOut {
   content: string;
   grounded: boolean;
   general_knowledge: boolean;
+  has_audio: boolean;
   citations: ChatCitation[] | null;
   created_at: string;
 }
