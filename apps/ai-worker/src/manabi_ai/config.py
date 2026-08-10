@@ -21,6 +21,17 @@ class WorkerSettings(CoreSettings):
     tts_ref_audio: str = ""  # path (on this machine) to a 3-10s reference wav
     tts_ref_text: str = ""  # exact transcript of the reference clip
     tts_speed: float = 1.0
+    # Voice-lab A/B: weight sets for "base" (pretrained zero-shot) and
+    # "tuned" (fine-tuned). Paths are relative to the TTS server's cwd.
+    tts_base_gpt: str = (
+        "GPT_SoVITS/pretrained_models/gsv-v2final-pretrained/"
+        "s1bert25hz-5kh-longer-epoch=12-step=369668.ckpt"
+    )
+    tts_base_sovits: str = (
+        "GPT_SoVITS/pretrained_models/gsv-v2final-pretrained/s2G2333k.pth"
+    )
+    tts_tuned_gpt: str = ""  # e.g. GPT_weights_v2/steven-e15.ckpt
+    tts_tuned_sovits: str = ""  # e.g. SoVITS_weights_v2/steven_e8_s264.pth
 
     @property
     def effective_chat_model(self) -> str:

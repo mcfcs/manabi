@@ -309,6 +309,7 @@ export interface LectureSegmentOut {
   spoken_text: string;
   checkpoint: { question: string; answer: string } | null;
   audio_ready: boolean;
+  audio_id: number | null;
   duration_ms: number | null;
   citations: CitationOut[];
 }
@@ -428,6 +429,7 @@ export interface ChatMessageOut {
   grounded: boolean;
   general_knowledge: boolean;
   has_audio: boolean;
+  audio_id: number | null;
   citations: ChatCitation[] | null;
   created_at: string;
 }

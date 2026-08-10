@@ -985,6 +985,7 @@ class LectureSegmentOut(BaseModel):
     spoken_text: str
     checkpoint: dict | None
     audio_ready: bool
+    audio_id: int | None  # changes on re-synthesis — cache-buster for the URL
     duration_ms: int | None
     citations: list[CitationOut]
 
@@ -1058,6 +1059,7 @@ async def get_lecture(
                 spoken_text=seg.get("spoken_text", ""),
                 checkpoint=seg.get("checkpoint"),
                 audio_ready=row is not None,
+                audio_id=row.id if row else None,
                 duration_ms=row.duration_ms if row else None,
                 citations=citations.get(f"seg:{i}", []),
             )

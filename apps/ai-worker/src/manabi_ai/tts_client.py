@@ -130,3 +130,32 @@ async def synthesize(text: str) -> tuple[bytes, int]:
         await asyncio.to_thread(_encode_mp3, wavs, out)
         duration = await asyncio.to_thread(_probe_duration_ms, out)
         return out.read_bytes(), duration
+
+
+async def set_weights(gpt_path: str, sovits_path: str) -> None:
+    settings = get_settings()
+    async with httpx.AsyncClient(timeout=120) as client:
+        for endpoint, path in (
+            ("set_gpt_weights", gpt_path),
+            ("set_sovits_weights", sovits_path),
+        ):
+            r = await client.get(
+                f"{settings.tts_url.rstrip('/')}/{endpoint}",
+                params={"weights_path": path},
+            )
+            r.raise_for_status()
+
+
+async def synthesize_variant(text: str, variant: str) -> tuple[bytes, int]:
+    """Synthesize with a specific weight set. "base" temporarily swaps to the
+    pretrained weights and always restores the tuned set afterwards."""
+    settings = get_settings()
+    use_base = variant == "base"
+    has_tuned = bool(settings.tts_tuned_gpt and settings.tts_tuned_sovits)
+    if use_base:
+        await set_weights(settings.tts_base_gpt, settings.tts_base_sovits)
+    try:
+        return await synthesize(text)
+    finally:
+        if use_base and has_tuned:
+            await set_weights(settings.tts_tuned_gpt, settings.tts_tuned_sovits)

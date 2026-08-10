@@ -138,11 +138,11 @@ export function ChatTab({ moduleId }: { moduleId: string }) {
   });
   const activeThreadObj = threads.data?.find((t) => t.id === activeThread);
 
-  function playMessage(id: number) {
+  function playMessage(id: number, audioId?: number | null) {
     const audio = audioRef.current;
     if (!audio) return;
     setSpeakingId(id);
-    audio.src = `/api/chat/messages/${id}/audio`;
+    audio.src = `/api/chat/messages/${id}/audio?v=${audioId ?? Date.now()}`;
     audio.play().catch(() => setSpeakingId(null));
   }
 
@@ -153,7 +153,8 @@ export function ChatTab({ moduleId }: { moduleId: string }) {
       return;
     }
     if (hasAudio) {
-      playMessage(id);
+      const msg = messages.data?.find((m) => m.id === id);
+      playMessage(id, msg?.audio_id);
       return;
     }
     // trigger synthesis, then poll until the clip exists (~5-30s)
@@ -187,7 +188,7 @@ export function ChatTab({ moduleId }: { moduleId: string }) {
     if (!last || autoPlayed.current.has(last.id)) return;
     if (last.has_audio) {
       autoPlayed.current.add(last.id);
-      playMessage(last.id);
+      playMessage(last.id, last.audio_id);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [messages.data, voiceOn, activeThreadObj?.teacher_mode]);

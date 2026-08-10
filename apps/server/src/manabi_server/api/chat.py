@@ -47,6 +47,7 @@ class MessageOut(BaseModel):
     general_knowledge: bool
     citations: list | None
     has_audio: bool = False
+    audio_id: int | None = None  # cache-buster; changes if re-synthesized
     created_at: datetime
 
 
@@ -167,6 +168,7 @@ async def list_messages(
             general_knowledge=m.general_knowledge,
             citations=m.citations,
             has_audio=clip_id is not None,
+            audio_id=clip_id,
             created_at=m.created_at,
         )
         for m, clip_id in rows

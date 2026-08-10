@@ -96,7 +96,7 @@ export function LecturePlayer({
     <div className="lecture-player">
       <audio
         ref={audioRef}
-        src={`/api/artifacts/${lecture.artifact_id}/audio/${current}`}
+        src={`/api/artifacts/${lecture.artifact_id}/audio/${current}?v=${seg?.audio_id ?? 0}`}
         onEnded={onEnded}
         onPlay={() => setPlaying(true)}
         onPause={() => setPlaying(false)}

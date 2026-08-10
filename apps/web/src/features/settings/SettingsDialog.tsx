@@ -1,5 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
+
+import { Loader2 } from "lucide-react";
 
 import { Modal } from "../../components/Modal";
 import { api, ApiError, type SettingsOut } from "../../lib/api";
@@ -9,6 +11,101 @@ import {
   getPushState,
   type PushState,
 } from "../../lib/push";
+
+const LAB_DEFAULT =
+  "Good day. Settle in. Today we examine the zero-overhead principle, and why it matters rather more than you might think.";
+
+/** A/B the zero-shot vs fine-tuned Steven voice on any line. Renders are
+ * cached server-side per (variant, text). */
+function VoiceLab() {
+  const [text, setText] = useState(LAB_DEFAULT);
+  const [busy, setBusy] = useState<string | null>(null);
+  const [playing, setPlaying] = useState<string | null>(null);
+  const [labError, setLabError] = useState<string | null>(null);
+  const audioRef = useRef<HTMLAudioElement>(null);
+
+  async function render(variant: "base" | "tuned") {
+    if (playing === variant) {
+      audioRef.current?.pause();
+      setPlaying(null);
+      return;
+    }
+    setBusy(variant);
+    setLabError(null);
+    try {
+      for (let i = 0; i < 60; i++) {
+        const r = await api.post<{ ready: boolean; id?: number }>(
+          "/api/voice/preview",
+          { text: text.trim(), variant },
+        );
+        if (r.ready && r.id != null) {
+          const audio = audioRef.current;
+          if (audio) {
+            audio.src = `/api/voice/previews/${r.id}`;
+            setPlaying(variant);
+            await audio.play().catch(() => setPlaying(null));
+          }
+          return;
+        }
+        await new Promise((res) => setTimeout(res, 2500));
+      }
+      setLabError("Timed out waiting for the render");
+    } catch (e) {
+      setLabError(e instanceof ApiError ? e.message : "Render failed");
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  return (
+    <>
+      <h3 className="settings-heading">Voice lab — compare Steven's voices</h3>
+      <p className="settings-hint">
+        Renders the same line with the original zero-shot clone and the
+        fine-tuned model. First render of a new line takes ~10–40s (the
+        zero-shot one swaps model weights, so it's slower).
+      </p>
+      <textarea
+        className="input event-notes"
+        rows={2}
+        value={text}
+        onChange={(e) => setText(e.target.value)}
+      />
+      <div className="settings-push-row">
+        <button
+          className="btn"
+          disabled={busy !== null || text.trim().length < 3}
+          onClick={() => render("base")}
+        >
+          {busy === "base" ? (
+            <Loader2 size={14} className="spin" />
+          ) : playing === "base" ? (
+            "◼"
+          ) : (
+            "▶"
+          )}{" "}
+          Zero-shot
+        </button>
+        <button
+          className="btn"
+          disabled={busy !== null || text.trim().length < 3}
+          onClick={() => render("tuned")}
+        >
+          {busy === "tuned" ? (
+            <Loader2 size={14} className="spin" />
+          ) : playing === "tuned" ? (
+            "◼"
+          ) : (
+            "▶"
+          )}{" "}
+          Fine-tuned
+        </button>
+      </div>
+      {labError && <p className="error-text">{labError}</p>}
+      <audio ref={audioRef} onEnded={() => setPlaying(null)} onPause={() => setPlaying(null)} />
+    </>
+  );
+}
 
 export function SettingsDialog({ onClose }: { onClose: () => void }) {
   const queryClient = useQueryClient();
@@ -201,6 +298,8 @@ export function SettingsDialog({ onClose }: { onClose: () => void }) {
           />
           Push a reminder ~15 minutes before each class
         </label>
+
+        <VoiceLab />
 
         {error && <p className="error-text">{error}</p>}
 

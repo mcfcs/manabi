@@ -135,3 +135,53 @@ async def speak_text(job_id: int, message_id: int) -> None:
             job.error = f"{type(exc).__name__}: {str(exc)[:400]}"
             job.finished_at = datetime.now(UTC)
             await db.commit()
+
+
+@app.task(name="manabi_ai.tasks.voice_preview", queue="gpu", retry=1)
+async def voice_preview(job_id: int, text: str, variant: str) -> None:
+    """Voice-lab A/B render: synthesize one line with the requested weight
+    set (base = pretrained zero-shot, tuned = fine-tuned) and cache it."""
+    from manabi_core.models import VoicePreview
+
+    from manabi_ai.tts_client import synthesize_variant
+
+    settings = get_settings()
+    async with session_factory()() as db:
+        job = (await db.execute(select(Job).where(Job.id == job_id))).scalar_one()
+        job.status = JobStatus.running
+        job.started_at = datetime.now(UTC)
+        job.progress_note = f"Rendering {variant} voice"
+        await db.commit()
+        try:
+            if not settings.tts_enabled:
+                raise RuntimeError("TTS is not configured on this worker")
+            text = text.strip()[:500]
+            existing = (
+                await db.execute(
+                    select(VoicePreview).where(
+                        VoicePreview.variant == variant, VoicePreview.text == text
+                    )
+                )
+            ).scalar_one_or_none()
+            if existing is None:
+                audio, duration = await synthesize_variant(text, variant)
+                db.add(
+                    VoicePreview(
+                        variant=variant,
+                        text=text,
+                        audio=audio,
+                        mime="audio/mpeg",
+                        duration_ms=duration,
+                    )
+                )
+            job.status = JobStatus.succeeded
+            job.progress_pct = 100
+            job.finished_at = datetime.now(UTC)
+            await db.commit()
+        except Exception as exc:  # noqa: BLE001
+            log.exception("voice preview failed")
+            await db.rollback()
+            job.status = JobStatus.failed
+            job.error = f"{type(exc).__name__}: {str(exc)[:400]}"
+            job.finished_at = datetime.now(UTC)
+            await db.commit()

@@ -785,3 +785,20 @@ class SpeechClip(Base, TimestampMixin):
     mime: Mapped[str] = mapped_column(String(64), nullable=False)
     duration_ms: Mapped[int] = mapped_column(nullable=False)
     voice: Mapped[str] = mapped_column(String(64), nullable=False)
+
+
+class VoicePreview(Base, TimestampMixin):
+    """Voice-lab A/B sample: one line rendered by one voice variant."""
+
+    __tablename__ = "voice_previews"
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    variant: Mapped[str] = mapped_column(String(16), nullable=False)  # base|tuned
+    text: Mapped[str] = mapped_column(String(500), nullable=False)
+    audio: Mapped[bytes] = mapped_column(LargeBinary, nullable=False)
+    mime: Mapped[str] = mapped_column(String(64), nullable=False)
+    duration_ms: Mapped[int] = mapped_column(nullable=False)
+
+    __table_args__ = (
+        UniqueConstraint("variant", "text", name="uq_voice_previews_variant_text"),
+    )

@@ -25,6 +25,7 @@ from manabi_server.api import (
     stats,
     tasks,
     user,
+    voice,
 )
 from manabi_server.api import (
     settings as settings_api,
@@ -69,6 +70,7 @@ app.include_router(push.router)
 app.include_router(review.router)
 app.include_router(search.router)
 app.include_router(stats.router)
+app.include_router(voice.router)
 app.include_router(settings_api.router)
 
 # Serve the built SPA (apps/web/dist) so one process on 0.0.0.0:56690 covers
