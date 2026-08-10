@@ -8,9 +8,12 @@ changing `_request_wav`.
 
 import asyncio
 import logging
+import os
 import re
+import shutil
 import subprocess
 import tempfile
+from glob import glob
 from pathlib import Path
 
 import httpx
@@ -20,6 +23,29 @@ from manabi_ai.config import get_settings
 log = logging.getLogger("manabi_ai.tts")
 
 GROUP_CHARS = 280
+
+_ffmpeg_dir: str | None = None
+
+
+def _tool(name: str) -> str:
+    """Resolve ffmpeg/ffprobe: PATH first, then the winget install dir."""
+    global _ffmpeg_dir
+    found = shutil.which(name)
+    if found:
+        return found
+    if _ffmpeg_dir is None:
+        pattern = os.path.expandvars(
+            r"%LOCALAPPDATA%\Microsoft\WinGet\Packages\Gyan.FFmpeg*\ffmpeg-*\bin"
+        )
+        dirs = glob(pattern)
+        _ffmpeg_dir = dirs[0] if dirs else ""
+    candidate = os.path.join(_ffmpeg_dir, f"{name}.exe") if _ffmpeg_dir else ""
+    if candidate and os.path.exists(candidate):
+        return candidate
+    raise RuntimeError(
+        f"{name} not found — install ffmpeg (winget install Gyan.FFmpeg) on the "
+        "machine running the GPU worker"
+    )
 
 
 def split_sentences(text: str, group_chars: int = GROUP_CHARS) -> list[str]:
@@ -64,7 +90,7 @@ def _encode_mp3(wav_paths: list[Path], out_path: Path) -> None:
     )
     subprocess.run(
         [
-            "ffmpeg", "-y", "-f", "concat", "-safe", "0", "-i", str(list_file),
+            _tool("ffmpeg"), "-y", "-f", "concat", "-safe", "0", "-i", str(list_file),
             "-ac", "1", "-b:a", "64k", str(out_path),
         ],
         check=True,
@@ -76,7 +102,7 @@ def _encode_mp3(wav_paths: list[Path], out_path: Path) -> None:
 def _probe_duration_ms(path: Path) -> int:
     out = subprocess.run(
         [
-            "ffprobe", "-v", "quiet", "-show_entries", "format=duration",
+            _tool("ffprobe"), "-v", "quiet", "-show_entries", "format=duration",
             "-of", "csv=p=0", str(path),
         ],
         check=True,

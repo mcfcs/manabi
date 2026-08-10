@@ -1167,6 +1167,45 @@ async def record_checkpoint(
     return {"ok": True}
 
 
+@router.post(
+    "/artifacts/{artifact_id}/audio/generate", dependencies=[Depends(require_csrf)]
+)
+async def generate_lecture_audio(
+    artifact: Artifact = Depends(_get_owned_artifact),
+    user: User = Depends(get_default_user),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """Backfill/re-run voice synthesis for an existing lecture."""
+    from manabi_core.models import JobStatus
+
+    from manabi_server.jobs.queue import SYNTHESIZE_LECTURE_TASK
+
+    existing = (
+        await db.execute(
+            select(Job).where(
+                Job.module_id == artifact.module_id,
+                Job.job_type == "synthesize_lecture",
+                Job.status.in_([JobStatus.queued, JobStatus.running]),
+            )
+        )
+    ).scalar_one_or_none()
+    if existing is not None:
+        return {"job_id": existing.id}
+    job = Job(
+        user_id=user.id,
+        job_type="synthesize_lecture",
+        queue=JobQueue.gpu,
+        module_id=artifact.module_id,
+    )
+    db.add(job)
+    await db.flush()
+    job.procrastinate_job_id = await defer_task(
+        SYNTHESIZE_LECTURE_TASK, "gpu", job_id=job.id, artifact_id=artifact.id
+    )
+    await db.commit()
+    return {"job_id": job.id}
+
+
 @router.get("/artifacts/{artifact_id}/audio/{segment_index}")
 async def get_lecture_audio(
     segment_index: int,
