@@ -25,6 +25,8 @@ class SettingsOut(BaseModel):
     gcal_last_error: str | None
     class_reminders: bool
     push_configured: bool  # VAPID keys present in .env
+    canvas_last_synced_at: datetime | None
+    canvas_last_error: str | None
 
 
 class SettingsPatch(BaseModel):
@@ -53,6 +55,8 @@ def _out(row: AppSettings) -> SettingsOut:
         gcal_last_error=row.gcal_last_error,
         class_reminders=row.class_reminders,
         push_configured=bool(env.vapid_public_key and env.vapid_private_key),
+        canvas_last_synced_at=row.canvas_last_synced_at,
+        canvas_last_error=row.canvas_last_error,
     )
 
 

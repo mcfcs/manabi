@@ -50,13 +50,18 @@ async def _progress(db: AsyncSession, job: Job, pct: int, note: str) -> None:
     await db.commit()
 
 
-async def _load_notes_text(db: AsyncSession, module_ids: list[int]) -> str | None:
-    rows = (
-        (await db.execute(select(Note.plain_text).where(Note.module_id.in_(module_ids))))
-        .scalars()
-        .all()
-    )
-    text = "\n\n".join(r for r in rows if r)
+async def _load_notes_text(
+    db: AsyncSession, module_ids: list[int], note_ids: list[int] | None = None
+) -> str | None:
+    """note_ids: None = all module notes, [] = notes excluded from scope."""
+    if note_ids == []:
+        return None
+    stmt = select(Note.title, Note.plain_text).where(Note.module_id.in_(module_ids))
+    if note_ids is not None:
+        stmt = stmt.where(Note.id.in_(note_ids))
+    stmt = stmt.order_by(Note.module_id, Note.position, Note.id)
+    rows = (await db.execute(stmt)).all()
+    text = "\n\n".join(f"## {title}\n{body}" for title, body in rows if body)
     return text or None
 
 
@@ -750,14 +755,21 @@ async def chat_answer(job_id: int, thread_id: int, chunk_ids: list[int]) -> None
                 .all()
             )[::-1]
 
+            # Thread material scope is read from the DB row (not the payload)
+            # so the defer contract stays frozen; chunk_ids are already scoped
+            # by retrieval — the document filter here is defense in depth.
             wanted = set(chunk_ids)
             chunks = [
                 c
-                for c in await load_context_chunks(db, [thread.module_id])
+                for c in await load_context_chunks(
+                    db, [thread.module_id], document_ids=thread.scope_document_ids
+                )
                 if c.id in wanted
             ]
             ctx = build_context(chunks, None) if chunks else None
-            notes = await _load_notes_text(db, [thread.module_id])
+            notes = await _load_notes_text(
+                db, [thread.module_id], note_ids=thread.scope_note_ids
+            )
 
             conversation = "\n\n".join(
                 f"{'STUDENT' if m.role == ChatRole.user else 'ASSISTANT'}: {m.content}"

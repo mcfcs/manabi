@@ -7,6 +7,8 @@ Per tick:
   1. Due-task digest push (07:00–22:00 Manila; notified_at is the
      idempotency latch — set in the same transaction as the send).
   2. Google ICS re-poll when older than 30 minutes.
+  2a. Canvas task sync when last success is older than 10 minutes.
+  2b. Canvas announcement poll (~30 min, daytime).
   3. Optional class-starting-soon pushes (app_settings.class_reminders).
 """
 
@@ -25,6 +27,12 @@ from manabi_server.timeutil import now_manila, today_manila
 log = logging.getLogger("manabi.scheduler")
 
 TICK_SECONDS = 300
+CANVAS_SYNC_INTERVAL = timedelta(minutes=10)
+
+
+def canvas_sync_due(last_synced_at, now) -> bool:
+    """Pure predicate so the cadence is testable: never-synced or stale."""
+    return last_synced_at is None or now - last_synced_at > CANVAS_SYNC_INTERVAL
 
 
 async def _tick(sessionmaker) -> None:
@@ -74,8 +82,10 @@ async def _tick(sessionmaker) -> None:
             if stale:
                 await fetch_gcal(db)
 
-        # 2a. Canvas task auto-sync (every other 5-min tick ≈ 10 min)
-        if now.minute % 10 < 5:
+        # 2a. Canvas task auto-sync — staleness-based so restarts, PC sleep,
+        # and tick drift can't silently skip a window; retries every tick
+        # while failing (the timestamp only advances on success).
+        if canvas_sync_due(app.canvas_last_synced_at if app else None, now):
             try:
                 from manabi_core.models import User
 

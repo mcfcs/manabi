@@ -249,6 +249,18 @@ export function SettingsDialog({ onClose }: { onClose: () => void }) {
           )}
         </div>
 
+        <h3 className="settings-heading">Canvas tasks</h3>
+        <p className="settings-hint">
+          Assignments auto-sync every 10 minutes.
+          {" Last sync "}
+          {s?.canvas_last_synced_at
+            ? new Date(s.canvas_last_synced_at).toLocaleTimeString()
+            : "never"}
+          {s?.canvas_last_error && (
+            <span className="error-text"> — {s.canvas_last_error}</span>
+          )}
+        </p>
+
         <h3 className="settings-heading">Notifications</h3>
         {pushState === "unsupported" && (
           <p className="settings-hint">

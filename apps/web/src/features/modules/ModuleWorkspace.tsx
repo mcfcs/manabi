@@ -199,7 +199,7 @@ export function ModuleWorkspace() {
   const { courseId, moduleId } = useParams({
     from: "/courses/$courseId/modules/$moduleId",
   });
-  const { tab } = useSearch({ from: "/courses/$courseId/modules/$moduleId" });
+  const { tab, note } = useSearch({ from: "/courses/$courseId/modules/$moduleId" });
 
   const detail = useQuery({
     queryKey: ["module", moduleId],
@@ -257,7 +257,9 @@ export function ModuleWorkspace() {
       {module && tab === "quiz" && <QuizTab moduleId={moduleId} courseId={courseId} />}
       {module && tab === "teacher" && <TeacherTab moduleId={moduleId} />}
       {module && tab === "chat" && <ChatTab moduleId={moduleId} />}
-      {module && tab === "notes" && <NotesTab moduleId={moduleId} />}
+      {module && tab === "notes" && (
+        <NotesTab moduleId={moduleId} initialNoteId={note} />
+      )}
     </div>
   );
 }

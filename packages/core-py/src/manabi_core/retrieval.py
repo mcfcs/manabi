@@ -38,11 +38,22 @@ _SCOPE_FILTER = """
 """
 
 
+def _scope_filter(document_ids: list[int] | None) -> str:
+    """Base scope filter, optionally narrowed to specific documents
+    (chat thread material scoping). None = no narrowing."""
+    if document_ids is None:
+        return _SCOPE_FILTER
+    return _SCOPE_FILTER + "      AND c.document_id = ANY(:document_ids)\n"
+
+
 async def load_context_chunks(
-    db: AsyncSession, module_ids: list[int]
+    db: AsyncSession, module_ids: list[int], *, document_ids: list[int] | None = None
 ) -> list[ScopedChunk]:
     """Generation path: all AI-eligible chunks in scope, document/page order."""
     assert module_ids, "explicit module scope is required"
+    params: dict = {"module_ids": module_ids}
+    if document_ids is not None:
+        params["document_ids"] = document_ids
     rows = (
         await db.execute(
             text(
@@ -51,11 +62,11 @@ async def load_context_chunks(
                        c.page_start, c.page_end, c.heading_path, c.text,
                        c.token_count, c.content_hash, c.element_ids
                 FROM chunks c
-                {_SCOPE_FILTER}
+                {_scope_filter(document_ids)}
                 ORDER BY c.document_id, c.page_start, c.id
                 """
             ),
-            {"module_ids": module_ids},
+            params,
         )
     ).all()
     return [ScopedChunk(*row) for row in rows]
@@ -67,6 +78,8 @@ async def retrieve(
     query_embedding: list[float],
     query_text: str,
     k: int = 8,
+    *,
+    document_ids: list[int] | None = None,
 ) -> list[ScopedChunk]:
     """Hybrid search: pgvector cosine + Postgres FTS fused with RRF.
 
@@ -80,7 +93,7 @@ async def retrieve(
                 WITH scoped AS (
                     SELECT c.*, d.filename
                     FROM chunks c
-                    {_SCOPE_FILTER}
+                    {_scope_filter(document_ids)}
                 ),
                 v AS (
                     SELECT s.id,
@@ -114,6 +127,7 @@ async def retrieve(
                 "qvec": str(query_embedding),
                 "q": query_text,
                 "k": k,
+                **({"document_ids": document_ids} if document_ids is not None else {}),
             },
         )
     ).all()

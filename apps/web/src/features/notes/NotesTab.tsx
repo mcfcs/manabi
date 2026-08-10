@@ -1,4 +1,5 @@
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { Image as TiptapImage } from "@tiptap/extension-image";
 import { Mathematics } from "@tiptap/extension-mathematics";
 import { Table } from "@tiptap/extension-table";
 import { TableCell } from "@tiptap/extension-table-cell";
@@ -6,7 +7,7 @@ import { TableHeader } from "@tiptap/extension-table-header";
 import { TableRow } from "@tiptap/extension-table-row";
 import { TaskItem } from "@tiptap/extension-task-item";
 import { TaskList } from "@tiptap/extension-task-list";
-import { EditorContent, useEditor } from "@tiptap/react";
+import { EditorContent, useEditor, type Editor } from "@tiptap/react";
 import StarterKit from "@tiptap/starter-kit";
 import "katex/dist/katex.min.css";
 import {
@@ -14,10 +15,14 @@ import {
   AArrowUp,
   Bold,
   CheckSquare,
+  ChevronDown,
+  ChevronUp,
   Code,
   FileDown,
+  FilePlus2,
   Heading1,
   Heading2,
+  ImagePlus,
   Italic,
   List,
   ListOrdered,
@@ -25,11 +30,12 @@ import {
   Redo2,
   Strikethrough,
   Table as TableIcon,
+  Trash2,
   Undo2,
 } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 
-import { api, type NoteOut } from "../../lib/api";
+import { api, type NoteListItem, type NoteOut } from "../../lib/api";
 import "./notes.css";
 
 type SaveState = "saved" | "saving" | "error" | "idle";
@@ -43,7 +49,230 @@ const TINTS = [
   { name: "Mint", value: "#EFF6EF" },
 ];
 
-export function NotesTab({ moduleId }: { moduleId: string }) {
+async function uploadImage(noteId: number, file: File): Promise<string> {
+  const form = new FormData();
+  form.append("file", file);
+  const r = await api.postForm<{ url: string }>(`/api/notes/${noteId}/images`, form);
+  return r.url;
+}
+
+function insertImageFiles(editor: Editor, noteId: number, files: File[]): boolean {
+  const images = files.filter((f) => f.type.startsWith("image/"));
+  if (images.length === 0) return false;
+  for (const file of images) {
+    uploadImage(noteId, file)
+      .then((url) =>
+        editor.chain().focus().insertContent({ type: "image", attrs: { src: url } }).run(),
+      )
+      .catch(() => undefined);
+  }
+  return true;
+}
+
+/** Sidebar of note sections — Google-Docs-style: create, rename (double-
+ * click), reorder (arrows), delete. Collapses to a chip strip on mobile. */
+function NoteSidebar({
+  moduleId,
+  notes,
+  activeId,
+  onSelect,
+}: {
+  moduleId: string;
+  notes: NoteListItem[];
+  activeId: number | null;
+  onSelect: (id: number) => void;
+}) {
+  const queryClient = useQueryClient();
+  const [renamingId, setRenamingId] = useState<number | null>(null);
+  const [renameText, setRenameText] = useState("");
+  const invalidate = () =>
+    queryClient.invalidateQueries({ queryKey: ["notes", moduleId] });
+
+  const create = useMutation({
+    mutationFn: () =>
+      api.post<NoteOut>(`/api/modules/${moduleId}/notes`, { title: "Untitled" }),
+    onSuccess: (n) => {
+      invalidate();
+      onSelect(n.id);
+      setRenamingId(n.id);
+      setRenameText(n.title);
+    },
+  });
+  const rename = useMutation({
+    mutationFn: ({ id, title }: { id: number; title: string }) =>
+      api.patch<NoteOut>(`/api/notes/${id}`, { title }),
+    onSuccess: invalidate,
+  });
+  const reorder = useMutation({
+    mutationFn: (updates: { id: number; position: number }[]) =>
+      Promise.all(
+        updates.map((u) => api.patch(`/api/notes/${u.id}`, { position: u.position })),
+      ),
+    onSuccess: invalidate,
+  });
+  const remove = useMutation({
+    mutationFn: (id: number) => api.delete(`/api/notes/${id}`),
+    onSuccess: (_r, id) => {
+      invalidate();
+      if (id === activeId) {
+        const rest = notes.filter((n) => n.id !== id);
+        if (rest.length > 0) onSelect(rest[0].id);
+      }
+    },
+  });
+
+  function move(index: number, delta: number) {
+    const target = index + delta;
+    if (target < 0 || target >= notes.length) return;
+    const order = [...notes];
+    [order[index], order[target]] = [order[target], order[index]];
+    reorder.mutate(order.map((n, i) => ({ id: n.id, position: i })));
+  }
+
+  function commitRename(id: number) {
+    const title = renameText.trim();
+    setRenamingId(null);
+    if (title) rename.mutate({ id, title });
+  }
+
+  return (
+    <aside className="note-sidebar">
+      <div className="note-sidebar-head">
+        <span className="note-sidebar-label">Sections</span>
+        <button
+          className="icon-btn"
+          onClick={() => create.mutate()}
+          aria-label="New note"
+          title="New note"
+        >
+          <FilePlus2 size={15} strokeWidth={1.5} />
+        </button>
+      </div>
+      <div className="note-sidebar-list">
+        {notes.map((n, i) => (
+          <div
+            key={n.id}
+            className={`note-sidebar-item${n.id === activeId ? " active" : ""}`}
+          >
+            {renamingId === n.id ? (
+              <input
+                className="input note-rename-input"
+                value={renameText}
+                autoFocus
+                onChange={(e) => setRenameText(e.target.value)}
+                onBlur={() => commitRename(n.id)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") commitRename(n.id);
+                  if (e.key === "Escape") setRenamingId(null);
+                }}
+              />
+            ) : (
+              <button
+                className="note-sidebar-title"
+                onClick={() => onSelect(n.id)}
+                onDoubleClick={() => {
+                  setRenamingId(n.id);
+                  setRenameText(n.title);
+                }}
+                title={`${n.title} — double-click to rename`}
+              >
+                {n.title}
+              </button>
+            )}
+            <span className="note-sidebar-actions">
+              <button
+                className="icon-btn"
+                onClick={() => move(i, -1)}
+                disabled={i === 0}
+                aria-label="Move up"
+              >
+                <ChevronUp size={13} strokeWidth={1.5} />
+              </button>
+              <button
+                className="icon-btn"
+                onClick={() => move(i, 1)}
+                disabled={i === notes.length - 1}
+                aria-label="Move down"
+              >
+                <ChevronDown size={13} strokeWidth={1.5} />
+              </button>
+              <button
+                className="icon-btn danger"
+                onClick={() => {
+                  if (window.confirm(`Delete "${n.title}"? This cannot be undone.`))
+                    remove.mutate(n.id);
+                }}
+                disabled={notes.length <= 1}
+                aria-label="Delete note"
+              >
+                <Trash2 size={13} strokeWidth={1.5} />
+              </button>
+            </span>
+          </div>
+        ))}
+      </div>
+    </aside>
+  );
+}
+
+export function NotesTab({
+  moduleId,
+  initialNoteId,
+}: {
+  moduleId: string;
+  initialNoteId?: number;
+}) {
+  const queryClient = useQueryClient();
+  const [activeId, setActiveId] = useState<number | null>(initialNoteId ?? null);
+
+  const notes = useQuery({
+    queryKey: ["notes", moduleId],
+    queryFn: () => api.get<NoteListItem[]>(`/api/modules/${moduleId}/notes`),
+  });
+
+  // First visit to a module with zero notes: create the initial section once.
+  const creatingRef = useRef(false);
+  useEffect(() => {
+    if (!notes.data) return;
+    if (notes.data.length === 0 && !creatingRef.current) {
+      creatingRef.current = true;
+      api
+        .post<NoteOut>(`/api/modules/${moduleId}/notes`, { title: "Notes" })
+        .then((n) => {
+          queryClient.invalidateQueries({ queryKey: ["notes", moduleId] });
+          setActiveId(n.id);
+        })
+        .finally(() => {
+          creatingRef.current = false;
+        });
+      return;
+    }
+    if (activeId === null || !notes.data.some((n) => n.id === activeId)) {
+      if (notes.data.length > 0) setActiveId(notes.data[0].id);
+    }
+  }, [notes.data, activeId, moduleId, queryClient]);
+
+  if (notes.isLoading || activeId === null) {
+    return <div className="viewer-splash">Loading notes…</div>;
+  }
+
+  return (
+    <div className="notes-tab">
+      <NoteSidebar
+        moduleId={moduleId}
+        notes={notes.data ?? []}
+        activeId={activeId}
+        onSelect={setActiveId}
+      />
+      {/* key remounts the editor per note: its pending autosave buffer and
+          save closure are bound to one note id, so a flush can never write
+          one note's content into another */}
+      <NoteEditor key={activeId} noteId={activeId} />
+    </div>
+  );
+}
+
+function NoteEditor({ noteId }: { noteId: number }) {
   const [saveState, setSaveState] = useState<SaveState>("idle");
   const [tint, setTint] = useState(
     () => localStorage.getItem("manabi-note-tint") ?? TINTS[0].value,
@@ -67,10 +296,11 @@ export function NotesTab({ moduleId }: { moduleId: string }) {
   const debounceRef = useRef<number | null>(null);
   const pendingRef = useRef<Record<string, unknown> | null>(null);
   const toolbarRef = useRef<HTMLDivElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   const note = useQuery({
-    queryKey: ["note", moduleId],
-    queryFn: () => api.get<NoteOut>(`/api/modules/${moduleId}/note`),
+    queryKey: ["note", noteId],
+    queryFn: () => api.get<NoteOut>(`/api/notes/${noteId}`),
     staleTime: Infinity,
     refetchOnWindowFocus: false,
   });
@@ -82,21 +312,21 @@ export function NotesTab({ moduleId }: { moduleId: string }) {
       try {
         // keepalive: the flush from pagehide must survive navigation
         const saved = await api.put<NoteOut>(
-          `/api/modules/${moduleId}/note`,
+          `/api/notes/${noteId}`,
           { pm_json: pmJson },
           { keepalive: true },
         );
         // Keep the cache mirroring the server — otherwise returning to this
         // tab re-initializes the editor from a stale pre-save snapshot
         // (and typing into that would overwrite the real note).
-        queryClient.setQueryData(["note", moduleId], saved);
+        queryClient.setQueryData(["note", noteId], saved);
         pendingRef.current = null;
         setSaveState("saved");
       } catch {
         setSaveState("error");
       }
     },
-    [moduleId, queryClient],
+    [noteId, queryClient],
   );
 
   const editor = useEditor(
@@ -110,10 +340,27 @@ export function NotesTab({ moduleId }: { moduleId: string }) {
         TaskList,
         TaskItem.configure({ nested: true }),
         Mathematics,
+        TiptapImage,
       ],
       content: note.data?.pm_json ?? "",
       editorProps: {
         attributes: { class: "note-editor-content", spellcheck: "true" },
+        handlePaste: (_view, event) => {
+          const files = Array.from(event.clipboardData?.files ?? []);
+          if (editor && insertImageFiles(editor, noteId, files)) {
+            event.preventDefault();
+            return true;
+          }
+          return false;
+        },
+        handleDrop: (_view, event) => {
+          const files = Array.from(event.dataTransfer?.files ?? []);
+          if (editor && insertImageFiles(editor, noteId, files)) {
+            event.preventDefault();
+            return true;
+          }
+          return false;
+        },
       },
       onUpdate: ({ editor }) => {
         pendingRef.current = editor.getJSON() as Record<string, unknown>;
@@ -123,10 +370,10 @@ export function NotesTab({ moduleId }: { moduleId: string }) {
         }, 800);
       },
     },
-    [note.data != null],
+    [noteId, note.data != null],
   );
 
-  // Flush unsaved changes when leaving / backgrounding
+  // Flush unsaved changes when leaving / backgrounding / switching notes
   useEffect(() => {
     const flush = () => {
       if (pendingRef.current) save(pendingRef.current);
@@ -175,7 +422,7 @@ export function NotesTab({ moduleId }: { moduleId: string }) {
   const btn = (active: boolean) => `toolbar-btn${active ? " active" : ""}`;
 
   return (
-    <div className="notes-tab">
+    <div className="note-pane">
       <div className="note-toolbar" ref={toolbarRef}>
         <button
           className={btn(editor.isActive("bold"))}
@@ -259,6 +506,25 @@ export function NotesTab({ moduleId }: { moduleId: string }) {
         >
           <TableIcon size={16} strokeWidth={1.75} />
         </button>
+        <button
+          className="toolbar-btn"
+          onClick={() => fileInputRef.current?.click()}
+          aria-label="Insert image"
+          title="Insert image"
+        >
+          <ImagePlus size={16} strokeWidth={1.75} />
+        </button>
+        <input
+          ref={fileInputRef}
+          type="file"
+          accept="image/png,image/jpeg,image/gif,image/webp"
+          hidden
+          onChange={(e) => {
+            const files = Array.from(e.target.files ?? []);
+            if (files.length > 0) insertImageFiles(editor, noteId, files);
+            e.target.value = "";
+          }}
+        />
         <span className="toolbar-sep" />
         <button
           className="toolbar-btn"
@@ -303,7 +569,7 @@ export function NotesTab({ moduleId }: { moduleId: string }) {
         </span>
         <a
           className="toolbar-btn"
-          href={`/api/modules/${moduleId}/note/export`}
+          href={`/api/notes/${noteId}/export`}
           aria-label="Export to Word"
           title="Export to Word (.docx)"
         >

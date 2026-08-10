@@ -29,6 +29,7 @@ class SearchHit(BaseModel):
     course_id: int | None = None
     module_id: int | None = None
     document_id: int | None = None
+    note_id: int | None = None
     page: int | None = None
     accent_color: str | None = None
 
@@ -166,10 +167,11 @@ async def search(
         hits.append(
             SearchHit(
                 kind="note",
-                title=f"Notes — {m.title}",
+                title=f"{n.title} — {m.title}",
                 snippet=snippet,
                 course_id=c.id,
                 module_id=m.id,
+                note_id=n.id,
                 accent_color=c.accent_color,
             )
         )

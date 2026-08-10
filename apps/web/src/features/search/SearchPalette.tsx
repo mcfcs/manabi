@@ -13,6 +13,7 @@ interface SearchHit {
   course_id: number | null;
   module_id: number | null;
   document_id: number | null;
+  note_id: number | null;
   page: number | null;
   accent_color: string | null;
 }
@@ -60,7 +61,10 @@ export function SearchPalette({ onClose }: { onClose: () => void }) {
           courseId: String(hit.course_id),
           moduleId: String(hit.module_id),
         },
-        search: { tab: hit.kind === "note" ? "notes" : "overview" },
+        search:
+          hit.kind === "note"
+            ? { tab: "notes", ...(hit.note_id != null ? { note: hit.note_id } : {}) }
+            : { tab: "overview" },
       });
     } else if ((hit.kind === "document" || hit.kind === "content") && hit.document_id != null) {
       navigate({

@@ -1,6 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useNavigate, useSearch } from "@tanstack/react-router";
 import {
+  BookMarked,
   GraduationCap,
   Loader2,
   MessageSquarePlus,
@@ -16,6 +17,8 @@ import {
   ApiError,
   type ChatMessageOut,
   type ChatThreadOut,
+  type DocumentOut,
+  type NoteListItem,
 } from "../../lib/api";
 import { AiOfflineBanner, useAiOnline, useGenerationJob } from "../ai/common";
 import "./chat.css";
@@ -34,6 +37,138 @@ function CitePill({ c }: { c: NonNullable<ChatMessageOut["citations"]>[number] }
     >
       {c.document_title} · {pages}
     </Link>
+  );
+}
+
+/** Per-thread material scope: which documents and note sections ground the
+ * answers. null scope = everything; explicit arrays narrow it. */
+function SourcesPicker({
+  moduleId,
+  thread,
+}: {
+  moduleId: string;
+  thread: ChatThreadOut;
+}) {
+  const queryClient = useQueryClient();
+  const [open, setOpen] = useState(false);
+  const rootRef = useRef<HTMLDivElement>(null);
+
+  const documents = useQuery({
+    queryKey: ["documents", moduleId],
+    queryFn: () => api.get<DocumentOut[]>(`/api/modules/${moduleId}/documents`),
+    enabled: open,
+  });
+  const notes = useQuery({
+    queryKey: ["notes", moduleId],
+    queryFn: () => api.get<NoteListItem[]>(`/api/modules/${moduleId}/notes`),
+    enabled: open,
+  });
+
+  useEffect(() => {
+    if (!open) return;
+    const onDown = (e: MouseEvent) => {
+      if (rootRef.current && !rootRef.current.contains(e.target as Node)) {
+        setOpen(false);
+      }
+    };
+    window.addEventListener("mousedown", onDown);
+    return () => window.removeEventListener("mousedown", onDown);
+  }, [open]);
+
+  const patchScope = useMutation({
+    mutationFn: (scope: {
+      scope_document_ids: number[] | null;
+      scope_note_ids: number[] | null;
+    }) => api.patch<ChatThreadOut>(`/api/chat/threads/${thread.id}`, scope),
+    onSuccess: () =>
+      queryClient.invalidateQueries({ queryKey: ["chat-threads", moduleId] }),
+  });
+
+  const docIds = (documents.data ?? [])
+    .filter((d) => d.ai_included)
+    .map((d) => d.id);
+  const noteIds = (notes.data ?? []).map((n) => n.id);
+  const isAll = thread.scope_document_ids === null && thread.scope_note_ids === null;
+  const docsSel = new Set(thread.scope_document_ids ?? docIds);
+  const notesSel = new Set(thread.scope_note_ids ?? noteIds);
+
+  function toggle(kind: "doc" | "note", id: number) {
+    const nextDocs = new Set(docsSel);
+    const nextNotes = new Set(notesSel);
+    const set = kind === "doc" ? nextDocs : nextNotes;
+    if (set.has(id)) set.delete(id);
+    else set.add(id);
+    patchScope.mutate({
+      scope_document_ids: [...nextDocs],
+      scope_note_ids: [...nextNotes],
+    });
+  }
+
+  const selectedCount = (thread.scope_document_ids?.length ?? 0) +
+    (thread.scope_note_ids?.length ?? 0);
+
+  return (
+    <div className="chat-scope" ref={rootRef}>
+      <button
+        className={`chat-teacher-toggle${!isAll ? " on" : ""}`}
+        onClick={() => setOpen((v) => !v)}
+        title="Choose which materials ground this conversation"
+      >
+        <BookMarked size={14} strokeWidth={1.75} />
+        Sources: {isAll ? "all materials" : `${selectedCount} selected`}
+      </button>
+      {open && (
+        <div className="chat-scope-pop">
+          <label className="chat-scope-row chat-scope-all">
+            <input
+              type="checkbox"
+              checked={isAll}
+              onChange={() =>
+                isAll
+                  ? patchScope.mutate({
+                      scope_document_ids: docIds,
+                      scope_note_ids: noteIds,
+                    })
+                  : patchScope.mutate({
+                      scope_document_ids: null,
+                      scope_note_ids: null,
+                    })
+              }
+            />
+            All materials
+          </label>
+          {(documents.isLoading || notes.isLoading) && (
+            <p className="chat-scope-hint">
+              <Loader2 size={12} className="spin" /> Loading materials…
+            </p>
+          )}
+          {docIds.length > 0 && <p className="chat-scope-hint">Files</p>}
+          {(documents.data ?? [])
+            .filter((d) => d.ai_included)
+            .map((d) => (
+              <label key={d.id} className="chat-scope-row">
+                <input
+                  type="checkbox"
+                  checked={docsSel.has(d.id)}
+                  onChange={() => toggle("doc", d.id)}
+                />
+                <span className="chat-scope-name">{d.filename}</span>
+              </label>
+            ))}
+          {noteIds.length > 0 && <p className="chat-scope-hint">Notes</p>}
+          {(notes.data ?? []).map((n) => (
+            <label key={n.id} className="chat-scope-row">
+              <input
+                type="checkbox"
+                checked={notesSel.has(n.id)}
+                onChange={() => toggle("note", n.id)}
+              />
+              <span className="chat-scope-name">{n.title}</span>
+            </label>
+          ))}
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -286,19 +421,22 @@ export function ChatTab({ moduleId }: { moduleId: string }) {
         {!aiOnline && <AiOfflineBanner />}
 
         {activeThreadObj && (
-          <button
-            className={`chat-teacher-toggle${activeThreadObj.teacher_mode ? " on" : ""}`}
-            onClick={() =>
-              toggleTeacher.mutate({
-                id: activeThreadObj.id,
-                teacher_mode: !activeThreadObj.teacher_mode,
-              })
-            }
-            title="Steven mode: answers delivered in character — grounding rules unchanged"
-          >
-            <GraduationCap size={14} strokeWidth={1.75} />
-            Steven mode {activeThreadObj.teacher_mode ? "on" : "off"}
-          </button>
+          <div className="chat-toggle-row">
+            <button
+              className={`chat-teacher-toggle${activeThreadObj.teacher_mode ? " on" : ""}`}
+              onClick={() =>
+                toggleTeacher.mutate({
+                  id: activeThreadObj.id,
+                  teacher_mode: !activeThreadObj.teacher_mode,
+                })
+              }
+              title="Steven mode: answers delivered in character — grounding rules unchanged"
+            >
+              <GraduationCap size={14} strokeWidth={1.75} />
+              Steven mode {activeThreadObj.teacher_mode ? "on" : "off"}
+            </button>
+            <SourcesPicker moduleId={moduleId} thread={activeThreadObj} />
+          </div>
         )}
         {activeThreadObj?.teacher_mode && (
           <button

@@ -13,9 +13,11 @@ from manabi_core.models import (
     ChatRole,
     ChatThread,
     Course,
+    Document,
     Job,
     JobQueue,
     Module,
+    Note,
     SpeechClip,
     User,
 )
@@ -36,7 +38,21 @@ class ThreadOut(BaseModel):
     id: int
     title: str
     teacher_mode: bool
+    # None = all module materials of that kind; [] = none of that kind
+    scope_document_ids: list[int] | None
+    scope_note_ids: list[int] | None
     created_at: datetime
+
+
+def _thread_out(t: ChatThread) -> ThreadOut:
+    return ThreadOut(
+        id=t.id,
+        title=t.title,
+        teacher_mode=t.teacher_mode,
+        scope_document_ids=t.scope_document_ids,
+        scope_note_ids=t.scope_note_ids,
+        created_at=t.created_at,
+    )
 
 
 class MessageOut(BaseModel):
@@ -88,15 +104,7 @@ async def list_threads(
         .scalars()
         .all()
     )
-    return [
-        ThreadOut(
-            id=t.id,
-            title=t.title,
-            teacher_mode=t.teacher_mode,
-            created_at=t.created_at,
-        )
-        for t in threads
-    ]
+    return [_thread_out(t) for t in threads]
 
 
 @router.post("/modules/{module_id}/chat/threads", dependencies=[Depends(require_csrf)])
@@ -106,17 +114,16 @@ async def create_thread(
     thread = ChatThread(module_id=module.id, title="New conversation")
     db.add(thread)
     await db.commit()
-    return ThreadOut(
-        id=thread.id,
-        title=thread.title,
-        teacher_mode=thread.teacher_mode,
-        created_at=thread.created_at,
-    )
+    return _thread_out(thread)
 
 
 class ThreadPatch(BaseModel):
     teacher_mode: bool | None = None
     title: str | None = None
+    # Omitted field = unchanged; explicit null = back to "all" (model_fields_set
+    # distinguishes the two).
+    scope_document_ids: list[int] | None = None
+    scope_note_ids: list[int] | None = None
 
 
 @router.patch("/chat/threads/{thread_id}", dependencies=[Depends(require_csrf)])
@@ -129,13 +136,37 @@ async def update_thread(
         thread.teacher_mode = data.teacher_mode
     if data.title is not None and data.title.strip():
         thread.title = data.title.strip()[:255]
+    if "scope_document_ids" in data.model_fields_set:
+        if data.scope_document_ids:
+            valid = set(
+                (
+                    await db.execute(
+                        select(Document.id).where(
+                            Document.module_id == thread.module_id,
+                            Document.deleted_at.is_(None),
+                        )
+                    )
+                ).scalars()
+            )
+            if not set(data.scope_document_ids) <= valid:
+                raise HTTPException(
+                    status_code=422, detail="Document not in this module"
+                )
+        thread.scope_document_ids = data.scope_document_ids
+    if "scope_note_ids" in data.model_fields_set:
+        if data.scope_note_ids:
+            valid = set(
+                (
+                    await db.execute(
+                        select(Note.id).where(Note.module_id == thread.module_id)
+                    )
+                ).scalars()
+            )
+            if not set(data.scope_note_ids) <= valid:
+                raise HTTPException(status_code=422, detail="Note not in this module")
+        thread.scope_note_ids = data.scope_note_ids
     await db.commit()
-    return ThreadOut(
-        id=thread.id,
-        title=thread.title,
-        teacher_mode=thread.teacher_mode,
-        created_at=thread.created_at,
-    )
+    return _thread_out(thread)
 
 
 @router.delete("/chat/threads/{thread_id}", dependencies=[Depends(require_csrf)])
@@ -212,8 +243,18 @@ async def post_message(
     await db.flush()
 
     # Retrieval happens here (app server owns the embedding model)
-    vec = (await asyncio.to_thread(embed_texts, [content], is_query=True))[0]
-    hits = await retrieve(db, [thread.module_id], vec, content, k=5)
+    if thread.scope_document_ids == []:
+        hits = []  # documents excluded from scope — skip retrieval entirely
+    else:
+        vec = (await asyncio.to_thread(embed_texts, [content], is_query=True))[0]
+        hits = await retrieve(
+            db,
+            [thread.module_id],
+            vec,
+            content,
+            k=5,
+            document_ids=thread.scope_document_ids,
+        )
 
     job = Job(
         user_id=user.id,

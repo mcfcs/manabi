@@ -187,6 +187,92 @@
   background: var(--accent-blue-wash, rgba(40, 81, 143, 0.08));
 }
 
+.chat-toggle-row {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  flex-wrap: wrap;
+}
+.chat-toggle-row .chat-teacher-toggle {
+  margin-bottom: 0;
+}
+
+/* ── Per-thread sources picker ── */
+
+.chat-scope {
+  position: relative;
+}
+
+.chat-scope-pop {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  z-index: 30;
+  min-width: 240px;
+  max-width: 320px;
+  max-height: 320px;
+  overflow-y: auto;
+  background: var(--surface-raised);
+  border: 1px solid var(--rule);
+  border-radius: var(--radius);
+  box-shadow: 0 6px 24px rgba(28, 36, 52, 0.14);
+  padding: var(--s-2);
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.chat-scope-row {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  padding: var(--s-1) var(--s-2);
+  border-radius: var(--radius-sm);
+  font-size: 13px;
+  color: var(--ink-soft);
+  cursor: pointer;
+}
+.chat-scope-row:hover {
+  background: var(--surface);
+}
+.chat-scope-row input {
+  accent-color: var(--accent-blue);
+  flex-shrink: 0;
+}
+.chat-scope-all {
+  font-weight: 600;
+  color: var(--ink);
+  border-bottom: 1px solid var(--rule);
+  border-radius: 0;
+  padding-bottom: var(--s-2);
+  margin-bottom: var(--s-1);
+}
+
+.chat-scope-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.chat-scope-hint {
+  margin: var(--s-1) 0 0;
+  padding: 0 var(--s-2);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--ink-faint);
+}
+
+@media (max-width: 767px) {
+  .chat-scope-pop {
+    left: auto;
+    right: 0;
+    max-width: calc(100vw - var(--s-6));
+  }
+}
+
 .chat-speak {
   border: none;
   background: none;

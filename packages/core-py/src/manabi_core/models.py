@@ -391,13 +391,16 @@ class Note(Base, TimestampMixin):
         BigInteger,
         ForeignKey("modules.id", ondelete="CASCADE"),
         nullable=False,
-        unique=True,
     )
+    title: Mapped[str] = mapped_column(String(255), nullable=False, default="Notes")
+    position: Mapped[int] = mapped_column(nullable=False, default=0)
     pm_json: Mapped[dict] = mapped_column(JSONB, nullable=False)
     plain_text: Mapped[str] = mapped_column(Text, nullable=False, default="")
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False
     )
+
+    __table_args__ = (Index("ix_notes_module_id", "module_id"),)
 
 
 class NoteSnapshot(Base, TimestampMixin):
@@ -442,6 +445,9 @@ class ChatThread(Base, TimestampMixin):
     # Teacher persona (Steven) — changes voice, never grounding
     teacher_mode: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     title: Mapped[str] = mapped_column(String(255), nullable=False)
+    # Material scope: NULL = all module materials, [] = none of that kind.
+    scope_document_ids: Mapped[list[int] | None] = mapped_column(ARRAY(BigInteger))
+    scope_note_ids: Mapped[list[int] | None] = mapped_column(ARRAY(BigInteger))
 
     __table_args__ = (Index("ix_chat_threads_module_id", "module_id"),)
 
@@ -593,6 +599,8 @@ class AppSettings(Base):
     gcal_last_error: Mapped[str | None] = mapped_column(Text)
     class_reminders: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     last_announcement_id: Mapped[int | None] = mapped_column(BigInteger)
+    canvas_last_synced_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    canvas_last_error: Mapped[str | None] = mapped_column(Text)
 
 
 class CalendarEvent(Base, TimestampMixin):

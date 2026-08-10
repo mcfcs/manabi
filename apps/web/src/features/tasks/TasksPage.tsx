@@ -9,7 +9,13 @@ import {
 } from "lucide-react";
 import { useEffect, useState } from "react";
 
-import { api, ApiError, type CourseOut, type TaskOut } from "../../lib/api";
+import {
+  api,
+  ApiError,
+  type CourseOut,
+  type SettingsOut,
+  type TaskOut,
+} from "../../lib/api";
 import { enablePush, getPushState, type PushState } from "../../lib/push";
 import "./tasks.css";
 
@@ -34,6 +40,19 @@ function groupOf(task: TaskOut, today: string, weekEnd: string): GroupKey {
   if (task.due_date === today) return "today";
   if (task.due_date <= weekEnd) return "week";
   return "later";
+}
+
+export function agoLabel(iso: string | null): string {
+  if (!iso) return "never";
+  const mins = Math.max(0, Math.floor((Date.now() - Date.parse(iso)) / 60_000));
+  if (mins < 1) return "just now";
+  if (mins < 60) return `${mins} min ago`;
+  const hours = Math.floor(mins / 60);
+  if (hours < 24) return `${hours} h ago`;
+  return new Date(iso).toLocaleDateString(undefined, {
+    month: "short",
+    day: "numeric",
+  });
 }
 
 function dueLabel(task: TaskOut): string {
@@ -120,6 +139,12 @@ export function TasksPage() {
     queryFn: () => api.get<CourseOut[]>("/api/courses"),
     staleTime: 60_000,
   });
+  // 60s refetch doubles as the "N min ago" label refresher.
+  const settings = useQuery({
+    queryKey: ["settings"],
+    queryFn: () => api.get<SettingsOut>("/api/settings"),
+    refetchInterval: 60_000,
+  });
 
   const invalidate = () => {
     queryClient.invalidateQueries({ queryKey: ["tasks"] });
@@ -147,9 +172,12 @@ export function TasksPage() {
     onSuccess: (r) => {
       setSyncNote(`${r.created} new, ${r.updated} updated from Canvas`);
       invalidate();
+      queryClient.invalidateQueries({ queryKey: ["settings"] });
     },
-    onError: (e) =>
-      setSyncNote(e instanceof ApiError ? e.message : "Canvas sync failed"),
+    onError: (e) => {
+      setSyncNote(e instanceof ApiError ? e.message : "Canvas sync failed");
+      queryClient.invalidateQueries({ queryKey: ["settings"] });
+    },
   });
 
   const today = localToday();
@@ -164,6 +192,16 @@ export function TasksPage() {
     <div className="tasks-page">
       <header className="tasks-head">
         <h1>Tasks</h1>
+        {settings.data && (
+          <span
+            className={`tasks-synced mono${settings.data.canvas_last_error ? " error-text" : ""}`}
+            title={settings.data.canvas_last_error ?? "Auto-syncs every 10 minutes"}
+          >
+            {settings.data.canvas_last_error
+              ? "sync failing"
+              : `synced ${agoLabel(settings.data.canvas_last_synced_at)}`}
+          </span>
+        )}
         <button
           className="btn"
           onClick={() => canvasSync.mutate()}

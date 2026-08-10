@@ -1,9 +1,9 @@
 """Tasks: manual to-dos + Canvas assignment import, due-count badge."""
 
-from datetime import date, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 
 from fastapi import APIRouter, Depends, HTTPException
-from manabi_core.models import Course, StudyTask, User
+from manabi_core.models import AppSettings, Course, StudyTask, User
 from pydantic import BaseModel
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -164,7 +164,27 @@ async def sync_canvas_tasks(db: AsyncSession, user: User) -> dict:
     """Pull upcoming + overdue assignments from every Canvas-linked course.
     Canvas stays the source of truth for its own items: existing not-done
     tasks get their title/due refreshed; done tasks are never resurrected.
-    Used by the endpoint AND the scheduler's 10-minute auto-sync."""
+    Used by the endpoint AND the scheduler's auto-sync — the last-synced
+    timestamp (advances only on success) and last error are recorded here
+    so both paths share one bookkeeping code path."""
+    try:
+        result = await _sync_canvas_tasks_inner(db, user)
+    except Exception as exc:
+        await db.rollback()
+        app = await db.get(AppSettings, 1)
+        if app is not None:
+            app.canvas_last_error = str(exc)[:500]
+            await db.commit()
+        raise
+    app = await db.get(AppSettings, 1)
+    if app is not None:
+        app.canvas_last_synced_at = datetime.now(UTC)
+        app.canvas_last_error = None
+        await db.commit()
+    return result
+
+
+async def _sync_canvas_tasks_inner(db: AsyncSession, user: User) -> dict:
     from manabi_server.api.canvas import _canvas_get
 
     courses = [

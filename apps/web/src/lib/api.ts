@@ -233,6 +233,8 @@ export interface SettingsOut {
   gcal_last_error: string | null;
   class_reminders: boolean;
   push_configured: boolean;
+  canvas_last_synced_at: string | null;
+  canvas_last_error: string | null;
 }
 
 export interface ModuleOut {
@@ -288,7 +290,18 @@ export interface DocumentDetail extends DocumentOut {
   pages: PageOut[];
 }
 
+export interface NoteListItem {
+  id: number;
+  title: string;
+  position: number;
+  updated_at: string;
+}
+
 export interface NoteOut {
+  id: number;
+  module_id: number;
+  title: string;
+  position: number;
   pm_json: Record<string, unknown>;
   updated_at: string | null;
 }
@@ -411,6 +424,9 @@ export interface ChatThreadOut {
   id: number;
   title: string;
   teacher_mode: boolean;
+  // null = all module materials of that kind; [] = none of that kind
+  scope_document_ids: number[] | null;
+  scope_note_ids: number[] | null;
   created_at: string;
 }
 

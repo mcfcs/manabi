@@ -7,6 +7,7 @@ import {
   Layers,
   ListTodo,
   Loader2,
+  Menu,
   Search,
   Settings2,
 } from "lucide-react";
@@ -134,6 +135,7 @@ export function AppShell({
   const reviewDue = useReviewDueCount();
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [searchOpen, setSearchOpen] = useState(false);
+  const [moreOpen, setMoreOpen] = useState(false);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -304,7 +306,43 @@ export function AppShell({
           </span>
           <span>Review</span>
         </Link>
+        <button
+          className={`bottom-link${moreOpen ? " active" : ""}`}
+          onClick={() => setMoreOpen((v) => !v)}
+          aria-label="More"
+        >
+          <Menu size={20} strokeWidth={1.5} />
+          <span>More</span>
+        </button>
       </nav>
+
+      {moreOpen && (
+        <>
+          <div className="more-backdrop" onClick={() => setMoreOpen(false)} />
+          <div className="more-sheet" role="menu" aria-label="More">
+            <button
+              className="more-sheet-item"
+              onClick={() => {
+                setMoreOpen(false);
+                setSearchOpen(true);
+              }}
+            >
+              <Search size={17} strokeWidth={1.5} />
+              Search
+            </button>
+            <button
+              className="more-sheet-item"
+              onClick={() => {
+                setMoreOpen(false);
+                setSettingsOpen(true);
+              }}
+            >
+              <Settings2 size={17} strokeWidth={1.5} />
+              Settings
+            </button>
+          </div>
+        </>
+      )}
     </div>
   );
 }
