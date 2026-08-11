@@ -448,13 +448,21 @@ class Annotation(Base, TimestampMixin):
 
 
 class ChatThread(Base, TimestampMixin):
-    """Per-module chat conversations; history persists with the module."""
+    """Chat conversations. Per-module (module_id set) OR general/personal
+    (module_id NULL — the "Manabi AI" assistant). Ownership is by user_id so
+    both kinds share one ownership check."""
 
     __tablename__ = "chat_threads"
 
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
-    module_id: Mapped[int] = mapped_column(
-        BigInteger, ForeignKey("modules.id", ondelete="CASCADE"), nullable=False
+    # Owner — set on both module and general threads (general threads have no
+    # module to derive it from).
+    user_id: Mapped[int] = mapped_column(
+        BigInteger, ForeignKey("users.id", ondelete="CASCADE"), nullable=False
+    )
+    # NULL = a general/assistant thread (not tied to a module).
+    module_id: Mapped[int | None] = mapped_column(
+        BigInteger, ForeignKey("modules.id", ondelete="CASCADE")
     )
     # Teacher persona (Steven) — changes voice, never grounding
     teacher_mode: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
@@ -462,6 +470,15 @@ class ChatThread(Base, TimestampMixin):
     # Material scope: NULL = all module materials, [] = none of that kind.
     scope_document_ids: Mapped[list[int] | None] = mapped_column(ARRAY(BigInteger))
     scope_note_ids: Mapped[list[int] | None] = mapped_column(ARRAY(BigInteger))
+    # General-assistant cross-module material scope: NULL/[] = none forced.
+    scope_module_ids: Mapped[list[int] | None] = mapped_column(ARRAY(BigInteger))
+    # General assistant: auto-scan the user's materials when the question is
+    # relevant (cosine-gated), instead of never scanning by default.
+    auto_materials: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    # General assistant: per-chat model override (NULL = use the global
+    # general_chat_model, else the node's effective_chat_model). Never applied to
+    # module threads.
+    model_override: Mapped[str | None] = mapped_column(String(128))
     # True = strict material-first grounding; False = material + free reasoning.
     strict_grounding: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
     # Viewer-originated "discussion": the passage/page this thread is about.
@@ -471,7 +488,10 @@ class ChatThread(Base, TimestampMixin):
     source_page: Mapped[int | None] = mapped_column()
     source_quote: Mapped[str | None] = mapped_column(Text)
 
-    __table_args__ = (Index("ix_chat_threads_module_id", "module_id"),)
+    __table_args__ = (
+        Index("ix_chat_threads_module_id", "module_id"),
+        Index("ix_chat_threads_user_id", "user_id"),
+    )
 
 
 class ChatRole(enum.StrEnum):
@@ -626,6 +646,9 @@ class AppSettings(Base):
     # Auto-play Steven's voice for chat replies (default off; per-device toggle
     # in the chat UI overrides this for the session).
     chat_autovoice: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    # Ollama model for the general "Manabi AI" assistant. NULL = fall back to the
+    # worker's effective_chat_model. Does NOT affect per-module chat.
+    general_chat_model: Mapped[str | None] = mapped_column(String(128))
 
 
 class CalendarEvent(Base, TimestampMixin):

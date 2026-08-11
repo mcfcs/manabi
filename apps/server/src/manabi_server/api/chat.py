@@ -21,7 +21,7 @@ from manabi_core.models import (
     SpeechClip,
     User,
 )
-from manabi_core.retrieval import retrieve
+from manabi_core.retrieval import retrieve, retrieve_relevant
 from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -42,6 +42,13 @@ class ThreadOut(BaseModel):
     # None = all module materials of that kind; [] = none of that kind
     scope_document_ids: list[int] | None
     scope_note_ids: list[int] | None
+    # General ("Manabi AI") assistant fields: module_id is None for general
+    # threads; scope_module_ids/auto_materials drive cross-module material scope.
+    module_id: int | None = None
+    is_general: bool = False
+    scope_module_ids: list[int] | None = None
+    auto_materials: bool = False
+    model_override: str | None = None
     # Viewer-originated "discussion": the passage this thread is about.
     source_document_id: int | None
     source_page: int | None
@@ -57,6 +64,11 @@ def _thread_out(t: ChatThread) -> ThreadOut:
         strict_grounding=t.strict_grounding,
         scope_document_ids=t.scope_document_ids,
         scope_note_ids=t.scope_note_ids,
+        module_id=t.module_id,
+        is_general=t.module_id is None,
+        scope_module_ids=t.scope_module_ids,
+        auto_materials=t.auto_materials,
+        model_override=t.model_override,
         source_document_id=t.source_document_id,
         source_page=t.source_page,
         source_quote=t.source_quote,
@@ -85,17 +97,32 @@ async def _get_owned_thread(
     user: User = Depends(get_default_user),
     db: AsyncSession = Depends(get_db),
 ) -> ChatThread:
+    # Ownership by user_id — works for both module and general (module_id NULL)
+    # threads without a Module join.
     thread = (
         await db.execute(
-            select(ChatThread)
-            .join(Module, Module.id == ChatThread.module_id)
-            .join(Course, Course.id == Module.course_id)
-            .where(ChatThread.id == thread_id, Course.user_id == user.id)
+            select(ChatThread).where(
+                ChatThread.id == thread_id, ChatThread.user_id == user.id
+            )
         )
     ).scalar_one_or_none()
     if thread is None:
         raise HTTPException(status_code=404, detail="Thread not found")
     return thread
+
+
+async def _all_user_module_ids(db: AsyncSession, user: User) -> list[int]:
+    """Every real (non course-files) module the user owns — the general
+    assistant's auto-scan scope."""
+    return list(
+        (
+            await db.execute(
+                select(Module.id)
+                .join(Course, Course.id == Module.course_id)
+                .where(Course.user_id == user.id, Module.is_general.is_(False))
+            )
+        ).scalars()
+    )
 
 
 @router.get("/modules/{module_id}/chat/threads")
@@ -118,12 +145,68 @@ async def list_threads(
 
 @router.post("/modules/{module_id}/chat/threads", dependencies=[Depends(require_csrf)])
 async def create_thread(
-    module: Module = Depends(get_owned_module), db: AsyncSession = Depends(get_db)
+    module: Module = Depends(get_owned_module),
+    user: User = Depends(get_default_user),
+    db: AsyncSession = Depends(get_db),
 ) -> ThreadOut:
-    thread = ChatThread(module_id=module.id, title="New conversation")
+    thread = ChatThread(
+        user_id=user.id, module_id=module.id, title="New conversation"
+    )
     db.add(thread)
     await db.commit()
     return _thread_out(thread)
+
+
+class ThreadAllOut(BaseModel):
+    id: int
+    title: str
+    teacher_mode: bool
+    is_general: bool
+    module_id: int | None
+    module_title: str | None
+    course_id: int | None
+    course_code: str | None
+    created_at: datetime
+
+
+@router.get("/chat/threads/all")
+async def list_all_threads(
+    user: User = Depends(get_default_user), db: AsyncSession = Depends(get_db)
+) -> list[ThreadAllOut]:
+    """Every thread the user owns (module + general), for the assistant's
+    "Module chats" section. outerjoin so general threads (no module) appear."""
+    rows = (
+        await db.execute(
+            select(
+                ChatThread.id,
+                ChatThread.title,
+                ChatThread.teacher_mode,
+                ChatThread.module_id,
+                Module.title,
+                Course.id,
+                Course.code,
+                ChatThread.created_at,
+            )
+            .outerjoin(Module, Module.id == ChatThread.module_id)
+            .outerjoin(Course, Course.id == Module.course_id)
+            .where(ChatThread.user_id == user.id)
+            .order_by(ChatThread.id.desc())
+        )
+    ).all()
+    return [
+        ThreadAllOut(
+            id=r[0],
+            title=r[1],
+            teacher_mode=r[2],
+            is_general=r[3] is None,
+            module_id=r[3],
+            module_title=r[4],
+            course_id=r[5],
+            course_code=r[6],
+            created_at=r[7],
+        )
+        for r in rows
+    ]
 
 
 class ThreadPatch(BaseModel):
@@ -134,12 +217,18 @@ class ThreadPatch(BaseModel):
     # distinguishes the two).
     scope_document_ids: list[int] | None = None
     scope_note_ids: list[int] | None = None
+    # General-assistant material scope + auto-scan toggle.
+    scope_module_ids: list[int] | None = None
+    auto_materials: bool | None = None
+    # Per-chat model (general threads only). Explicit null = back to the default.
+    model_override: str | None = None
 
 
 @router.patch("/chat/threads/{thread_id}", dependencies=[Depends(require_csrf)])
 async def update_thread(
     data: ThreadPatch,
     thread: ChatThread = Depends(_get_owned_thread),
+    user: User = Depends(get_default_user),
     db: AsyncSession = Depends(get_db),
 ) -> ThreadOut:
     if data.teacher_mode is not None:
@@ -148,7 +237,19 @@ async def update_thread(
         thread.strict_grounding = data.strict_grounding
     if data.title is not None and data.title.strip():
         thread.title = data.title.strip()[:255]
-    if "scope_document_ids" in data.model_fields_set:
+    if data.auto_materials is not None:
+        thread.auto_materials = data.auto_materials
+    if "model_override" in data.model_fields_set:
+        # Only general threads carry a per-chat model; empty string clears it.
+        thread.model_override = (data.model_override or None) if thread.module_id is None else None
+    if "scope_module_ids" in data.model_fields_set:
+        if data.scope_module_ids:
+            valid_mods = set(await _all_user_module_ids(db, user))
+            if not set(data.scope_module_ids) <= valid_mods:
+                raise HTTPException(status_code=422, detail="Module not owned by user")
+        thread.scope_module_ids = data.scope_module_ids
+    # Per-module document/note scope only applies to a module thread.
+    if thread.module_id is not None and "scope_document_ids" in data.model_fields_set:
         if data.scope_document_ids:
             valid = set(
                 (
@@ -165,7 +266,7 @@ async def update_thread(
                     status_code=422, detail="Document not in this module"
                 )
         thread.scope_document_ids = data.scope_document_ids
-    if "scope_note_ids" in data.model_fields_set:
+    if thread.module_id is not None and "scope_note_ids" in data.model_fields_set:
         if data.scope_note_ids:
             valid = set(
                 (
@@ -239,6 +340,7 @@ async def list_document_threads(
 async def discuss_document(
     data: DiscussIn,
     doc: Document = Depends(_owned_document),
+    user: User = Depends(get_default_user),
     db: AsyncSession = Depends(get_db),
 ) -> ThreadOut:
     """Open a Steven-taught, reasoning-mode thread anchored to a passage. The
@@ -246,6 +348,7 @@ async def discuss_document(
     quote = data.quote.strip()[:2000]
     title = (quote[:60] + "…") if len(quote) > 60 else (quote or "Discussion")
     thread = ChatThread(
+        user_id=user.id,
         module_id=doc.module_id,
         title=title,
         teacher_mode=True,
@@ -327,19 +430,42 @@ async def post_message(
         thread.title = content[:80]
     await db.flush()
 
-    # Retrieval happens here (app server owns the embedding model)
-    if thread.scope_document_ids == []:
-        hits = []  # documents excluded from scope — skip retrieval entirely
+    # Retrieval happens here (app server owns the embedding model). The general
+    # (module_id NULL) branch also builds personal context + picks the model.
+    personal_context: str | None = None
+    model: str | None = None
+
+    async def _embed() -> list[float]:
+        return (await asyncio.to_thread(embed_texts, [content], is_query=True))[0]
+
+    if thread.module_id is not None:
+        # ── Module thread (behavior unchanged) ──
+        if thread.scope_document_ids == []:
+            chunk_ids: list[int] = []  # documents excluded from scope
+        else:
+            hits = await retrieve(
+                db, [thread.module_id], await _embed(), content, k=5,
+                document_ids=thread.scope_document_ids,
+            )
+            chunk_ids = [h.id for h in hits]
     else:
-        vec = (await asyncio.to_thread(embed_texts, [content], is_query=True))[0]
-        hits = await retrieve(
-            db,
-            [thread.module_id],
-            vec,
-            content,
-            k=5,
-            document_ids=thread.scope_document_ids,
-        )
+        # ── General assistant thread ──
+        from manabi_server.api.settings import get_app_settings
+        from manabi_server.services.context import build_personal_context
+
+        personal_context = await build_personal_context(db, user)
+        # Per-chat override wins; else the global default; else the node default.
+        model = thread.model_override or (await get_app_settings(db)).general_chat_model
+        if thread.scope_module_ids:  # manual cross-module scope wins (no gate)
+            hits = await retrieve(db, list(thread.scope_module_ids), await _embed(), content, k=6)
+            chunk_ids = [h.id for h in hits]
+        elif thread.auto_materials:  # auto-scan, gated by relevance
+            hits, ok = await retrieve_relevant(
+                db, await _all_user_module_ids(db, user), await _embed(), content
+            )
+            chunk_ids = [h.id for h in hits] if ok else []
+        else:  # default: personal + general knowledge, no material scan
+            chunk_ids = []
 
     job = Job(
         user_id=user.id,
@@ -350,12 +476,19 @@ async def post_message(
     )
     db.add(job)
     await db.flush()
+    # Extra kwargs only for general threads → module chat is provably unaffected.
+    extra = (
+        {}
+        if thread.module_id is not None
+        else {"personal_context": personal_context, "model": model}
+    )
     job.procrastinate_job_id = await defer_task(
         CHAT_ANSWER_TASK,
         "gpu",
         job_id=job.id,
         thread_id=thread.id,
-        chunk_ids=[h.id for h in hits],
+        chunk_ids=chunk_ids,
+        **extra,
     )
     await db.commit()
     return {"job_id": job.id, "message_id": message.id}
@@ -369,13 +502,13 @@ async def _get_owned_message(
     user: User = Depends(get_default_user),
     db: AsyncSession = Depends(get_db),
 ) -> ChatMessage:
+    # User-scoped (not via Module) so messages in general threads (module_id
+    # NULL) resolve too — an inner Module join would drop them.
     message = (
         await db.execute(
             select(ChatMessage)
             .join(ChatThread, ChatThread.id == ChatMessage.thread_id)
-            .join(Module, Module.id == ChatThread.module_id)
-            .join(Course, Course.id == Module.course_id)
-            .where(ChatMessage.id == message_id, Course.user_id == user.id)
+            .where(ChatMessage.id == message_id, ChatThread.user_id == user.id)
         )
     ).scalar_one_or_none()
     if message is None:

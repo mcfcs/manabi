@@ -329,7 +329,9 @@
 
 .week-grid {
   display: grid;
-  grid-template-columns: 48px repeat(7, 1fr);
+  /* minmax(0,1fr): columns MUST NOT expand to fit a long all-day title —
+     they stay equal and the chip text truncates instead. */
+  grid-template-columns: 48px repeat(7, minmax(0, 1fr));
   gap: 0 2px;
   min-height: 680px;
 }
@@ -363,6 +365,13 @@
   flex-direction: column;
   gap: 2px;
   padding: 2px;
+  min-width: 0; /* let the chips truncate instead of widening the column */
+}
+.week-allday .cal-chip {
+  max-width: 100%;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 .week-day-body {
   position: relative;
@@ -415,7 +424,7 @@
   .week-grid {
     min-height: 500px;
     min-width: 660px; /* 44 gutter + 7 readable cols → forces horizontal scroll */
-    grid-template-columns: 44px repeat(7, 1fr);
+    grid-template-columns: 44px repeat(7, minmax(0, 1fr));
   }
   .week-gutter {
     position: sticky;

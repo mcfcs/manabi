@@ -5,6 +5,7 @@ import {
   Outlet,
 } from "@tanstack/react-router";
 
+import { AssistantPage } from "../features/assistant/AssistantPage";
 import { CalendarPage } from "../features/calendar/CalendarPage";
 import { CoursePage } from "../features/courses/CoursePage";
 import { HomePage } from "../features/courses/HomePage";
@@ -125,6 +126,12 @@ const reviewRoute = createRoute({
   component: ReviewPage,
 });
 
+const assistantRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "/assistant",
+  component: AssistantPage,
+});
+
 const routeTree = rootRoute.addChildren([
   homeRoute,
   courseRoute,
@@ -134,6 +141,7 @@ const routeTree = rootRoute.addChildren([
   calendarRoute,
   tasksRoute,
   reviewRoute,
+  assistantRoute,
 ]);
 
 export const router = createRouter({ routeTree });

@@ -10,6 +10,7 @@ import {
   Menu,
   Search,
   Settings2,
+  Sparkles,
 } from "lucide-react";
 import { type ReactNode, useEffect, useState } from "react";
 
@@ -160,6 +161,14 @@ export function AppShell({
 
         <div className="rail-links">
           <Link
+            to="/assistant"
+            className="rail-link"
+            activeProps={{ className: "rail-link active" }}
+          >
+            <Sparkles size={16} strokeWidth={1.5} />
+            <span>Steven</span>
+          </Link>
+          <Link
             to="/schedule"
             className="rail-link"
             activeProps={{ className: "rail-link active" }}
@@ -269,12 +278,12 @@ export function AppShell({
           <span>Home</span>
         </Link>
         <Link
-          to="/schedule"
+          to="/assistant"
           className="bottom-link"
           activeProps={{ className: "bottom-link active" }}
         >
-          <CalendarClock size={20} strokeWidth={1.5} />
-          <span>Schedule</span>
+          <Sparkles size={20} strokeWidth={1.5} />
+          <span>Steven</span>
         </Link>
         <Link
           to="/calendar"
@@ -320,6 +329,14 @@ export function AppShell({
         <>
           <div className="more-backdrop" onClick={() => setMoreOpen(false)} />
           <div className="more-sheet" role="menu" aria-label="More">
+            <Link
+              to="/schedule"
+              className="more-sheet-item"
+              onClick={() => setMoreOpen(false)}
+            >
+              <CalendarClock size={17} strokeWidth={1.5} />
+              Schedule
+            </Link>
             <button
               className="more-sheet-item"
               onClick={() => {

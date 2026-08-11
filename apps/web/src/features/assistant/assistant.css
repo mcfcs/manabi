@@ -1,0 +1,201 @@
+/* Assistant reuses chat.css; these are the general-chat-only bits. */
+
+/* Fill the content area (a ChatGPT-style column): the conversation is centered
+   and capped so it never sprawls on wide screens, and the composer sits at the
+   bottom instead of floating mid-page. */
+.assistant-tab {
+  min-height: 0;
+}
+
+/* The conversation lives in a centered, width-capped column so it never
+   sprawls on wide screens. Because .chat-main is a flex COLUMN, flex:1 acts on
+   the vertical axis (fills height) while max-width + margin-inline center it
+   horizontally — the two no longer fight (as they did on .chat-main itself). */
+.asst-col {
+  flex: 1;
+  min-height: 0;
+  min-width: 0;
+  width: 100%;
+  max-width: 780px;
+  margin-inline: auto;
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-3);
+}
+
+/* The thread sidebar defaults to min-width:auto, so its long "Module chats"
+   titles expand it to their min-content (~550px) instead of honoring
+   flex-basis:220px and truncating. min-width:0 lets the flex chain shrink so
+   the titles ellipsize and the sidebar stays 220px. (Scoped to the assistant;
+   the module ChatTab sidebar is shorter and already fits.) */
+.assistant-tab .chat-threads,
+.assistant-tab .chat-thread-list {
+  min-width: 0;
+}
+
+@media (min-width: 768px) {
+  .assistant-tab {
+    height: calc(100dvh - 2 * var(--s-6));
+  }
+  .assistant-tab .chat-main {
+    min-height: 0;
+  }
+  .assistant-tab .chat-messages {
+    max-height: none;
+  }
+  /* the settings chip is mobile-only in chat.css; the assistant needs it on
+     desktop too (there is no inline toggle row here). It sits at the top-left
+     of the centered conversation column. */
+  .assistant-tab .chat-settings-btn {
+    display: inline-flex;
+  }
+
+  /* The shared settings sheet is a mobile bottom-sheet; on the assistant it is
+     also opened on desktop, where a centered panel reads better than a
+     full-width bar. It is portaled to <body>, so this targets it globally —
+     safe because the module ChatTab never opens the sheet on desktop. */
+  .chat-settings-sheet {
+    left: 50%;
+    right: auto;
+    bottom: auto;
+    top: 50%;
+    transform: translate(-50%, -50%);
+    width: min(440px, 92vw);
+    max-height: 82vh;
+    overflow-y: auto;
+    border: 1px solid var(--rule);
+    border-radius: var(--radius);
+    animation: chat-fade-in 0.15s ease;
+  }
+}
+
+@media (max-width: 767px) {
+  /* Fill the content box (viewport minus the top pad and the bottom-nav
+     clearance) so the composer rests at the bottom, not mid-screen. */
+  .assistant-tab {
+    min-height: calc(100dvh - var(--s-4) - 64px - env(safe-area-inset-bottom));
+  }
+  /* .content already reserves 64px of bottom padding to clear the fixed nav, so
+     the base composer's own bottom: 56px double-spaced it ~64px above the nav.
+     A hair of offset is all it needs here. */
+  .assistant-tab .chat-input {
+    bottom: var(--s-1);
+  }
+}
+
+.asst-empty-title {
+  font-family: var(--font-display, var(--font-reading));
+  font-size: 20px;
+  font-weight: 600;
+  color: var(--ink);
+  margin: 0 0 var(--s-1);
+}
+
+/* ── Per-chat model selector (settings sheet) ─────────────────── */
+
+.asst-model {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-top: var(--s-2);
+}
+.asst-model-label {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--ink-faint);
+}
+.asst-model-select {
+  width: 100%;
+  font-size: 13px;
+}
+
+.asst-thread-list {
+  gap: 2px;
+}
+
+.asst-drawer-section {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  margin: var(--s-3) 0 2px;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--ink-faint);
+}
+
+.asst-module-thread {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  width: 100%;
+  padding: var(--s-2) var(--s-3);
+  border: none;
+  background: none;
+  text-align: left;
+  border-radius: var(--radius-sm);
+}
+.asst-module-thread:hover {
+  background: var(--surface);
+}
+.asst-module-code {
+  flex: 0 0 auto;
+  font-size: 11px;
+  color: var(--accent-blue-deep);
+  background: var(--accent-blue-wash);
+  border-radius: var(--radius-sm);
+  padding: 0 5px;
+}
+.asst-module-thread .chat-thread-title {
+  padding: 0;
+}
+
+/* ── Cross-module material picker (in the settings sheet) ─────── */
+
+.asst-scope-head {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--ink-faint);
+  margin-top: var(--s-2);
+}
+.asst-scope {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  max-height: 40vh;
+  overflow-y: auto;
+  width: 100%;
+}
+.asst-scope-hint {
+  font-size: 12px;
+  color: var(--ink-soft);
+  margin: 0 0 var(--s-1);
+}
+.asst-scope-item {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  padding: 5px 4px;
+  font-size: 13px;
+  cursor: pointer;
+}
+.asst-scope-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex: 0 0 auto;
+}
+.asst-scope-code {
+  flex: 0 0 auto;
+  font-size: 11px;
+  color: var(--ink-soft);
+}
+.asst-scope-title {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}

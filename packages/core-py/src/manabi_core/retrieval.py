@@ -146,6 +146,79 @@ async def retrieve(
     return [ScopedChunk(*row) for row in rows]
 
 
+async def load_chunks_by_ids(
+    db: AsyncSession, chunk_ids: list[int]
+) -> list[ScopedChunk]:
+    """Hydrate chunks by explicit id (still enforcing ai_included / not-deleted).
+    Used by the general assistant, whose chunks span multiple modules and are
+    already scoped by the app server — so a module-scoped load doesn't fit."""
+    if not chunk_ids:
+        return []
+    rows = (
+        await db.execute(
+            text(
+                """
+                SELECT c.id, c.module_id, c.document_id, d.filename,
+                       c.page_start, c.page_end, c.heading_path, c.text,
+                       c.token_count, c.content_hash, c.element_ids
+                FROM chunks c
+                JOIN documents d ON d.id = c.document_id
+                WHERE c.id = ANY(:chunk_ids)
+                  AND d.ai_included
+                  AND d.deleted_at IS NULL
+                ORDER BY c.document_id, c.page_start, c.id
+                """
+            ),
+            {"chunk_ids": chunk_ids},
+        )
+    ).all()
+    return [ScopedChunk(*row) for row in rows]
+
+
+# Query embeddings carry an asymmetric instruction prefix, so absolute cosine
+# similarities run lower than symmetric — calibrate against real material + a few
+# off-topic prompts ("write me bubble sort") if the gate feels off.
+GENERAL_SCAN_MIN_COSINE = 0.45
+
+
+async def retrieve_relevant(
+    db: AsyncSession,
+    module_ids: list[int],
+    query_embedding: list[float],
+    query_text: str,
+    k: int = 6,
+    *,
+    min_cosine: float = GENERAL_SCAN_MIN_COSINE,
+) -> tuple[list[ScopedChunk], bool]:
+    """For the general assistant's auto-scan: hybrid-retrieve across the user's
+    modules AND report whether the top match is actually relevant (raw cosine
+    ≥ threshold). RRF ranks aren't cross-query comparable, so the gate uses an
+    absolute cosine probe. Returns (hits, gate_ok); caller drops hits if not ok."""
+    if not module_ids:
+        return [], False
+    hits = await retrieve(db, module_ids, query_embedding, query_text, k=k)
+    if not hits:
+        return [], False
+    best = (
+        await db.execute(
+            text(
+                """
+                SELECT 1 - MIN(ce.embedding <=> CAST(:qvec AS vector)) AS best_cos
+                FROM chunks c
+                JOIN documents d ON d.id = c.document_id
+                JOIN chunk_embeddings ce ON ce.chunk_id = c.id
+                WHERE c.module_id = ANY(:module_ids)
+                  AND d.ai_included
+                  AND d.deleted_at IS NULL
+                """
+            ),
+            {"qvec": str(query_embedding), "module_ids": module_ids},
+        )
+    ).scalar()
+    gate_ok = best is not None and float(best) >= min_cosine
+    return hits, gate_ok
+
+
 def source_fingerprint(chunks: list[ScopedChunk]) -> str:
     """Staleness anchor: hash of the exact chunk set an artifact was built on."""
     payload = "|".join(f"{c.id}:{c.content_hash}" for c in sorted(chunks, key=lambda c: c.id))

@@ -237,6 +237,13 @@ export interface SettingsOut {
   canvas_last_synced_at: string | null;
   canvas_last_error: string | null;
   chat_autovoice: boolean;
+  general_chat_model: string | null;
+}
+
+export interface AiModelsOut {
+  models: string[];
+  online: boolean;
+  worker: string | null;
 }
 
 export interface ModuleOut {
@@ -436,9 +443,28 @@ export interface ChatThreadOut {
   // null = all module materials of that kind; [] = none of that kind
   scope_document_ids: number[] | null;
   scope_note_ids: number[] | null;
+  // General ("Manabi AI") assistant fields
+  module_id: number | null;
+  is_general: boolean;
+  scope_module_ids: number[] | null;
+  auto_materials: boolean;
+  model_override: string | null;
   source_document_id: number | null;
   source_page: number | null;
   source_quote: string | null;
+  created_at: string;
+}
+
+// GET /api/chat/threads/all — every thread (module + general) for the drawer.
+export interface ThreadAllOut {
+  id: number;
+  title: string;
+  teacher_mode: boolean;
+  is_general: boolean;
+  module_id: number | null;
+  module_title: string | null;
+  course_id: number | null;
+  course_code: string | null;
   created_at: string;
 }
 

@@ -6,9 +6,11 @@ semaphore) alongside a heartbeat loop whose row freshness powers the
 """
 
 import asyncio
+import json
 import logging
 import sys
 
+import httpx
 from sqlalchemy import text
 
 import manabi_ai.tasks_gen  # noqa: F401 — registers generation tasks
@@ -20,10 +22,28 @@ from manabi_ai.db import session_factory
 log = logging.getLogger("manabi_ai")
 
 
+async def _ollama_models(settings) -> list[str]:
+    """Model tags installed on this node's Ollama — for the Settings model
+    dropdown. Best-effort; empty on any error."""
+    try:
+        async with httpx.AsyncClient(timeout=5) as client:
+            r = await client.get(f"{settings.ollama_url}/api/tags")
+            r.raise_for_status()
+            return sorted(m["name"] for m in r.json().get("models", []) if m.get("name"))
+    except Exception:  # noqa: BLE001 — heartbeat must never fail on this
+        return []
+
+
 async def _heartbeat_loop() -> None:
     settings = get_settings()
+    models: list[str] = []
+    beat = 0
     while True:
         try:
+            # Refresh the model list occasionally (and keep retrying until we have one).
+            if beat % 20 == 0 or not models:
+                models = await _ollama_models(settings)
+            info = json.dumps({"tts": settings.tts_enabled, "models": models})
             async with session_factory()() as db:
                 await db.execute(
                     text(
@@ -34,14 +54,12 @@ async def _heartbeat_loop() -> None:
                         DO UPDATE SET last_seen_at = now(), gpu_info = cast(:info AS json)
                         """
                     ),
-                    {
-                        "name": settings.worker_name,
-                        "info": f'{{"tts": {str(settings.tts_enabled).lower()}}}',
-                    },
+                    {"name": settings.worker_name, "info": info},
                 )
                 await db.commit()
         except Exception as exc:  # noqa: BLE001 — keep beating through transient DB drops
             log.warning("heartbeat failed: %s", exc)
+        beat += 1
         await asyncio.sleep(settings.heartbeat_interval_seconds)
 
 

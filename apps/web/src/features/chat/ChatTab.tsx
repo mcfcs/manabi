@@ -7,14 +7,13 @@ import {
   Loader2,
   Menu,
   MessageSquarePlus,
-  SendHorizontal,
   SlidersHorizontal,
   Trash2,
   Volume2,
   VolumeX,
   X,
 } from "lucide-react";
-import { type FormEvent, useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 
 import {
@@ -32,6 +31,7 @@ import {
   useChatVoice,
   useGenerationJob,
 } from "../ai/common";
+import { ChatComposer } from "./ChatComposer";
 import "./chat.css";
 
 function CitePill({ c }: { c: NonNullable<ChatMessageOut["citations"]>[number] }) {
@@ -445,8 +445,7 @@ export function ChatTab({ moduleId }: { moduleId: string }) {
       setError(err instanceof ApiError ? err.message : "Failed to send"),
   });
 
-  async function submit(e: FormEvent) {
-    e.preventDefault();
+  async function doSend() {
     const content = input.trim();
     if (!content || answering.running) return;
     if (activeThread == null) {
@@ -648,22 +647,14 @@ export function ChatTab({ moduleId }: { moduleId: string }) {
           <p className="error-text">Answer failed: {answering.job.error}</p>
         )}
 
-        <form className="chat-input" onSubmit={submit}>
-          <input
-            className="input"
-            placeholder="Ask about this module…"
-            value={input}
-            onChange={(e) => setInput(e.target.value)}
-            disabled={answering.running}
-          />
-          <button
-            className="btn btn-primary"
-            disabled={!input.trim() || answering.running || send.isPending}
-            aria-label="Send"
-          >
-            <SendHorizontal size={16} strokeWidth={1.75} />
-          </button>
-        </form>
+        <ChatComposer
+          value={input}
+          onChange={setInput}
+          onSend={doSend}
+          disabled={answering.running}
+          sending={send.isPending}
+          placeholder="Ask about this module…"
+        />
       </section>
 
       {/* Mobile conversation drawer (portaled to body: escapes the routed

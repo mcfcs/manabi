@@ -142,6 +142,19 @@
 .chat-input {
   display: flex;
   gap: var(--s-2);
+  align-items: flex-end; /* keep Send pinned to the bottom as the textarea grows */
+}
+.chat-textarea {
+  flex: 1;
+  min-width: 0;
+  resize: none;
+  overflow-y: auto;
+  max-height: 140px;
+  line-height: 1.5;
+  font-family: inherit;
+}
+.chat-send {
+  flex: 0 0 auto;
 }
 
 /* Mobile-only chrome (top bar + settings chip) — hidden on desktop, where the

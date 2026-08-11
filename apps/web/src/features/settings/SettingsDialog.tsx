@@ -4,7 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import { Loader2 } from "lucide-react";
 
 import { Modal } from "../../components/Modal";
-import { api, ApiError, type SettingsOut } from "../../lib/api";
+import { api, type AiModelsOut, ApiError, type SettingsOut } from "../../lib/api";
 import {
   disablePush,
   enablePush,
@@ -113,6 +113,10 @@ export function SettingsDialog({ onClose }: { onClose: () => void }) {
   const settings = useQuery({
     queryKey: ["settings"],
     queryFn: () => api.get<SettingsOut>("/api/settings"),
+  });
+  const aiModels = useQuery({
+    queryKey: ["ai-models"],
+    queryFn: () => api.get<AiModelsOut>("/api/ai/models"),
   });
 
   const [semStart, setSemStart] = useState("");
@@ -366,6 +370,33 @@ export function SettingsDialog({ onClose }: { onClose: () => void }) {
         <p className="settings-hint">
           When on, Steven's chat replies play aloud as they arrive (you can
           still toggle voice per conversation).
+        </p>
+
+        <label className="field-label">
+          General assistant (Manabi AI) model
+          <select
+            className="input"
+            value={s?.general_chat_model ?? ""}
+            onChange={(e) => save.mutate({ general_chat_model: e.target.value })}
+          >
+            <option value="">Default (module chat model)</option>
+            {(aiModels.data?.models ?? []).map((m) => (
+              <option key={m} value={m}>
+                {m}
+              </option>
+            ))}
+            {/* keep the saved value selectable even if the node is offline */}
+            {s?.general_chat_model &&
+              !(aiModels.data?.models ?? []).includes(s.general_chat_model) && (
+                <option value={s.general_chat_model}>{s.general_chat_model}</option>
+              )}
+          </select>
+        </label>
+        <p className="settings-hint">
+          {aiModels.data?.online
+            ? `${aiModels.data.models.length} models on the AI node. `
+            : "AI node offline — showing your saved choice. "}
+          Only affects the Assistant tab, not per-module chat.
         </p>
 
         <VoiceLab />

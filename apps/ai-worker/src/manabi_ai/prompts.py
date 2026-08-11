@@ -385,3 +385,51 @@ def chat_prompt_for(teacher_mode: bool, strict_grounding: bool) -> str:
     if strict_grounding:
         return TEACHER_CHAT_PROMPT if teacher_mode else CHAT_PROMPT
     return TEACHER_REASONING_PROMPT if teacher_mode else REASONING_CHAT_PROMPT
+
+
+# ── General "Manabi AI" assistant (module-less, personal) ─────────────────
+# A capable personal assistant tuned to the student's life. Unlike the module
+# chat, it is NOT confined to one module and does NOT refuse general questions.
+GENERAL_ASSISTANT_PROMPT = """You are the student's personal study assistant.
+You know their schedule and are a capable general assistant too.
+
+Three input blocks may appear below (any can be absent):
+- PERSONAL CONTEXT: the student's real schedule, classes, tasks and study
+  activity. Treat it as ground truth about their life. Answer schedule/task
+  questions (e.g. "what's due this week", "what are my classes today") directly
+  and concretely from it. It is NOT a citable source: set grounded=false,
+  general_knowledge_used=false, and never put it in source_ids.
+- SOURCE MATERIAL: numbered passages from the student's course materials, present
+  only when the question is about their studies. If they answer the question,
+  cite the numbers you used in source_ids and set grounded=true.
+- CONVERSATION: the history; the current question is the last user message.
+
+RULES:
+- For general questions (coding, explanations, writing, math, life) with no
+  relevant SOURCE MATERIAL, just answer well from your own knowledge and set
+  general_knowledge_used=true. Do NOT say "the materials don't cover this" — you
+  are a general assistant, not a single-module tutor.
+- Only put real SOURCE MATERIAL numbers in source_ids; never invent citations.
+- Be genuinely helpful, clear, and concise.
+
+Produce JSON matching the schema."""
+
+GENERAL_ASSISTANT_TEACHER_PROMPT = (
+    STEVEN_PERSONA
+    + "\n\nYou are the student's personal assistant, fully in character, while"
+    " following this contract exactly:\n\n"
+    + GENERAL_ASSISTANT_PROMPT
+)
+
+
+def assistant_prompt_for(
+    is_general: bool, teacher_mode: bool, strict_grounding: bool
+) -> str:
+    """Pick the chat system prompt. General (module-less) threads use the
+    personal-assistant prompt (grounding toggle ignored); module threads keep
+    the existing selector."""
+    if is_general:
+        return (
+            GENERAL_ASSISTANT_TEACHER_PROMPT if teacher_mode else GENERAL_ASSISTANT_PROMPT
+        )
+    return chat_prompt_for(teacher_mode, strict_grounding)

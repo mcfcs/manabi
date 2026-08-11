@@ -28,6 +28,7 @@ class SettingsOut(BaseModel):
     canvas_last_synced_at: datetime | None
     canvas_last_error: str | None
     chat_autovoice: bool
+    general_chat_model: str | None  # Ollama model for the general assistant
 
 
 class SettingsPatch(BaseModel):
@@ -36,6 +37,7 @@ class SettingsPatch(BaseModel):
     gcal_ics_url: str | None = None  # "" clears the feed
     class_reminders: bool | None = None
     chat_autovoice: bool | None = None
+    general_chat_model: str | None = None  # "" clears (→ default model)
 
 
 async def get_app_settings(db: AsyncSession) -> AppSettings:
@@ -60,6 +62,7 @@ def _out(row: AppSettings) -> SettingsOut:
         canvas_last_synced_at=row.canvas_last_synced_at,
         canvas_last_error=row.canvas_last_error,
         chat_autovoice=row.chat_autovoice,
+        general_chat_model=row.general_chat_model,
     )
 
 
@@ -81,6 +84,8 @@ async def patch_settings(
         row.class_reminders = data.class_reminders
     if data.chat_autovoice is not None:
         row.chat_autovoice = data.chat_autovoice
+    if data.general_chat_model is not None:
+        row.general_chat_model = data.general_chat_model.strip() or None
     if data.gcal_ics_url is not None:
         url = data.gcal_ics_url.strip()
         row.gcal_ics_url = url or None

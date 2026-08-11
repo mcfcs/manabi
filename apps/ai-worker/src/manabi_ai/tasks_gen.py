@@ -21,7 +21,12 @@ from manabi_core.models import (
     Note,
     QuizQuestion,
 )
-from manabi_core.retrieval import ScopedChunk, load_context_chunks, source_fingerprint
+from manabi_core.retrieval import (
+    ScopedChunk,
+    load_chunks_by_ids,
+    load_context_chunks,
+    source_fingerprint,
+)
 from procrastinate.exceptions import JobAborted
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -758,9 +763,18 @@ async def define_term(
 
 
 @app.task(name="manabi_ai.tasks.chat_answer", queue="gpu", retry=1, pass_context=True)
-async def chat_answer(context, job_id: int, thread_id: int, chunk_ids: list[int]) -> None:
-    """Answer one chat question: grounded in retrieved module passages with
-    citations, or explicitly ungrounded general knowledge, never blended."""
+async def chat_answer(
+    context,
+    job_id: int,
+    thread_id: int,
+    chunk_ids: list[int],
+    personal_context: str | None = None,
+    model: str | None = None,
+) -> None:
+    """Answer one chat question: grounded in retrieved passages with citations,
+    or explicitly ungrounded general knowledge, never blended. General
+    (module-less) assistant threads also get the personal_context block and may
+    override the model — both default None for module threads / old jobs."""
     from manabi_core.models import ChatMessage, ChatRole, ChatThread
 
     async with session_factory()() as db:
@@ -784,28 +798,37 @@ async def chat_answer(context, job_id: int, thread_id: int, chunk_ids: list[int]
                 .all()
             )[::-1]
 
-            # Thread material scope is read from the DB row (not the payload)
-            # so the defer contract stays frozen; chunk_ids are already scoped
-            # by retrieval — the document filter here is defense in depth.
-            wanted = set(chunk_ids)
-            chunks = [
-                c
-                for c in await load_context_chunks(
-                    db, [thread.module_id], document_ids=thread.scope_document_ids
+            is_general = thread.module_id is None
+            if is_general:
+                # General assistant: chunks span modules and are already scoped
+                # by the app server → hydrate them by id directly.
+                chunks = await load_chunks_by_ids(db, chunk_ids)
+                notes = None
+                citation_scope = {c.module_id for c in chunks}
+            else:
+                # Module thread: scope from the DB row; chunk_ids already scoped
+                # by retrieval — the document filter here is defense in depth.
+                wanted = set(chunk_ids)
+                chunks = [
+                    c
+                    for c in await load_context_chunks(
+                        db, [thread.module_id], document_ids=thread.scope_document_ids
+                    )
+                    if c.id in wanted
+                ]
+                notes = await _load_notes_text(
+                    db, [thread.module_id], note_ids=thread.scope_note_ids
                 )
-                if c.id in wanted
-            ]
+                citation_scope = {thread.module_id}
             ctx = build_context(chunks, None) if chunks else None
-            notes = await _load_notes_text(
-                db, [thread.module_id], note_ids=thread.scope_note_ids
-            )
 
             conversation = "\n\n".join(
                 f"{'STUDENT' if m.role == ChatRole.user else 'ASSISTANT'}: {m.content}"
                 for m in history
             )
             user_prompt = (
-                (ctx.source_text if ctx else "SOURCE MATERIAL: (none retrieved)")
+                (f"{personal_context.strip()}\n\n" if personal_context else "")
+                + (ctx.source_text if ctx else "SOURCE MATERIAL: (none retrieved)")
                 + (
                     f"\n\nSTUDENT NOTES (the student's own notes — reference "
                     f"with 'According to your notes', never cite as a source):\n"
@@ -819,7 +842,8 @@ async def chat_answer(context, job_id: int, thread_id: int, chunk_ids: list[int]
             settings = get_settings()
             await _abort_if_requested(db, job, context)
             await _progress(db, job, 30, "Answering")
-            chat_prompt = prompts.chat_prompt_for(
+            chat_prompt = prompts.assistant_prompt_for(
+                is_general,
                 getattr(thread, "teacher_mode", False),
                 getattr(thread, "strict_grounding", True),
             )
@@ -828,7 +852,7 @@ async def chat_answer(context, job_id: int, thread_id: int, chunk_ids: list[int]
                 user_prompt,
                 prompts.CHAT_SCHEMA,
                 preview,
-                model=settings.effective_chat_model,
+                model=model or settings.effective_chat_model,
             )
 
             answer = (result.get("answer") or "").strip()
@@ -840,7 +864,7 @@ async def chat_answer(context, job_id: int, thread_id: int, chunk_ids: list[int]
                 kept, _ = resolve_items(
                     [{"text": answer, "source_ids": result.get("source_ids", [])}],
                     ctx.index_map,
-                    {thread.module_id},
+                    citation_scope,
                 )
                 if kept:
                     citations_snapshot = [

@@ -8,7 +8,9 @@ from fastapi.responses import FileResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 
 from manabi_server.api import (
+    ai,
     artifacts,
+    assistant,
     calendar,
     canvas,
     chat,
@@ -81,6 +83,8 @@ app.include_router(documents.router)
 app.include_router(notes.router)
 app.include_router(artifacts.router)
 app.include_router(chat.router)
+app.include_router(assistant.router)
+app.include_router(ai.router)
 app.include_router(canvas.router)
 app.include_router(schedule.router)
 app.include_router(calendar.router)
