@@ -314,7 +314,8 @@ function WeekView({
   for (let m = 480; m < WEEK_END_MIN; m += 120) hours.push(m);
 
   return (
-    <div className="week-grid">
+    <div className="week-scroll">
+      <div className="week-grid">
       <div className="week-gutter">
         {hours.map((m) => (
           <span
@@ -461,6 +462,7 @@ function WeekView({
           </div>
         );
       })}
+      </div>
     </div>
   );
 }

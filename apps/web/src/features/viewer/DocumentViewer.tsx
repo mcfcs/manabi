@@ -5,6 +5,7 @@ import { Link, useNavigate, useParams, useSearch } from "@tanstack/react-router"
 import {
   AArrowDown,
   AArrowUp,
+  AlignJustify,
   AlignLeft,
   FileSearch,
   ChevronLeft,
@@ -42,6 +43,7 @@ import {
 } from "../../lib/highlight";
 import {
   AnnotationEditor,
+  AnnotationPicker,
   AnnotationsPanel,
   type PendingSelection,
   SelectionPopover,
@@ -77,6 +79,8 @@ function PageImage({
     <span className="viewer-page-wrap">
       <img
         className="viewer-page"
+        // The SW revalidates this (NetworkFirst) so a re-extract/re-split render
+        // is never stale; the endpoint's ETag makes unchanged pages a cheap 304.
         src={`/api/documents/${documentId}/pages/${page.page_no}/render`}
         alt={`Page ${page.page_no}`}
         loading={lazy ? "lazy" : undefined}
@@ -109,7 +113,7 @@ function PageText({
   page: PageOut;
   terms?: string[];
   annotations?: AnnotationOut[];
-  onAnnotClick?: (id: number) => void;
+  onAnnotClick?: (ids: number[], at: { x: number; y: number }) => void;
 }) {
   const html = page.text_html ?? "";
   const annotMarks: AnnotationMark[] = (annotations ?? []).map((a) => ({
@@ -130,8 +134,9 @@ function PageText({
       dangerouslySetInnerHTML={{ __html: marked }}
       onClick={(e) => {
         const mark = (e.target as HTMLElement).closest("mark.annot");
-        const id = mark?.getAttribute("data-annot");
-        if (id && onAnnotClick) onAnnotClick(Number(id));
+        const raw = mark?.getAttribute("data-annot-ids");
+        if (raw && onAnnotClick)
+          onAnnotClick(raw.split(",").map(Number), { x: e.clientX, y: e.clientY });
       }}
     />
   );
@@ -224,10 +229,9 @@ function useSelectionPopover({
   }, [containerRef, mode, visiblePage, onSelect]);
 }
 
-/** The continuous merged-document text (Reader + scroll text column). Owns its
- * own article element + highlight effect, so if React remounts the article the
- * highlights re-apply — a parent-level effect keyed on html/annots would not
- * re-run on a bare remount and the marks would silently vanish. */
+/** The continuous merged-document text (Reader + scroll text column). Highlights
+ * are baked into the HTML string via useHighlightedHtml (pure), so React owns
+ * the marks — no post-render DOM mutation that could race with a re-render. */
 function ContinuousText({
   html,
   terms,
@@ -237,7 +241,7 @@ function ContinuousText({
   html: string;
   terms?: string[];
   annots: AnnotationMark[];
-  onAnnotClick: (id: number) => void;
+  onAnnotClick: (ids: number[], at: { x: number; y: number }) => void;
 }) {
   const marked = useHighlightedHtml(html, terms, annots);
   return (
@@ -245,8 +249,9 @@ function ContinuousText({
       className="reader-doc note-editor-content"
       onClick={(e) => {
         const mark = (e.target as HTMLElement).closest("mark.annot");
-        const id = mark?.getAttribute("data-annot");
-        if (id) onAnnotClick(Number(id));
+        const raw = mark?.getAttribute("data-annot-ids");
+        if (raw)
+          onAnnotClick(raw.split(",").map(Number), { x: e.clientX, y: e.clientY });
       }}
       // selection via useSelectionPopover; marks are part of the rendered HTML
       // eslint-disable-next-line react/no-danger
@@ -289,6 +294,17 @@ export function DocumentViewer() {
   const [showNotes, setShowNotes] = useState(false);
   const [showText, setShowText] = useState(false);
   const [showMarks, setShowMarks] = useState(false);
+  // Split view text layout: per-page (default — right for slides/PPTX) vs one
+  // continuous merged document. Off by default; persisted per device.
+  const [showContinuous, setShowContinuous] = useState(
+    () => localStorage.getItem("manabi-viewer-continuous") === "1",
+  );
+  function toggleContinuous() {
+    setShowContinuous((v) => {
+      localStorage.setItem("manabi-viewer-continuous", v ? "0" : "1");
+      return !v;
+    });
+  }
   const [visiblePage, setVisiblePage] = useState(page);
   const [textSize, setTextSize] = useState(
     () => Number(localStorage.getItem("manabi-viewer-textsize")) || 16,
@@ -305,7 +321,8 @@ export function DocumentViewer() {
   const reader = useQuery({
     queryKey: ["reader", documentId],
     queryFn: () => api.get<ReaderOut>(`/api/documents/${documentId}/reader`),
-    enabled: mode === "read" || (mode === "scroll" && showText),
+    enabled:
+      mode === "read" || (mode === "scroll" && showText && showContinuous),
     staleTime: 60_000,
   });
   const touchStartX = useRef<number | null>(null);
@@ -316,8 +333,19 @@ export function DocumentViewer() {
   const annots = useAnnotations(documentId);
   const [selection, setSelection] = useState<PendingSelection | null>(null);
   const [editingAnnot, setEditingAnnot] = useState<number | null>(null);
+  // When a click lands on overlapping highlights, ask which one to open.
+  const [annotPick, setAnnotPick] = useState<{
+    ids: number[];
+    x: number;
+    y: number;
+  } | null>(null);
   const [showAnnotPanel, setShowAnnotPanel] = useState(false);
   const [editingPageText, setEditingPageText] = useState<number | null>(null);
+
+  function handleAnnotClick(ids: number[], at: { x: number; y: number }) {
+    if (ids.length <= 1) setEditingAnnot(ids[0] ?? null);
+    else setAnnotPick({ ids, x: at.x, y: at.y });
+  }
 
   // Ask-Steven discussions anchored to this document
   const [discuss, setDiscuss] = useState<ChatThreadOut | null>(null);
@@ -438,7 +466,8 @@ export function DocumentViewer() {
     );
     rows.forEach((r) => observer.observe(r));
     return () => observer.disconnect();
-  }, [mode, doc.data]);
+    // re-observe when the row layout changes (per-page ⇄ continuous, text on/off)
+  }, [mode, doc.data, showText, showContinuous]);
 
   // Entering scroll mode: jump to the current page
   useEffect(() => {
@@ -502,6 +531,20 @@ export function DocumentViewer() {
           >
             <Type size={17} strokeWidth={1.5} />
           </button>
+          {mode === "scroll" && showText && (
+            <button
+              className={`icon-btn${showContinuous ? " active" : ""}`}
+              onClick={toggleContinuous}
+              aria-label="Whole document as one"
+              title={
+                showContinuous
+                  ? "Text: one continuous document — click for per-page text"
+                  : "Text: per page (best for slides) — click to merge into one continuous document"
+              }
+            >
+              <AlignJustify size={17} strokeWidth={1.5} />
+            </button>
+          )}
           {termsEnabled && (
             <button
               className={`icon-btn${showAnnotPanel ? " active" : ""}`}
@@ -622,7 +665,7 @@ export function DocumentViewer() {
               html={reader.data.html}
               terms={activeTerms}
               annots={allAnnotMarks}
-              onAnnotClick={setEditingAnnot}
+              onAnnotClick={handleAnnotClick}
             />
           )}
         </div>
@@ -668,14 +711,54 @@ export function DocumentViewer() {
         </div>
       )}
 
-      {mode === "scroll" && (
-        <div
-          className={`viewer-scroll${showText ? " two-col" : ""}`}
-          ref={scrollRef}
-        >
-          <div className="scroll-images">
+      {mode === "scroll" &&
+        (showText && showContinuous ? (
+          // Whole document as one: page images stacked beside one continuous
+          // merged-text column (paragraphs don't cut at page edges).
+          <div className="viewer-scroll two-col" ref={scrollRef}>
+            <div className="scroll-images">
+              {d.pages.map((p) => (
+                <div key={p.page_no} className="scroll-row" data-page-no={p.page_no}>
+                  <div className="scroll-render">
+                    {p.has_render ? (
+                      <PageImage
+                        documentId={documentId}
+                        page={p}
+                        regions={regionList}
+                        lazy
+                      />
+                    ) : (
+                      <PageFallback page={p} isSlides={isSlides} />
+                    )}
+                    <span className="scroll-page-no mono">{p.page_no}</span>
+                  </div>
+                </div>
+              ))}
+            </div>
+            <div className="scroll-continuous">
+              {reader.isLoading && (
+                <div className="viewer-splash">Loading text…</div>
+              )}
+              {reader.data && (
+                <ContinuousText
+                  html={reader.data.html}
+                  terms={activeTerms}
+                  annots={allAnnotMarks}
+                  onAnnotClick={handleAnnotClick}
+                />
+              )}
+            </div>
+          </div>
+        ) : (
+          // Per-page (default): each page image with its own extracted text
+          // beside it — right for slides/PPTX where text is per-slide.
+          <div className="viewer-scroll" ref={scrollRef}>
             {d.pages.map((p) => (
-              <div key={p.page_no} className="scroll-row" data-page-no={p.page_no}>
+              <div
+                key={p.page_no}
+                className={`scroll-row${showText ? " with-text" : ""}`}
+                data-page-no={p.page_no}
+              >
                 <div className="scroll-render">
                   {p.has_render ? (
                     <PageImage
@@ -689,26 +772,30 @@ export function DocumentViewer() {
                   )}
                   <span className="scroll-page-no mono">{p.page_no}</span>
                 </div>
+                {showText && (
+                  <div className="scroll-text">
+                    <div className="text-panel-tools">
+                      <button
+                        className="icon-btn"
+                        onClick={() => setEditingPageText(p.page_no)}
+                        aria-label="Edit extracted text"
+                        title="Edit this page's extracted text"
+                      >
+                        <Pencil size={13} strokeWidth={1.5} />
+                      </button>
+                    </div>
+                    <PageText
+                      page={p}
+                      terms={activeTerms}
+                      annotations={annotsByPage.get(p.page_no)}
+                      onAnnotClick={handleAnnotClick}
+                    />
+                  </div>
+                )}
               </div>
             ))}
           </div>
-          {showText && (
-            <div className="scroll-continuous">
-              {reader.isLoading && (
-                <div className="viewer-splash">Loading text…</div>
-              )}
-              {reader.data && (
-                <ContinuousText
-                  html={reader.data.html}
-                  terms={activeTerms}
-                  annots={allAnnotMarks}
-                  onAnnotClick={setEditingAnnot}
-                />
-              )}
-            </div>
-          )}
-        </div>
-      )}
+        ))}
 
       {mode === "single" && (
         <div
@@ -738,11 +825,15 @@ export function DocumentViewer() {
                 page={current}
                 terms={activeTerms}
                 annotations={annotsByPage.get(page)}
-                onAnnotClick={setEditingAnnot}
+                onAnnotClick={handleAnnotClick}
               />
             </div>
           ) : current?.has_render ? (
-            <PageImage documentId={documentId} page={current} regions={regionList} />
+            <PageImage
+              documentId={documentId}
+              page={current}
+              regions={regionList}
+            />
           ) : current ? (
             <PageFallback page={current} isSlides={isSlides} />
           ) : null}
@@ -844,6 +935,21 @@ export function DocumentViewer() {
             setEditingAnnot(null);
           }}
           onClose={() => setEditingAnnot(null)}
+        />
+      )}
+
+      {annotPick && (
+        <AnnotationPicker
+          annotations={(annots.list.data ?? []).filter((a) =>
+            annotPick.ids.includes(a.id),
+          )}
+          x={annotPick.x}
+          y={annotPick.y}
+          onPick={(id) => {
+            setAnnotPick(null);
+            setEditingAnnot(id);
+          }}
+          onClose={() => setAnnotPick(null)}
         />
       )}
 

@@ -2,7 +2,7 @@ import { useQuery } from "@tanstack/react-query";
 import { Link, useNavigate, useParams, useSearch } from "@tanstack/react-router";
 import { ChevronLeft } from "lucide-react";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import { api, type ModuleDetail } from "../../lib/api";
 import { trackRecentModule } from "../../lib/recents";
@@ -217,6 +217,14 @@ export function ModuleWorkspace() {
     }
   }, [module]);
 
+  // Keep the active tab visible in the horizontally-scrollable bar on mobile.
+  const tabBarRef = useRef<HTMLElement>(null);
+  useEffect(() => {
+    tabBarRef.current
+      ?.querySelector(".tab.active")
+      ?.scrollIntoView({ inline: "center", block: "nearest" });
+  }, [tab]);
+
   return (
     <div className="module-page">
       <nav className="crumb">
@@ -236,7 +244,7 @@ export function ModuleWorkspace() {
         <h1>{module?.title ?? "…"}</h1>
       </header>
 
-      <nav className="tab-bar" aria-label="Module sections">
+      <nav className="tab-bar" aria-label="Module sections" ref={tabBarRef}>
         {TABS.map((t) => (
           <Link
             key={t.key}

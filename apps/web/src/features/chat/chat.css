@@ -144,27 +144,166 @@
   gap: var(--s-2);
 }
 
-/* ── Mobile ─────────────────────────────────────────────────── */
+/* Mobile-only chrome (top bar + settings chip) — hidden on desktop, where the
+   sidebar + inline toggle row are used instead. */
+.chat-mbar,
+.chat-settings-btn {
+  display: none;
+}
+
+/* ── Mobile: ChatGPT/Claude-style — threads in a drawer, toggles in a sheet ── */
 
 @media (max-width: 767px) {
   .chat-tab {
     flex-direction: column;
+    gap: var(--s-2);
+    min-height: 0;
   }
+  /* the thread sidebar + the inline toggle row are replaced on mobile.
+     .chat-toggle-row is defined later with display:flex (same specificity),
+     so the hide rule needs the compound selector to win. */
   .chat-threads {
-    flex: none;
-    flex-direction: row;
-    align-items: center;
-    overflow-x: auto;
+    display: none;
   }
-  .chat-thread-list {
-    flex-direction: row;
+  .chat-toggle-row.chat-toggle-inline {
+    display: none;
   }
-  .chat-thread-title {
-    max-width: 140px;
+  .chat-mbar {
+    display: flex;
+  }
+  .chat-settings-btn {
+    display: inline-flex;
   }
   .chat-messages {
     max-height: none;
+    flex: 1;
   }
+  /* keep the composer within reach above the bottom nav */
+  .chat-input {
+    position: sticky;
+    bottom: calc(56px + env(safe-area-inset-bottom));
+    background: var(--paper);
+    padding: var(--s-2) 0;
+    z-index: 5;
+  }
+}
+
+.chat-mbar {
+  align-items: center;
+  gap: var(--s-2);
+  padding: 0 0 var(--s-2);
+  border-bottom: 1px solid var(--rule);
+}
+.chat-mbar-btn {
+  flex: 0 0 auto;
+}
+.chat-mbar-title {
+  flex: 1;
+  min-width: 0;
+  text-align: center;
+  font-weight: 600;
+  font-size: 14px;
+  color: var(--ink);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.chat-settings-btn {
+  align-self: flex-start;
+  align-items: center;
+  gap: var(--s-1);
+  border: 1px solid var(--rule);
+  background: none;
+  border-radius: 999px;
+  padding: 4px var(--s-3);
+  font-size: 12px;
+  color: var(--ink-soft);
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ── Mobile drawer (conversations) + settings sheet ─────────────────────── */
+
+.chat-drawer-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 70;
+  background: rgba(28, 36, 52, 0.3);
+  animation: chat-fade-in 0.15s ease;
+}
+.chat-drawer {
+  position: fixed;
+  z-index: 71;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: min(320px, 86vw);
+  background: var(--surface-raised);
+  border-right: 1px solid var(--rule);
+  box-shadow: 8px 0 28px rgba(28, 36, 52, 0.18);
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-2);
+  padding: var(--s-4);
+  padding-top: calc(var(--s-4) + env(safe-area-inset-top));
+  animation: chat-drawer-in 0.18s ease;
+}
+@keyframes chat-drawer-in {
+  from {
+    transform: translateX(-100%);
+  }
+  to {
+    transform: none;
+  }
+}
+.chat-drawer-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-weight: 600;
+  margin-bottom: var(--s-1);
+}
+.chat-drawer-empty {
+  color: var(--ink-faint);
+  font-size: 13px;
+  padding: var(--s-2);
+}
+.chat-drawer .chat-thread-list {
+  flex-direction: column;
+  overflow-y: auto;
+}
+.chat-drawer .chat-thread-title {
+  max-width: none;
+}
+.chat-drawer .chat-thread-del {
+  opacity: 1;
+}
+
+.chat-settings-sheet {
+  position: fixed;
+  z-index: 71;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: var(--surface-raised);
+  border-top: 1px solid var(--rule);
+  border-radius: var(--radius) var(--radius) 0 0;
+  box-shadow: 0 -8px 28px rgba(28, 36, 52, 0.18);
+  padding: var(--s-4);
+  padding-bottom: calc(var(--s-4) + env(safe-area-inset-bottom));
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-3);
+  animation: sheet-up 0.2s ease;
+}
+.chat-settings-body {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--s-2);
 }
 
 .chat-teacher-toggle {

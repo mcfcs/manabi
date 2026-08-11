@@ -29,8 +29,11 @@
 }
 
 .summary-cites {
-  display: block;
-  line-height: 1.9;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 5px 6px;
+  margin-top: 5px;
 }
 
 /* ── Key terms ──────────────────────────────────────────────── */
@@ -63,6 +66,7 @@
   display: flex;
   gap: var(--s-3);
   align-items: baseline;
+  flex-wrap: wrap;
 }
 
 .acronym-short {
@@ -70,11 +74,14 @@
   font-size: 13px;
   font-weight: 700;
   color: var(--accent-red);
-  min-width: 72px;
+  min-width: 60px;
+  flex-shrink: 0;
 }
 
 .acronym-long {
   font-size: 15px;
+  min-width: 0;
+  flex: 1 1 60%;
 }
 
 /* ── History ────────────────────────────────────────────────── */

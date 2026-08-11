@@ -64,7 +64,7 @@ describe("applyHighlights — annotations", () => {
     applyHighlights(el, [], [yellow]);
     const mark = el.querySelector("mark.annot") as HTMLElement;
     expect(mark).toBeTruthy();
-    expect(mark.dataset.annot).toBe("7");
+    expect(mark.dataset.annotIds).toBe("7");
     expect(mark.className).toContain("annot-yellow");
     expect(mark.className).toContain("has-note");
     expect(mark.textContent).toBe("time-division multiplexing");
@@ -115,6 +115,25 @@ describe("applyHighlights — overlap + idempotency", () => {
     expect(annot?.textContent).toBe("the attenuation curve");
   });
 
+  it("renders TWO overlapping annotations, tagging the overlap with both ids", () => {
+    // A = "the quick brown", B = "quick brown fox" → overlap on "quick brown"
+    const el = root("<p>the quick brown fox jumps</p>");
+    applyHighlights(el, [], [
+      { id: 10, quote: "the quick brown", color: "yellow", hasNote: false },
+      { id: 11, quote: "quick brown fox", color: "blue", hasNote: false },
+    ]);
+    const marks = [...el.querySelectorAll("mark.annot")] as HTMLElement[];
+    // 3 flattened segments: "the " (10), "quick brown" (10+11), " fox" (11)
+    expect(marks.length).toBe(3);
+    const overlap = marks.find((m) => m.dataset.annotIds === "10,11");
+    expect(overlap).toBeTruthy();
+    expect(overlap!.className).toContain("annot-multi");
+    expect(overlap!.textContent).toBe("quick brown");
+    // both single-owner segments still exist
+    expect(marks.some((m) => m.dataset.annotIds === "10")).toBe(true);
+    expect(marks.some((m) => m.dataset.annotIds === "11")).toBe(true);
+  });
+
   it("clearHighlights restores the original text; re-apply is stable", () => {
     const el = root("<p>Signal attenuation grows.</p>");
     const original = el.innerHTML;
@@ -140,7 +159,7 @@ describe("highlightHtml (pure string → string)", () => {
     const out = highlightHtml("<p>were <b>united</b> only</p>", [], [
       { id: 1, quote: "were united only", color: "blue", hasNote: false },
     ]);
-    expect(out).toContain('data-annot="1"');
+    expect(out).toContain('data-annot-ids="1"');
     expect(out).toContain("annot-blue");
   });
 

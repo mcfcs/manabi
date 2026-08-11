@@ -399,13 +399,46 @@
   font-weight: 600;
 }
 
+/* Wrapper: transparent on desktop, a horizontal scroll container on mobile. */
+.week-scroll {
+  display: contents;
+}
+
 @media (max-width: 767px) {
+  /* Week view scrolls sideways with readable day columns + a sticky time
+     gutter, instead of crushing 7 columns into a phone's width. */
+  .week-scroll {
+    display: block;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+  }
   .week-grid {
-    min-height: 480px;
-    grid-template-columns: 34px repeat(7, 1fr);
+    min-height: 500px;
+    min-width: 660px; /* 44 gutter + 7 readable cols → forces horizontal scroll */
+    grid-template-columns: 44px repeat(7, 1fr);
+  }
+  .week-gutter {
+    position: sticky;
+    left: 0;
+    z-index: 3;
+    background: var(--paper);
+  }
+  .week-day-head {
+    font-size: 11px;
+    white-space: nowrap;
+    overflow: hidden;
+  }
+  .timegrid-hour {
+    font-size: 9px;
+  }
+  .week-block {
+    font-size: 9.5px;
   }
   .week-block span {
-    font-size: 9px;
+    font-size: 9.5px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
   }
 }
 

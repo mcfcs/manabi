@@ -149,6 +149,10 @@
 
 .review-sources {
   min-height: 24px;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 5px 6px;
 }
 
 .review-done {

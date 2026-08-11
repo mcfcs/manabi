@@ -104,12 +104,6 @@ function buildCharMap(root: HTMLElement): CharMap {
   return { text: text.join(""), node, off };
 }
 
-interface Match {
-  start: number;
-  end: number;
-  annot?: AnnotationMark;
-}
-
 /** Remove every highlight this module added and stitch the text back together
  * so a re-apply sees clean text nodes. Safe to call on un-highlighted DOM. */
 export function clearHighlights(root: HTMLElement): void {
@@ -137,14 +131,21 @@ export function applyHighlights(
   const hay = map.text;
   if (!hay) return;
   const lower = hay.toLowerCase();
-  const matches: Match[] = [];
+  const n = hay.length;
+
+  // Per-character coverage. Overlapping annotations are NOT dropped — a char in
+  // two highlights records both, so the flattened segments below render the
+  // overlap as its own mark carrying both ids (click → pick which to note).
+  const annotAt: (AnnotationMark[] | null)[] = new Array(n).fill(null);
+  const termAt = new Uint8Array(n);
 
   // Annotations: normalized substring, first occurrence.
   for (const a of annots) {
     const q = normalizeQuery(a.quote);
     if (q.length < 3) continue;
     const idx = lower.indexOf(q.toLowerCase());
-    if (idx >= 0) matches.push({ start: idx, end: idx + q.length, annot: a });
+    if (idx < 0) continue;
+    for (let i = idx; i < idx + q.length; i++) (annotAt[i] ??= []).push(a);
   }
   // Terms: every whole-word occurrence.
   for (const raw of terms) {
@@ -157,55 +158,62 @@ export function applyHighlights(
       if (idx < 0) break;
       const end = idx + needle.length;
       if (!isWordChar(hay[idx - 1]) && !isWordChar(hay[end])) {
-        matches.push({ start: idx, end });
+        for (let i = idx; i < end; i++) termAt[i] = 1;
       }
       from = idx + 1;
     }
   }
-  if (!matches.length) return;
 
-  // Priority for overlap resolution: annotations beat terms, then longer, then
-  // earlier. Greedily accept non-overlapping matches in that order.
-  matches.sort((a, b) => {
-    const aw = a.annot ? 0 : 1;
-    const bw = b.annot ? 0 : 1;
-    if (aw !== bw) return aw - bw;
-    const al = a.end - a.start;
-    const bl = b.end - b.start;
-    if (al !== bl) return bl - al;
-    return a.start - b.start;
-  });
-  const taken = new Array<boolean>(hay.length).fill(false);
-  const accepted: Match[] = [];
-  for (const m of matches) {
-    let free = true;
-    for (let i = m.start; i < m.end; i++) {
-      if (taken[i]) {
-        free = false;
-        break;
-      }
-    }
-    if (!free) continue;
-    for (let i = m.start; i < m.end; i++) taken[i] = true;
-    accepted.push(m);
+  // Flatten into maximal segments with a constant cover key. Annotations win a
+  // char over a term (annotated text renders as the annotation, not the term);
+  // a char under two annotations becomes one segment tagged with both.
+  const keyAt = (i: number): string => {
+    const a = annotAt[i];
+    if (a && a.length)
+      return "a" + a.map((x) => x.id).sort((p, q) => p - q).join(",");
+    return termAt[i] ? "t" : "";
+  };
+
+  interface Seg {
+    start: number;
+    end: number;
+    annots: AnnotationMark[] | null;
   }
+  const segs: Seg[] = [];
+  let i = 0;
+  while (i < n) {
+    const k = keyAt(i);
+    if (!k) {
+      i++;
+      continue;
+    }
+    let j = i + 1;
+    while (j < n && keyAt(j) === k) j++;
+    segs.push({ start: i, end: j, annots: k[0] === "a" ? annotAt[i] : null });
+    i = j;
+  }
+  if (!segs.length) return;
 
   // Apply right-to-left: splitting a text node keeps its left remainder as the
-  // original node, so earlier offsets/refs in the map stay valid.
-  accepted.sort((a, b) => b.start - a.start);
-  for (const m of accepted) {
-    const startNode = map.node[m.start];
-    const endNode = map.node[m.end - 1];
-    if (!startNode || !endNode) continue; // matches never begin/end on a synthetic space
+  // original node, so earlier offsets/refs in the map stay valid. Segments never
+  // overlap (they tile), so this is safe even for stacked highlights.
+  segs.sort((a, b) => b.start - a.start);
+  for (const s of segs) {
+    const startNode = map.node[s.start];
+    const endNode = map.node[s.end - 1];
+    if (!startNode || !endNode) continue; // never begins/ends on a synthetic space
     const range = document.createRange();
-    range.setStart(startNode, map.off[m.start]);
-    range.setEnd(endNode, map.off[m.end - 1] + 1);
+    range.setStart(startNode, map.off[s.start]);
+    range.setEnd(endNode, map.off[s.end - 1] + 1);
     const mark = document.createElement("mark");
-    if (m.annot) {
-      mark.className = `${ANNOT_CLASS} annot-${m.annot.color}${
-        m.annot.hasNote ? " has-note" : ""
-      }`;
-      mark.dataset.annot = String(m.annot.id);
+    if (s.annots && s.annots.length) {
+      const top = s.annots.reduce((a, b) => (b.id > a.id ? b : a)); // newest on top
+      const multi = s.annots.length > 1;
+      mark.className =
+        `${ANNOT_CLASS} annot-${top.color}` +
+        (multi ? " annot-multi" : "") +
+        (s.annots.some((a) => a.hasNote) ? " has-note" : "");
+      mark.dataset.annotIds = s.annots.map((a) => a.id).join(",");
     } else {
       mark.className = TERM_CLASS;
     }
@@ -217,7 +225,7 @@ export function applyHighlights(
         mark.appendChild(range.extractContents());
         range.insertNode(mark);
       } catch {
-        // unmarkable (detached/odd range) — skip this one match
+        // unmarkable (detached/odd range) — skip this one segment
       }
     }
   }

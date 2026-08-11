@@ -10,7 +10,7 @@ import { clientsClaim } from "workbox-core";
 import { ExpirationPlugin } from "workbox-expiration";
 import { cleanupOutdatedCaches, createHandlerBoundToURL, precacheAndRoute } from "workbox-precaching";
 import { NavigationRoute, registerRoute } from "workbox-routing";
-import { CacheFirst, NetworkFirst } from "workbox-strategies";
+import { NetworkFirst } from "workbox-strategies";
 
 precacheAndRoute(self.__WB_MANIFEST);
 cleanupOutdatedCaches();
@@ -44,12 +44,18 @@ registerRoute(
   }),
 );
 
+// Page renders/thumbs live at a STABLE url but their bytes change on
+// re-extraction / re-split (e.g. the rotation fix). CacheFirst served the old
+// image for 30 days — the "it still rotated" bug. NetworkFirst revalidates
+// against the server (cheap 304 via the endpoint's ETag) so a re-extracted page
+// is never stale, and still falls back to cache when offline.
 registerRoute(
   ({ url, request }) =>
     request.method === "GET" &&
     /\/api\/documents\/\d+\/pages\/\d+\/(render|thumb)$/.test(url.pathname),
-  new CacheFirst({
+  new NetworkFirst({
     cacheName: "manabi-renders",
+    networkTimeoutSeconds: 5,
     plugins: [new ExpirationPlugin({ maxEntries: 300, maxAgeSeconds: 30 * 24 * 3600 })],
   }),
 );

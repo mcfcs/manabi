@@ -182,6 +182,44 @@ export function AnnotationEditor({
   );
 }
 
+/** Shown when a click lands on overlapping highlights — pick which one to
+ * open/note. Positioned at the click; a backdrop dismisses it. */
+export function AnnotationPicker({
+  annotations,
+  x,
+  y,
+  onPick,
+  onClose,
+}: {
+  annotations: AnnotationOut[];
+  x: number;
+  y: number;
+  onPick: (id: number) => void;
+  onClose: () => void;
+}) {
+  const left = Math.max(8, Math.min(x, window.innerWidth - 248));
+  const top = Math.min(y + 8, window.innerHeight - 40 - annotations.length * 40);
+  return (
+    <>
+      <div className="annot-picker-backdrop" onClick={onClose} />
+      <div className="annot-picker" style={{ left, top: Math.max(8, top) }}>
+        <div className="annot-picker-head">Which highlight?</div>
+        {annotations.map((a) => (
+          <button
+            key={a.id}
+            className="annot-picker-item"
+            onClick={() => onPick(a.id)}
+          >
+            <span className={`annot-item-dot annot-${a.color}`} />
+            <span className="annot-picker-quote">"{a.quote.slice(0, 44)}"</span>
+            {a.note && <NotebookPen size={12} strokeWidth={1.5} />}
+          </button>
+        ))}
+      </div>
+    </>
+  );
+}
+
 /** Side list of all annotations in the document with jump links. */
 export function AnnotationsPanel({
   annotations,

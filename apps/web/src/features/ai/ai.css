@@ -12,7 +12,12 @@
   border-radius: var(--radius-sm);
   padding: 1px 7px;
   margin-right: var(--s-1);
-  white-space: nowrap;
+  /* Long source titles must wrap, not push the whole page wider than the
+     viewport (which was cutting off definition text on mobile). */
+  max-width: 100%;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  text-align: left;
 }
 .citation-pill:hover {
   text-decoration: none;

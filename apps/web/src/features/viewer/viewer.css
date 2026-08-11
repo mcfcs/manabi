@@ -179,6 +179,12 @@
 .reader-doc mark.annot.has-note {
   border-bottom: 2px dotted var(--ink-soft);
 }
+/* Overlapping highlights: this run belongs to 2+ annotations (click → pick). */
+.viewer-text-content mark.annot.annot-multi,
+.reader-doc mark.annot.annot-multi {
+  border-bottom: 2px double var(--ink);
+  box-shadow: inset 0 0 0 1px rgba(28, 36, 52, 0.14);
+}
 mark.annot-yellow, .annot-swatch.annot-yellow, .annot-item-dot.annot-yellow {
   background: #f8e8a0;
 }
@@ -303,6 +309,54 @@ mark.annot-red, .annot-swatch.annot-red, .annot-item-dot.annot-red {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  font-style: italic;
+}
+
+/* ── Overlapping-highlight chooser ──────────────────────────── */
+
+.annot-picker-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 65;
+}
+.annot-picker {
+  position: fixed;
+  z-index: 66;
+  width: 240px;
+  background: var(--surface-raised);
+  border: 1px solid var(--rule);
+  border-radius: var(--radius);
+  box-shadow: 0 6px 22px rgba(28, 36, 52, 0.18);
+  padding: var(--s-2);
+  animation: annot-pop-in 0.12s ease;
+}
+.annot-picker-head {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--ink-faint);
+  padding: 2px 6px var(--s-1);
+}
+.annot-picker-item {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  width: 100%;
+  padding: 6px;
+  border-radius: var(--radius-sm);
+  text-align: left;
+  color: var(--ink);
+}
+.annot-picker-item:hover {
+  background: var(--surface);
+}
+.annot-picker-quote {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 13px;
   font-style: italic;
 }
 
@@ -491,8 +545,8 @@ mark.annot-red, .annot-swatch.annot-red, .annot-item-dot.annot-red {
 }
 
 /* Two-column: stacked page images beside ONE continuous merged-text column
-   (a paragraph never cuts at a page edge). The text column sticks and scrolls
-   on its own while the images scroll in the shared container. */
+   (a paragraph never cuts at a page edge). Both columns scroll TOGETHER in the
+   shared container — the text sits beside the images, not on its own. */
 .viewer-scroll.two-col {
   flex-direction: row;
   align-items: flex-start;
@@ -516,11 +570,7 @@ mark.annot-red, .annot-swatch.annot-red, .annot-item-dot.annot-red {
 .scroll-continuous {
   flex: 1 1 60ch;
   min-width: 0;
-  position: sticky;
-  top: 0;
-  align-self: flex-start;
-  max-height: calc(100vh - 150px);
-  overflow-y: auto;
+  align-self: stretch;
   padding: var(--s-3) var(--s-4);
   background: var(--surface-raised);
   border: 1px solid var(--rule);
@@ -536,6 +586,31 @@ mark.annot-red, .annot-swatch.annot-red, .annot-item-dot.annot-red {
   position: relative;
   width: 100%;
   max-width: min(760px, 100%);
+}
+
+/* Per-page text (default): each page image with its own extracted text beside it. */
+.scroll-row.with-text {
+  gap: var(--s-4);
+  align-items: flex-start;
+}
+.scroll-row.with-text .scroll-render {
+  flex: 1 1 520px;
+  max-width: 560px;
+}
+.scroll-text {
+  position: relative;
+  flex: 1 1 48ch;
+  min-width: 0;
+  max-width: 62ch;
+  padding: var(--s-3) var(--s-4);
+  background: var(--surface-raised);
+  border: 1px solid var(--rule);
+  border-radius: var(--radius);
+}
+.text-panel-tools {
+  display: flex;
+  justify-content: flex-end;
+  margin-bottom: var(--s-1);
 }
 
 .scroll-page-no {
@@ -564,6 +639,16 @@ mark.annot-red, .annot-swatch.annot-red, .annot-item-dot.annot-red {
     position: static;
     max-height: none;
     flex-basis: auto;
+  }
+  /* per-page: stack image then its text full-width */
+  .scroll-row.with-text {
+    flex-direction: column;
+    align-items: center;
+  }
+  .scroll-row.with-text .scroll-render,
+  .scroll-text {
+    max-width: 100%;
+    width: 100%;
   }
 }
 

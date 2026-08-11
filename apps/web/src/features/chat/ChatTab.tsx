@@ -5,14 +5,17 @@ import {
   GraduationCap,
   Lightbulb,
   Loader2,
+  Menu,
   MessageSquarePlus,
   SendHorizontal,
+  SlidersHorizontal,
   Trash2,
   Volume2,
   VolumeX,
   X,
 } from "lucide-react";
 import { type FormEvent, useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 
 import {
   api,
@@ -180,6 +183,60 @@ function SourcesPicker({
   );
 }
 
+/** The per-thread mode toggles (Steven / grounding / sources / voice). Shared
+ * by the desktop inline row and the mobile settings sheet. */
+function ChatModeControls({
+  thread,
+  moduleId,
+  voiceOn,
+  onTeacher,
+  onGrounding,
+  onVoice,
+}: {
+  thread: ChatThreadOut;
+  moduleId: string;
+  voiceOn: boolean;
+  onTeacher: () => void;
+  onGrounding: () => void;
+  onVoice: () => void;
+}) {
+  return (
+    <>
+      <button
+        className={`chat-teacher-toggle${thread.teacher_mode ? " on" : ""}`}
+        onClick={onTeacher}
+        title="Steven mode: answers delivered in character — grounding rules unchanged"
+      >
+        <GraduationCap size={14} strokeWidth={1.75} />
+        Steven mode {thread.teacher_mode ? "on" : "off"}
+      </button>
+      <button
+        className={`chat-teacher-toggle${!thread.strict_grounding ? " on" : ""}`}
+        onClick={onGrounding}
+        title="Material only: answer strictly from the materials. Material + reasoning: let the AI reason about related points the materials don't fully cover."
+      >
+        <Lightbulb size={14} strokeWidth={1.75} />
+        {thread.strict_grounding ? "Material only" : "Material + reasoning"}
+      </button>
+      <SourcesPicker moduleId={moduleId} thread={thread} />
+      {thread.teacher_mode && (
+        <button
+          className={`chat-teacher-toggle${voiceOn ? " on" : ""}`}
+          onClick={onVoice}
+          title="Steven reads his replies aloud"
+        >
+          {voiceOn ? (
+            <Volume2 size={14} strokeWidth={1.75} />
+          ) : (
+            <VolumeX size={14} strokeWidth={1.75} />
+          )}
+          Voice {voiceOn ? "on" : "off"}
+        </button>
+      )}
+    </>
+  );
+}
+
 export function ChatTab({ moduleId }: { moduleId: string }) {
   const queryClient = useQueryClient();
   const navigate = useNavigate();
@@ -188,6 +245,8 @@ export function ChatTab({ moduleId }: { moduleId: string }) {
   const [activeThread, setActiveThread] = useState<number | null>(null);
   const [input, setInput] = useState("");
   const [error, setError] = useState<string | null>(null);
+  const [threadDrawer, setThreadDrawer] = useState(false); // mobile conversation list
+  const [settingsOpen, setSettingsOpen] = useState(false); // mobile mode toggles sheet
   const [voiceOn, setVoiceOn] = useChatVoice();
   const [speakingId, setSpeakingId] = useState<number | null>(null);
   const [pendingSpeakId, setPendingSpeakId] = useState<number | null>(null);
@@ -285,6 +344,15 @@ export function ChatTab({ moduleId }: { moduleId: string }) {
       queryClient.invalidateQueries({ queryKey: ["chat-threads", moduleId] }),
   });
   const activeThreadObj = threads.data?.find((t) => t.id === activeThread);
+
+  function handleVoice() {
+    const next = !voiceOn;
+    setVoiceOn(next); // persists to localStorage as a per-device override
+    if (!next) {
+      audioRef.current?.pause();
+      setSpeakingId(null);
+    }
+  }
 
   function playMessage(id: number, audioId?: number | null) {
     const audio = audioRef.current;
@@ -431,61 +499,65 @@ export function ChatTab({ moduleId }: { moduleId: string }) {
       </aside>
 
       <section className="chat-main">
+        {/* Mobile top bar: threads menu · title · new chat (hidden on desktop) */}
+        <header className="chat-mbar">
+          <button
+            className="icon-btn chat-mbar-btn"
+            onClick={() => setThreadDrawer(true)}
+            aria-label="Conversations"
+          >
+            <Menu size={18} strokeWidth={1.75} />
+          </button>
+          <span className="chat-mbar-title">
+            {activeThreadObj?.title ?? "New chat"}
+          </span>
+          <button
+            className="icon-btn chat-mbar-btn"
+            onClick={() => newThread.mutate()}
+            disabled={newThread.isPending}
+            aria-label="New chat"
+          >
+            <MessageSquarePlus size={17} strokeWidth={1.75} />
+          </button>
+        </header>
+
         {!aiOnline && <AiOfflineBanner />}
 
         {activeThreadObj && (
-          <div className="chat-toggle-row">
+          <>
+            {/* Desktop: inline mode toggles */}
+            <div className="chat-toggle-row chat-toggle-inline">
+              <ChatModeControls
+                thread={activeThreadObj}
+                moduleId={moduleId}
+                voiceOn={voiceOn}
+                onTeacher={() =>
+                  toggleTeacher.mutate({
+                    id: activeThreadObj.id,
+                    teacher_mode: !activeThreadObj.teacher_mode,
+                  })
+                }
+                onGrounding={() =>
+                  setGrounding.mutate({
+                    id: activeThreadObj.id,
+                    strict_grounding: !activeThreadObj.strict_grounding,
+                  })
+                }
+                onVoice={handleVoice}
+              />
+            </div>
+            {/* Mobile: one compact chip → opens the settings sheet */}
             <button
-              className={`chat-teacher-toggle${activeThreadObj.teacher_mode ? " on" : ""}`}
-              onClick={() =>
-                toggleTeacher.mutate({
-                  id: activeThreadObj.id,
-                  teacher_mode: !activeThreadObj.teacher_mode,
-                })
-              }
-              title="Steven mode: answers delivered in character — grounding rules unchanged"
+              className="chat-settings-btn"
+              onClick={() => setSettingsOpen(true)}
             >
-              <GraduationCap size={14} strokeWidth={1.75} />
-              Steven mode {activeThreadObj.teacher_mode ? "on" : "off"}
-            </button>
-            <button
-              className={`chat-teacher-toggle${!activeThreadObj.strict_grounding ? " on" : ""}`}
-              onClick={() =>
-                setGrounding.mutate({
-                  id: activeThreadObj.id,
-                  strict_grounding: !activeThreadObj.strict_grounding,
-                })
-              }
-              title="Material only: answer strictly from the materials. Material + reasoning: let the AI reason about related points the materials don't fully cover."
-            >
-              <Lightbulb size={14} strokeWidth={1.75} />
+              <SlidersHorizontal size={13} strokeWidth={1.75} />
+              {activeThreadObj.teacher_mode ? "Steven" : "Standard"} ·{" "}
               {activeThreadObj.strict_grounding
                 ? "Material only"
                 : "Material + reasoning"}
             </button>
-            <SourcesPicker moduleId={moduleId} thread={activeThreadObj} />
-          </div>
-        )}
-        {activeThreadObj?.teacher_mode && (
-          <button
-            className={`chat-teacher-toggle${voiceOn ? " on" : ""}`}
-            onClick={() => {
-              const next = !voiceOn;
-              setVoiceOn(next); // persists to localStorage as a per-device override
-              if (!next) {
-                audioRef.current?.pause();
-                setSpeakingId(null);
-              }
-            }}
-            title="Steven reads his replies aloud"
-          >
-            {voiceOn ? (
-              <Volume2 size={14} strokeWidth={1.75} />
-            ) : (
-              <VolumeX size={14} strokeWidth={1.75} />
-            )}
-            Voice {voiceOn ? "on" : "off"}
-          </button>
+          </>
         )}
         <audio
           ref={audioRef}
@@ -593,6 +665,114 @@ export function ChatTab({ moduleId }: { moduleId: string }) {
           </button>
         </form>
       </section>
+
+      {/* Mobile conversation drawer (portaled to body: escapes the routed
+          page's transform so position:fixed pins to the viewport) */}
+      {threadDrawer &&
+        createPortal(
+        <>
+          <div
+            className="chat-drawer-backdrop"
+            onClick={() => setThreadDrawer(false)}
+          />
+          <aside className="chat-drawer" role="dialog" aria-label="Conversations">
+            <header className="chat-drawer-head">
+              <span>Conversations</span>
+              <button
+                className="icon-btn"
+                onClick={() => setThreadDrawer(false)}
+                aria-label="Close"
+              >
+                <X size={16} strokeWidth={1.75} />
+              </button>
+            </header>
+            <button
+              className="btn chat-new"
+              onClick={() => {
+                newThread.mutate();
+                setThreadDrawer(false);
+              }}
+              disabled={newThread.isPending}
+            >
+              <MessageSquarePlus size={15} strokeWidth={1.75} /> New chat
+            </button>
+            <div className="chat-thread-list">
+              {(threads.data ?? []).length === 0 && (
+                <p className="chat-drawer-empty">No conversations yet.</p>
+              )}
+              {(threads.data ?? []).map((t) => (
+                <div
+                  key={t.id}
+                  className={`chat-thread-item${t.id === activeThread ? " active" : ""}`}
+                >
+                  <button
+                    className="chat-thread-title"
+                    onClick={() => {
+                      setActiveThread(t.id);
+                      setThreadDrawer(false);
+                    }}
+                  >
+                    {t.title}
+                  </button>
+                  <button
+                    className="icon-btn danger chat-thread-del"
+                    onClick={() => removeThread.mutate(t.id)}
+                    aria-label="Delete conversation"
+                  >
+                    <Trash2 size={13} strokeWidth={1.5} />
+                  </button>
+                </div>
+              ))}
+            </div>
+          </aside>
+        </>,
+        document.body,
+      )}
+
+      {/* Mobile settings sheet (portaled — same reason as the drawer) */}
+      {settingsOpen &&
+        activeThreadObj &&
+        createPortal(
+        <>
+          <div
+            className="chat-drawer-backdrop"
+            onClick={() => setSettingsOpen(false)}
+          />
+          <div className="chat-settings-sheet" role="dialog" aria-label="Chat settings">
+            <header className="chat-drawer-head">
+              <span>Chat settings</span>
+              <button
+                className="icon-btn"
+                onClick={() => setSettingsOpen(false)}
+                aria-label="Close"
+              >
+                <X size={16} strokeWidth={1.75} />
+              </button>
+            </header>
+            <div className="chat-settings-body">
+              <ChatModeControls
+                thread={activeThreadObj}
+                moduleId={moduleId}
+                voiceOn={voiceOn}
+                onTeacher={() =>
+                  toggleTeacher.mutate({
+                    id: activeThreadObj.id,
+                    teacher_mode: !activeThreadObj.teacher_mode,
+                  })
+                }
+                onGrounding={() =>
+                  setGrounding.mutate({
+                    id: activeThreadObj.id,
+                    strict_grounding: !activeThreadObj.strict_grounding,
+                  })
+                }
+                onVoice={handleVoice}
+              />
+            </div>
+          </div>
+        </>,
+        document.body,
+      )}
     </div>
   );
 }
