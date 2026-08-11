@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Highlighter, NotebookPen, Trash2, X } from "lucide-react";
+import { Highlighter, NotebookPen, Sparkles, Trash2, X } from "lucide-react";
 import { useEffect, useState } from "react";
 
 import { api, type AnnotationOut } from "../../lib/api";
@@ -62,7 +62,9 @@ export function SelectionPopover({
     <div
       className="annot-popover"
       style={{ left: selection.x, top: selection.y }}
-      onMouseDown={(e) => e.stopPropagation()}
+      // pointerdown (not mousedown) so touch taps on the popover don't fall
+      // through to the page and collapse the selection first.
+      onPointerDown={(e) => e.stopPropagation()}
     >
       {noting ? (
         <div className="annot-note-form">
@@ -79,7 +81,10 @@ export function SelectionPopover({
               <button
                 key={c}
                 className={`annot-swatch annot-${c}`}
-                onClick={() => onHighlight(c, note)}
+                onPointerDown={(e) => {
+                  e.preventDefault();
+                  onHighlight(c, note);
+                }}
                 aria-label={`Save with ${c} highlight`}
               />
             ))}
@@ -94,29 +99,40 @@ export function SelectionPopover({
             <button
               key={c}
               className={`annot-swatch annot-${c}`}
-              onClick={() => onHighlight(c)}
+              // pointerdown + preventDefault: acts before the touch/click
+              // collapses the selection, so the highlight actually applies.
+              onPointerDown={(e) => {
+                e.preventDefault();
+                onHighlight(c);
+              }}
               aria-label={`Highlight ${c}`}
             />
           ))}
           <button
             className="icon-btn"
-            onClick={() => setNoting(true)}
+            onPointerDown={(e) => {
+              e.preventDefault();
+              setNoting(true);
+            }}
             aria-label="Highlight with note"
             title="Highlight + note"
           >
             <NotebookPen size={15} strokeWidth={1.5} />
           </button>
           {onAsk && (
-            <button
-              className="annot-act annot-ask"
-              onMouseDown={(e) => {
-                e.preventDefault();
-                onAsk();
-              }}
-              title="Ask Steven about this passage"
-            >
-              Ask Steven
-            </button>
+            <>
+              <span className="annot-popover-sep" />
+              <button
+                className="annot-ask"
+                onPointerDown={(e) => {
+                  e.preventDefault();
+                  onAsk();
+                }}
+                title="Ask about this passage"
+              >
+                <Sparkles size={13} strokeWidth={1.75} /> Ask
+              </button>
+            </>
           )}
         </div>
       )}

@@ -125,6 +125,86 @@ def run_pipeline(db: Session, document_id: int, job_id: int | None) -> None:
 # ── Stage 1: structure ────────────────────────────────────────────────────
 
 
+def parse_source_path(doc: Document) -> Path:
+    """The file the extraction pipeline reads: the spread-split normalized PDF
+    when present, else the true original. The 'Original' view/download must NOT
+    use this — it always serves doc.storage_path."""
+    if doc.kind == DocumentKind.pdf:
+        norm = files.resolve(files.normalized_path(doc.id))
+        if norm.exists():
+            return norm
+    return files.resolve(doc.storage_path)
+
+
+def _ensure_normalized_pdf(doc: Document) -> str:
+    """Write storage/normalized/<id>.pdf when the source PDF needs a normalized
+    copy for extraction, and return a cache tag naming the transformation the
+    parse actually reads:
+      'spread' — split two-page spreads into portrait pages (user opt-in;
+                 any page rotation is baked upright as part of the split);
+      'rot'    — page rotation baked upright (no split) so parse + render + bbox
+                 share one coordinate space and region overlays stay aligned;
+      'orig'   — no normalization; extraction reads the untouched upload;
+      'na'     — not a PDF.
+    Under 'auto' we detect spreads and record `detected_layout` as a UI hint but
+    never cut the file automatically. The tag (not `detected_layout`) keys the
+    parse cache so an uncut auto-detected spread and an opted-in split — which
+    read different source bytes — never collide."""
+    if doc.kind != DocumentKind.pdf:
+        return "na"
+    from manabi_server.processing import layout
+
+    target = files.resolve(files.normalized_path(doc.id))
+
+    def _finish_no_split(src, detected: str) -> str:
+        """Bake rotation into the normalized file when any page is rotated, else
+        remove it and read the original. Returns the cache tag ('rot'/'orig')."""
+        doc.detected_layout = detected
+        baked = layout.normalize_rotation(src)
+        if baked is None:
+            target.unlink(missing_ok=True)
+            return "orig"
+        try:
+            target.parent.mkdir(parents=True, exist_ok=True)
+            tmp = target.with_suffix(".pdf.tmp")
+            baked.save(str(tmp))
+            tmp.replace(target)
+        finally:
+            baked.close()
+        log.info("baked page rotation upright for doc %s", doc.id)
+        return "rot"
+
+    import pymupdf
+
+    with pymupdf.open(files.resolve(doc.storage_path)) as src:
+        force = doc.page_layout == "spread"
+        if doc.page_layout == "single":
+            return _finish_no_split(src, "single")
+        # Native-text PDFs are never spreads (skip the whole-doc rasterization).
+        if not force and layout.has_native_text(src):
+            return _finish_no_split(src, "single")
+        is_spread_detected, gutters = layout.detect_spread(src)
+        if not force:
+            # 'auto' → only hint; the user cuts explicitly via the layout control.
+            return _finish_no_split(src, "spread" if is_spread_detected else "single")
+        # Opted in: guarantee a cut on every page (centre where no clean gutter).
+        gutters = [
+            g if g is not None else pg.rect.width / 2
+            for g, pg in zip(gutters, src, strict=False)
+        ]
+        doc.detected_layout = "spread"
+        out = layout.split_spread_pdf(src, gutters)
+        try:
+            target.parent.mkdir(parents=True, exist_ok=True)
+            tmp = target.with_suffix(".pdf.tmp")
+            out.save(str(tmp))
+            tmp.replace(target)
+        finally:
+            out.close()
+    log.info("split doc %s into portrait pages (user-selected spread)", doc.id)
+    return "spread"
+
+
 def _stage_structure(db: Session, doc: Document) -> None:
     # wipe-and-redo (also removes dependent chunks via cascade-by-hand)
     db.execute(delete(Chunk).where(Chunk.document_id == doc.id))
@@ -132,15 +212,34 @@ def _stage_structure(db: Session, doc: Document) -> None:
     db.execute(delete(DocumentPage).where(DocumentPage.document_id == doc.id))
     db.commit()
 
-    source = files.resolve(doc.storage_path)
-    parsed = _docling_parse(source, cache_key=doc.content_hash)
-    parsed["elements"] = _fix_reading_order(parsed["elements"])
+    # Normalize the source first (split spreads and/or bake page rotation
+    # upright); every stage below then reads the normalized file so its 1:1
+    # page_no and upright coordinate space hold.
+    norm_tag = _ensure_normalized_pdf(doc)
+    source = parse_source_path(doc)
+    # Separator must be filesystem-safe (no ':' — invalid on Windows). The tag
+    # names the exact source transformation the parse reads (orig/rot/spread),
+    # so different sources never share a cache entry.
+    parsed = _docling_parse(source, cache_key=f"{doc.content_hash}-{norm_tag}")
+    parsed["elements"] = _fix_reading_order(
+        parsed["elements"], aggressive_columns=doc.detected_layout == "spread"
+    )
     parsed["elements"] = _strip_boilerplate(parsed["elements"])
+    if doc.detected_layout == "spread":
+        # Running heads on scanned books OCR differently each page, defeating
+        # exact-repeat stripping — remove them by position instead.
+        parsed["elements"] = _strip_margin_repeats(parsed["elements"])
 
     notes_by_page: dict[int, str] = {}
     titles_by_page: dict[int, str] = {}
     if doc.kind == DocumentKind.pptx:
         notes_by_page, titles_by_page = _pptx_notes_and_titles(source)
+    else:
+        # Derive page titles from SURVIVING headings (post-boilerplate strip),
+        # so a repeated running head can never become a page title/heading_path.
+        for el in parsed["elements"]:
+            if el["type"] == "heading" and el["text"]:
+                titles_by_page.setdefault(el["page_no"], el["text"][:512])
 
     page_count = max(
         [p for p in parsed["pages"]] + list(notes_by_page) + list(titles_by_page),
@@ -151,7 +250,7 @@ def _stage_structure(db: Session, doc: Document) -> None:
         page = DocumentPage(
             document_id=doc.id,
             page_no=page_no,
-            title=titles_by_page.get(page_no) or parsed["titles"].get(page_no),
+            title=titles_by_page.get(page_no),
             speaker_notes=notes_by_page.get(page_no),
         )
         db.add(page)
@@ -212,17 +311,99 @@ def _strip_boilerplate(elements: list[dict]) -> list[dict]:
     return kept
 
 
+MARGIN_REPEAT_TEXT_MAX = 60      # running heads / page numbers are short
+MARGIN_REPEAT_PAGE_RATIO = 0.4   # …and appear on a large fraction of pages
+
+
+def _strip_margin_repeats(elements: list[dict]) -> list[dict]:
+    """Drop the top-most and/or bottom-most short element on each page when that
+    position repeats across the document — running heads and page numbers on
+    scanned books. Position-based, so it catches OCR variants that exact-text
+    boilerplate stripping misses. Spread-gated by the caller (never PPTX)."""
+    by_page: dict[int, list[dict]] = {}
+    for el in elements:
+        by_page.setdefault(el["page_no"], []).append(el)
+    if len(by_page) < 5:
+        return elements
+
+    top_ids: set[int] = set()
+    bottom_ids: set[int] = set()
+    top_hits = bottom_hits = 0
+    for items in by_page.values():
+        boxed = [el for el in items if el.get("bbox")]
+        if len(boxed) < 3:
+            continue
+        # bottom-left origin: larger t = higher on the page
+        topmost = max(boxed, key=lambda el: el["bbox"]["t"])
+        bottommost = min(boxed, key=lambda el: el["bbox"]["t"])
+        if len(topmost.get("text") or "") <= MARGIN_REPEAT_TEXT_MAX:
+            top_ids.add(id(topmost))
+            top_hits += 1
+        if len(bottommost.get("text") or "") <= MARGIN_REPEAT_TEXT_MAX:
+            bottom_ids.add(id(bottommost))
+            bottom_hits += 1
+
+    pages = len(by_page)
+    strip: set[int] = set()
+    if top_hits / pages >= MARGIN_REPEAT_PAGE_RATIO:
+        strip |= top_ids
+    if bottom_hits / pages >= MARGIN_REPEAT_PAGE_RATIO:
+        strip |= bottom_ids
+    if not strip:
+        return elements
+    kept = [el for el in elements if id(el) not in strip]
+    log.info("stripped %d margin running-heads/footers", len(elements) - len(kept))
+    return kept
+
+
 INVERSION_TOLERANCE_PTS = 5
 # Scrambled OCR pages measure ~20%+; genuine multi-column pages have one
 # inversion per column break (a few % with realistic element counts).
 INVERSION_RATE_THRESHOLD = 0.15
+# A column gap must be at least this fraction of the content width to count.
+COLUMN_GAP_MIN_FRAC = 0.12
+# Elements wider than this fraction of content width span columns (headings,
+# tables, figures) and act as row separators rather than column members.
+SPAN_WIDTH_FRAC = 0.6
 
 
-def _fix_reading_order(elements: list[dict]) -> list[dict]:
-    """Docling occasionally scrambles OCR-page element order. Detect pages
-    whose element sequence inverts vertically too often and re-sort those
-    pages by physical position (top-to-bottom, left-to-right). Correctly
-    ordered pages — including multi-column native parses — are untouched."""
+def _detect_column_split(boxed: list[dict], content_l: float, content_r: float) -> float | None:
+    """If a page reads as two columns, return the x that separates them, else
+    None. Looks for a wide gap between element centres in the middle of the
+    content, with real text on both sides (so figures/tables don't trip it)."""
+    width = content_r - content_l
+    if width <= 0:
+        return None
+    centers = sorted(
+        (el["bbox"]["l"] + el["bbox"]["r"]) / 2
+        for el in boxed
+        if (el["bbox"]["r"] - el["bbox"]["l"]) < width * SPAN_WIDTH_FRAC
+    )
+    if len(centers) < 4:
+        return None
+    best_gap, best_mid = 0.0, None
+    for a, b in zip(centers, centers[1:], strict=False):
+        mid = (a + b) / 2
+        if content_l + width * 0.2 < mid < content_l + width * 0.8 and (b - a) > best_gap:
+            best_gap, best_mid = b - a, mid
+    if best_mid is None or best_gap < width * COLUMN_GAP_MIN_FRAC:
+        return None
+    left = sum(1 for c in centers if c < best_mid)
+    right = len(centers) - left
+    return best_mid if left >= 2 and right >= 2 else None
+
+
+def _fix_reading_order(
+    elements: list[dict], aggressive_columns: bool = False
+) -> list[dict]:
+    """Repair scrambled per-page element order from OCR/layout analysis.
+
+    Two-column pages (common in scanned books) are ordered column-by-column,
+    top-to-bottom — a plain top-to-bottom sort would interleave the columns.
+    But re-ordering a native PDF that docling already got right is risky, so
+    column ordering only runs when `aggressive_columns` (spread scans) OR the
+    page's element sequence already looks scrambled (high inversion rate).
+    Single-column pages keep the same conservative gate."""
     by_page: dict[int, list[dict]] = {}
     for el in elements:
         by_page.setdefault(el["page_no"], []).append(el)
@@ -231,26 +412,51 @@ def _fix_reading_order(elements: list[dict]) -> list[dict]:
     for page_no in sorted(by_page):
         items = by_page[page_no]
         boxed = [el for el in items if el.get("bbox")]
-        if len(boxed) >= 4:
-            inversions = 0
-            pairs = 0
-            for prev, nxt in zip(boxed, boxed[1:], strict=False):
-                pairs += 1
-                # bottom-left origin: larger t = higher on the page
-                if nxt["bbox"]["t"] > prev["bbox"]["t"] + INVERSION_TOLERANCE_PTS:
-                    inversions += 1
-            if pairs and inversions / pairs > INVERSION_RATE_THRESHOLD:
-                items = sorted(
-                    items,
-                    key=lambda el: (
-                        -(el["bbox"]["t"] if el.get("bbox") else 0),
-                        el["bbox"]["l"] if el.get("bbox") else 0,
-                    ),
-                )
-                log.info(
-                    "re-sorted scrambled page %s (%d/%d inversions)",
-                    page_no, inversions, pairs,
-                )
+        if len(boxed) < 4:
+            fixed.extend(items)
+            continue
+
+        inversions = sum(
+            1
+            for prev, nxt in zip(boxed, boxed[1:], strict=False)
+            if nxt["bbox"]["t"] > prev["bbox"]["t"] + INVERSION_TOLERANCE_PTS
+        )
+        pairs = max(1, len(boxed) - 1)
+        scrambled = inversions / pairs > INVERSION_RATE_THRESHOLD
+
+        content_l = min(el["bbox"]["l"] for el in boxed)
+        content_r = max(el["bbox"]["r"] for el in boxed)
+        split = _detect_column_split(boxed, content_l, content_r)
+
+        if split is not None and (aggressive_columns or scrambled):
+            # Column-aware: left column fully (top→bottom), then right column.
+            # Full-width spanning elements (headings) fall into the left band by
+            # their centre, keeping them near their vertical position.
+            width = content_r - content_l
+
+            def col_key(el: dict, split: float = split, width: float = width) -> tuple:
+                if not el.get("bbox"):
+                    return (0, 0.0)
+                b = el["bbox"]
+                if (b["r"] - b["l"]) >= width * SPAN_WIDTH_FRAC:
+                    return (0, -b["t"])  # spanning row stays in the left flow
+                center = (b["l"] + b["r"]) / 2
+                return (0 if center < split else 1, -b["t"])
+
+            items = sorted(items, key=col_key)
+            log.info("ordered page %s as two columns (split x≈%.0f)", page_no, split)
+        elif scrambled:
+            items = sorted(
+                items,
+                key=lambda el: (
+                    -(el["bbox"]["t"] if el.get("bbox") else 0),
+                    el["bbox"]["l"] if el.get("bbox") else 0,
+                ),
+            )
+            log.info(
+                "re-sorted scrambled page %s (%d/%d inversions)",
+                page_no, inversions, pairs,
+            )
         fixed.extend(items)
     return fixed
 
@@ -414,7 +620,7 @@ def _pptx_notes_and_titles(source: Path) -> tuple[dict[int, str], dict[int, str]
 
 
 def _stage_render(db: Session, doc: Document, job: Job | None) -> None:
-    source = files.resolve(doc.storage_path)
+    source = parse_source_path(doc)  # normalized (split) PDF if present
     pdf_path = source
 
     if doc.kind == DocumentKind.pptx:
@@ -424,7 +630,14 @@ def _stage_render(db: Session, doc: Document, job: Job | None) -> None:
             return  # non-fatal: pages keep render_path NULL
         pdf_path = converted
 
+    # Drop renders from a previous extraction (a re-split can change the page
+    # count, e.g. spread→single), so no orphaned high-numbered PNGs linger.
+    import shutil
+
     import fitz  # PyMuPDF
+
+    for sub in (f"renders/{doc.id}", f"thumbs/{doc.id}"):
+        shutil.rmtree(files.resolve(sub), ignore_errors=True)
 
     pages = (
         db.execute(
@@ -460,7 +673,7 @@ def _stage_render(db: Session, doc: Document, job: Job | None) -> None:
             if page_no % 5 == 0 or page_no == total:
                 pct = 45 + int(40 * page_no / total)
                 _progress(db, job, pct, f"Rendering pages {page_no}/{total}")
-        doc.page_count = max(doc.page_count or 0, total)
+        doc.page_count = total
     if pdf_path != source:
         pdf_path.unlink(missing_ok=True)
     db.commit()

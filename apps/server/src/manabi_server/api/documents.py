@@ -1,7 +1,7 @@
 import hashlib
 from datetime import UTC, datetime
 
-from fastapi import APIRouter, Depends, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, Form, HTTPException, UploadFile
 from fastapi.responses import FileResponse
 from manabi_core.models import (
     Document,
@@ -54,6 +54,8 @@ class DocumentOut(BaseModel):
     error: str | None
     page_count: int | None
     ai_included: bool
+    page_layout: str
+    detected_layout: str | None
     job_id: int | None = None
     progress_pct: int | None = None
     progress_note: str | None = None
@@ -78,6 +80,8 @@ def _doc_out(
         error=doc.error,
         page_count=doc.page_count,
         ai_included=doc.ai_included,
+        page_layout=doc.page_layout,
+        detected_layout=doc.detected_layout,
         job_id=job_id,
         progress_pct=progress[0] if progress else None,
         progress_note=progress[1] if progress else None,
@@ -179,10 +183,16 @@ async def list_documents(
 @router.post("/modules/{module_id}/documents", dependencies=[Depends(require_csrf)])
 async def upload_document(
     file: UploadFile,
+    # 'full' (default: extract + AI) or 'render_only' (store + view pages only,
+    # e.g. a syllabus uploaded to a course's files). Absent → 'full', so the
+    # existing module-upload form is unaffected.
+    processing_mode: str = Form("full"),
     module: Module = Depends(get_owned_module),
     user: User = Depends(get_default_user),
     db: AsyncSession = Depends(get_db),
 ) -> DocumentOut:
+    if processing_mode not in ("full", "render_only"):
+        raise HTTPException(status_code=422, detail="Invalid processing_mode")
     ext = (file.filename or "").rsplit(".", 1)[-1].lower()
     if ext not in ("pdf", "pptx"):
         raise HTTPException(status_code=422, detail="Only PDF and PPTX files are supported")
@@ -222,6 +232,9 @@ async def upload_document(
         storage_path=rel_path,
         content_hash=content_hash,
         byte_size=len(data),
+        processing_mode=processing_mode,
+        # render-only files (syllabi) are view-only: never fed to AI generation.
+        ai_included=processing_mode == "full",
     )
     db.add(doc)
     await db.flush()
@@ -275,7 +288,40 @@ async def _page_file(
     rel = (page.thumb_path if thumb else page.render_path) if page else None
     if rel is None:
         raise HTTPException(status_code=404, detail="No render for this page")
-    return FileResponse(files.resolve(rel), media_type="image/png")
+    # Renders are rewritten in place on re-extraction (same URL). no-cache forces
+    # the browser to revalidate against the ETag so a re-split never shows stale
+    # full-spread images.
+    return FileResponse(
+        files.resolve(rel),
+        media_type="image/png",
+        headers={"Cache-Control": "no-cache"},
+    )
+
+
+class ReaderOut(BaseModel):
+    html: str
+
+
+@router.get("/documents/{document_id}/reader")
+async def document_reader(
+    doc: Document = Depends(_get_owned_document), db: AsyncSession = Depends(get_db)
+) -> ReaderOut:
+    """Whole-document continuous text: all pages merged, cross-page paragraphs
+    stitched into one flow."""
+    from manabi_server.processing.text_html import merge_pages_html
+
+    page_htmls = (
+        (
+            await db.execute(
+                select(DocumentPage.text_html)
+                .where(DocumentPage.document_id == doc.id)
+                .order_by(DocumentPage.page_no)
+            )
+        )
+        .scalars()
+        .all()
+    )
+    return ReaderOut(html=merge_pages_html(list(page_htmls)))
 
 
 @router.get("/documents/{document_id}/pages/{page_no}/render")
@@ -325,6 +371,37 @@ async def retry_processing(
 ) -> DocumentOut:
     if doc.extract_status not in (ExtractStatus.failed, ExtractStatus.ready):
         raise HTTPException(status_code=409, detail="Document is still processing")
+    doc.extract_status = ExtractStatus.pending
+    doc.extract_stage = None
+    doc.error = None
+    job = await _enqueue_processing(db, user.id, doc)
+    await db.commit()
+    return _doc_out(doc, job.id)
+
+
+class LayoutIn(BaseModel):
+    page_layout: str  # 'auto' | 'single' | 'spread'
+
+
+@router.post("/documents/{document_id}/layout", dependencies=[Depends(require_csrf)])
+async def set_page_layout(
+    data: LayoutIn,
+    doc: Document = Depends(_get_owned_document),
+    user: User = Depends(get_default_user),
+    db: AsyncSession = Depends(get_db),
+) -> DocumentOut:
+    """Change how a scanned PDF's pages are split, then re-extract. Existing
+    highlights are anchored by (page, quote) — a layout change can shift their
+    page, so the client should warn before calling this."""
+    if data.page_layout not in ("auto", "single", "spread"):
+        raise HTTPException(status_code=422, detail="Invalid page_layout")
+    if doc.kind != DocumentKind.pdf:
+        raise HTTPException(status_code=422, detail="Page layout applies to PDFs only")
+    if doc.extract_status not in (ExtractStatus.failed, ExtractStatus.ready):
+        raise HTTPException(status_code=409, detail="Document is still processing")
+    doc.page_layout = data.page_layout
+    # Bust the normalized cache so the new layout takes effect on re-extract.
+    files.resolve(files.normalized_path(doc.id)).unlink(missing_ok=True)
     doc.extract_status = ExtractStatus.pending
     doc.extract_stage = None
     doc.error = None

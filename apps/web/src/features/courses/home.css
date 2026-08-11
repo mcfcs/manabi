@@ -56,6 +56,64 @@
   flex-shrink: 0;
 }
 
+/* Canvas-style cover banner: card stacks vertically, image on top */
+.course-card:has(.course-cover) {
+  flex-direction: column;
+}
+.course-cover {
+  width: 100%;
+  height: 88px;
+  overflow: hidden;
+  flex-shrink: 0;
+  background: var(--surface);
+}
+.course-cover img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.course-drag {
+  cursor: grab;
+  color: var(--ink-faint);
+  touch-action: none;
+}
+.course-drag:active {
+  cursor: grabbing;
+}
+.course-card-wrap.dragging {
+  cursor: grabbing;
+}
+
+/* Cover control in the course dialog */
+.course-cover-edit {
+  display: flex;
+  align-items: center;
+  gap: var(--s-3);
+}
+.course-cover-preview,
+.course-cover-empty {
+  width: 120px;
+  height: 68px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--rule);
+  object-fit: cover;
+  flex-shrink: 0;
+}
+.course-cover-empty {
+  display: grid;
+  place-items: center;
+  font-size: 12px;
+  color: var(--ink-faint);
+  background: var(--surface);
+}
+.course-cover-actions {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-2);
+}
+
 .course-card-body {
   display: flex;
   flex-direction: column;

@@ -30,9 +30,35 @@ def _startup_embedding_sweep() -> None:
         logging.getLogger("manabi").exception("embedding sweep failed")
 
 
+def _reap_orphans() -> None:
+    """Any cpu procrastinate job left 'doing' at startup is orphaned (its worker
+    died mid-extraction). Requeue it — document processing resumes from its
+    stage checkpoint, so this is cheap and safe."""
+    from sqlalchemy import text
+
+    from manabi_server.jobs.tasks import db_session
+
+    try:
+        with db_session() as db:
+            res = db.execute(
+                text(
+                    "UPDATE procrastinate_jobs SET status='todo' "
+                    "WHERE status='doing' AND queue_name='cpu'"
+                )
+            )
+            if res.rowcount:
+                logging.getLogger("manabi").info(
+                    "requeued %d orphaned cpu job(s)", res.rowcount
+                )
+            db.commit()
+    except Exception:  # noqa: BLE001 — best-effort, never block startup
+        logging.getLogger("manabi").warning("cpu orphan reap failed")
+
+
 async def main() -> None:
     logging.basicConfig(level=logging.INFO)
     await asyncio.to_thread(_startup_embedding_sweep)
+    await asyncio.to_thread(_reap_orphans)
     async with app.open_async():
         # 2 = two documents can parse in parallel (sync tasks run in threads)
         await app.run_worker_async(queues=["cpu"], concurrency=2)

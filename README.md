@@ -10,7 +10,9 @@ materials, with a privately hosted LLM doing the heavy lifting — everything
   renders → structure-aware chunks → pgvector embeddings. Viewer with text
   layer, tables, highlights, annotations, native "Original" PDF mode
   (browser Ctrl+F). Per-document AI include/exclude; render-only mode for
-  files that shouldn't feed the AI.
+  files that shouldn't feed the AI. **Scanned two-page-spread books are
+  auto-detected and split** into single logical pages (per-document
+  Auto/Single/Spread override), with column-aware reading order.
 - **AI artifacts** — summaries (coverage-tracked key terms/acronyms),
   flashcards (Anki .apkg export), quizzes with attempt history, all with
   page-cited claims, staleness detection, and version history.
@@ -21,7 +23,12 @@ materials, with a privately hosted LLM doing the heavy lifting — everything
   passage.
 - **Chat** — per-module threads grounded in the materials (says so honestly
   when they don't cover it). Per-thread **source scoping** (pick specific
-  files/note sections), Steven persona toggle, spoken replies, voice input.
+  files/note sections), a **"material only" vs "material + reasoning"** toggle,
+  Steven persona toggle, spoken replies, voice input. **Highlight any passage
+  in the viewer** (or "Ask about this page") to open a Steven-taught
+  discussion anchored to that source — saved, listed in the viewer, and shared
+  with the module's chat. Every AI generation (summary/cards/quiz/lecture/chat)
+  can be **cancelled** mid-run.
 - **Notes** — multiple sections per module (Google-Docs-style sidebar),
   Tiptap editor with tables/checklists/math/**images**, autosave + snapshots,
   .docx export. Notes feed chat context ("According to your notes…").
@@ -74,6 +81,10 @@ keys (see below).
   allow service-worker push notifications and PWA install on secure (HTTPS)
   origins. The scheme is what matters, not the port — `http://…:56690` can
   never do push, while any `https://…` URL can.
+- Typing the old `http://…ts.net:56690` address still works: a middleware in
+  `main.py` 308-redirects any plain-http `.ts.net` request to the bare HTTPS
+  URL (requests proxied by `tailscale serve` arrive with
+  `X-Forwarded-Proto: https` and pass through; localhost is untouched).
 
 ### Running more HTTPS sites on this machine
 

@@ -4,7 +4,7 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 
 from manabi_server.api import (
@@ -52,6 +52,25 @@ app = FastAPI(
     openapi_url="/api/openapi.json",
     lifespan=lifespan,
 )
+
+
+@app.middleware("http")
+async def redirect_tailnet_http_to_https(request, call_next):
+    """Plain-http tailnet URLs (http://…ts.net:56690) hop to the HTTPS twin
+    served by `tailscale serve` — push/PWA only work on secure origins.
+    Requests proxied BY serve arrive here as http with X-Forwarded-Proto:
+    https, so they pass through; localhost/LAN/IP hosts are untouched."""
+    host = request.headers.get("host", "")
+    if (
+        ".ts.net" in host
+        and request.url.scheme == "http"
+        and request.headers.get("x-forwarded-proto") != "https"
+    ):
+        target = f"https://{host.split(':')[0]}{request.url.path}"
+        if request.url.query:
+            target += f"?{request.url.query}"
+        return RedirectResponse(target, status_code=308)
+    return await call_next(request)
 
 app.include_router(health.router)
 app.include_router(user.router)

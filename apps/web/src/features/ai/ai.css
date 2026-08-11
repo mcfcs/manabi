@@ -60,6 +60,20 @@
   font-size: 12px;
 }
 
+.job-cancel {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  font-size: 12px;
+  color: var(--accent-red);
+}
+.watch-toggle + .job-cancel {
+  margin-left: var(--s-2);
+}
+.chat-stop {
+  margin-top: var(--s-2);
+}
+
 .job-preview {
   margin: 0;
   max-height: 240px;

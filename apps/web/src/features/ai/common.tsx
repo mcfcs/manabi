@@ -1,6 +1,6 @@
-import { useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
-import { AlertTriangle, Loader2 } from "lucide-react";
+import { AlertTriangle, Loader2, X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 
 import {
@@ -9,6 +9,7 @@ import {
   type CitationOut,
   type HealthOut,
   type JobOut,
+  type SettingsOut,
   type Staleness,
 } from "../../lib/api";
 import "./ai.css";
@@ -73,6 +74,39 @@ export function useGenerationJob(
   return { start: setJobId, job: job.data, running };
 }
 
+/** Cancel a running/queued generation job. Invalidates the active-jobs and
+ * job caches so the spinner clears (works even for orphaned jobs). */
+export function useCancelJob() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (jobId: number) => api.post(`/api/jobs/${jobId}/cancel`),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["active-jobs"] });
+      qc.invalidateQueries({ queryKey: ["job"] });
+    },
+  });
+}
+
+/** Chat voice preference: the Settings `chat_autovoice` toggle is the default;
+ * the per-conversation toggle overrides it for the session (localStorage). */
+export function useChatVoice(): [boolean, (v: boolean) => void] {
+  const settings = useQuery({
+    queryKey: ["settings"],
+    queryFn: () => api.get<SettingsOut>("/api/settings"),
+    staleTime: 60_000,
+  });
+  const [override, setOverride] = useState<boolean | null>(() => {
+    const v = localStorage.getItem("manabi-chat-voice");
+    return v === null ? null : v === "1";
+  });
+  const on = override ?? settings.data?.chat_autovoice ?? false;
+  const set = (v: boolean) => {
+    localStorage.setItem("manabi-chat-voice", v ? "1" : "0");
+    setOverride(v);
+  };
+  return [on, set];
+}
+
 export function useAiOnline(): boolean {
   const health = useQuery({
     queryKey: ["health"],
@@ -134,6 +168,7 @@ export function StalenessBadge({ staleness }: { staleness: Staleness }) {
 export function JobProgress({ job }: { job: JobOut | undefined }) {
   const [watching, setWatching] = useState(false);
   const tailRef = useRef<HTMLPreElement>(null);
+  const cancel = useCancelJob();
 
   useEffect(() => {
     if (watching && tailRef.current) {
@@ -142,6 +177,7 @@ export function JobProgress({ job }: { job: JobOut | undefined }) {
   }, [watching, job?.preview]);
 
   if (!job) return null;
+  const active = job.status === "queued" || job.status === "running";
   return (
     <div className="job-progress-box">
       <div className="job-progress">
@@ -153,6 +189,16 @@ export function JobProgress({ job }: { job: JobOut | undefined }) {
         <button className="link-btn watch-toggle" onClick={() => setWatching((v) => !v)}>
           {watching ? "hide generation" : "watch generation"}
         </button>
+        {active && (
+          <button
+            className="link-btn job-cancel"
+            onClick={() => cancel.mutate(job.id)}
+            disabled={cancel.isPending}
+            title="Cancel this generation"
+          >
+            <X size={13} strokeWidth={2} /> cancel
+          </button>
+        )}
       </div>
       {watching && (
         <pre ref={tailRef} className="job-preview">

@@ -45,11 +45,51 @@ async def _heartbeat_loop() -> None:
         await asyncio.sleep(settings.heartbeat_interval_seconds)
 
 
+async def _reap_orphans() -> None:
+    """Single-concurrency gpu worker: any procrastinate job left 'doing' at
+    startup is orphaned (its worker died). Release it and fail the matching
+    manabi job so the UI stops spinning. gpu work isn't auto-retried — it's
+    expensive; the user re-triggers if they still want it."""
+    try:
+        async with session_factory()() as db:
+            rows = (
+                await db.execute(
+                    text(
+                        "SELECT id FROM procrastinate_jobs "
+                        "WHERE status='doing' AND queue_name='gpu'"
+                    )
+                )
+            ).all()
+            orphan_ids = [r[0] for r in rows]
+            if not orphan_ids:
+                return
+            await db.execute(
+                text(
+                    "UPDATE jobs SET status='failed', "
+                    "error='interrupted — worker restarted', finished_at=now() "
+                    "WHERE procrastinate_job_id = ANY(:ids) AND status='running'"
+                ),
+                {"ids": orphan_ids},
+            )
+            await db.execute(
+                text(
+                    "UPDATE procrastinate_jobs SET status='aborted' "
+                    "WHERE id = ANY(:ids) AND status='doing'"
+                ),
+                {"ids": orphan_ids},
+            )
+            await db.commit()
+            log.info("reaped %d orphaned gpu job(s)", len(orphan_ids))
+    except Exception as exc:  # noqa: BLE001 — best-effort, never block startup
+        log.warning("orphan reap failed: %s", exc)
+
+
 async def main() -> None:
     logging.basicConfig(level=logging.INFO)
     heartbeat = asyncio.create_task(_heartbeat_loop())
     try:
         async with app.open_async():
+            await _reap_orphans()
             await app.run_worker_async(queues=["gpu"], concurrency=1)
     finally:
         heartbeat.cancel()

@@ -1,5 +1,6 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { type FormEvent, useState } from "react";
+import { ImagePlus, Trash2 } from "lucide-react";
+import { type FormEvent, useRef, useState } from "react";
 
 import { Modal } from "../../components/Modal";
 import {
@@ -30,6 +31,9 @@ export function CourseDialog({
   const [meetingUrl, setMeetingUrl] = useState(course?.meeting_url ?? "");
   const [accent, setAccent] = useState(course?.accent_color ?? ACCENTS[1]);
   const [confirming, setConfirming] = useState<DeleteConsequences | null>(null);
+  const [cover, setCover] = useState(course?.cover_image_url ?? null);
+  const [coverBusy, setCoverBusy] = useState(false);
+  const coverInput = useRef<HTMLInputElement>(null);
 
   const invalidate = () => {
     queryClient.invalidateQueries({ queryKey: ["courses"] });
@@ -47,6 +51,35 @@ export function CourseDialog({
       onClose();
     },
   });
+
+  async function uploadCover(fileList: FileList | null) {
+    if (!course || !fileList?.[0]) return;
+    setCoverBusy(true);
+    try {
+      const form = new FormData();
+      form.append("file", fileList[0]);
+      const updated = await api.postForm<CourseOut>(
+        `/api/courses/${course.id}/cover`,
+        form,
+      );
+      setCover(updated.cover_image_url);
+      invalidate();
+    } finally {
+      setCoverBusy(false);
+    }
+  }
+
+  async function removeCover() {
+    if (!course) return;
+    setCoverBusy(true);
+    try {
+      await api.delete(`/api/courses/${course.id}/cover`);
+      setCover(null);
+      invalidate();
+    } finally {
+      setCoverBusy(false);
+    }
+  }
 
   const remove = useMutation({
     mutationFn: (confirm: boolean) =>
@@ -177,6 +210,49 @@ export function CourseDialog({
             ))}
           </div>
         </div>
+        {course && (
+          <div>
+            <span className="field-label">Cover image (optional)</span>
+            <div className="course-cover-edit">
+              {cover ? (
+                <img src={cover} alt="Course cover" className="course-cover-preview" />
+              ) : (
+                <div className="course-cover-empty">No cover</div>
+              )}
+              <div className="course-cover-actions">
+                <button
+                  type="button"
+                  className="btn"
+                  disabled={coverBusy}
+                  onClick={() => coverInput.current?.click()}
+                >
+                  <ImagePlus size={14} strokeWidth={1.75} />{" "}
+                  {cover ? "Replace" : "Upload"}
+                </button>
+                {cover && (
+                  <button
+                    type="button"
+                    className="btn"
+                    disabled={coverBusy}
+                    onClick={removeCover}
+                  >
+                    <Trash2 size={14} strokeWidth={1.75} /> Remove
+                  </button>
+                )}
+              </div>
+              <input
+                ref={coverInput}
+                type="file"
+                accept="image/png,image/jpeg,image/gif,image/webp"
+                hidden
+                onChange={(e) => {
+                  uploadCover(e.target.files);
+                  e.target.value = "";
+                }}
+              />
+            </div>
+          </div>
+        )}
         {save.isError && <p className="error-text">{(save.error as Error).message}</p>}
         <div className="modal-actions">
           {course && (

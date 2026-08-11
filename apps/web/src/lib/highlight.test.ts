@@ -1,55 +1,157 @@
 import { describe, expect, it } from "vitest";
 
-import { highlightAnnotations, highlightTerms } from "./highlight";
+import {
+  type AnnotationMark,
+  applyHighlights,
+  clearHighlights,
+  countTermsPresent,
+  highlightHtml,
+} from "./highlight";
 
-describe("highlightTerms", () => {
-  it("wraps matches only in text segments, never inside tags", () => {
-    const html = '<p class="attenuation">Signal attenuation grows.</p>';
-    const out = highlightTerms(html, ["attenuation"]);
-    expect(out).toContain('class="attenuation"'); // attribute untouched
-    expect(out).toContain('<mark class="term-mark">attenuation</mark> grows');
+function root(html: string): HTMLElement {
+  const el = document.createElement("div");
+  el.className = "viewer-text-content";
+  el.innerHTML = html;
+  return el;
+}
+
+describe("applyHighlights — terms", () => {
+  it("wraps whole-word matches only", () => {
+    const el = root("<p>Signal attenuation grows.</p>");
+    applyHighlights(el, ["attenuation"], []);
+    const marks = el.querySelectorAll("mark.term-mark");
+    expect(marks).toHaveLength(1);
+    expect(marks[0].textContent).toBe("attenuation");
+  });
+
+  it("does NOT match a term inside a larger word (IRRI ≠ irrigated)", () => {
+    const el = root("<p>The NPA and IRRI worked on irrigated land.</p>");
+    applyHighlights(el, ["IRRI", "NPA"], []);
+    const marks = [...el.querySelectorAll("mark.term-mark")].map((m) => m.textContent);
+    // NPA + the standalone IRRI, but NOT the "irri" inside "irrigated"
+    expect(marks).toEqual(["NPA", "IRRI"]);
+    expect(el.innerHTML).toContain("irrigated");
+    expect(el.querySelectorAll("mark").length).toBe(2);
+  });
+
+  it("matches a term that spans an inline <b> boundary", () => {
+    const el = root("<p>the <b>New People</b>'s Army marched</p>");
+    applyHighlights(el, ["New People's Army"], []);
+    const marks = el.querySelectorAll("mark.term-mark");
+    expect(marks.length).toBeGreaterThanOrEqual(1);
+    // the full phrase is covered (possibly across wrapper fragments)
+    const text = [...marks].map((m) => m.textContent).join("");
+    expect(text.replace(/\s+/g, " ")).toContain("New People's Army");
+  });
+
+  it("does not match a term across a paragraph boundary", () => {
+    const el = root("<p>alpha</p><p>beta</p>");
+    applyHighlights(el, ["alphabeta"], []);
+    expect(el.querySelectorAll("mark").length).toBe(0);
   });
 });
 
-describe("highlightAnnotations", () => {
-  const annot = { id: 7, quote: "time-division multiplexing", color: "yellow", hasNote: true };
+describe("applyHighlights — annotations", () => {
+  const yellow: AnnotationMark = {
+    id: 7,
+    quote: "time-division multiplexing",
+    color: "yellow",
+    hasNote: true,
+  };
 
-  it("wraps the quote in a clickable mark with id and color", () => {
-    const out = highlightAnnotations("<p>Uses time-division multiplexing here.</p>", [annot]);
-    expect(out).toContain('data-annot="7"');
-    expect(out).toContain("annot-yellow");
-    expect(out).toContain("has-note");
-    expect(out).toContain(">time-division multiplexing</mark>");
+  it("wraps the quote in a clickable mark with id + color + note flag", () => {
+    const el = root("<p>Uses time-division multiplexing here.</p>");
+    applyHighlights(el, [], [yellow]);
+    const mark = el.querySelector("mark.annot") as HTMLElement;
+    expect(mark).toBeTruthy();
+    expect(mark.dataset.annot).toBe("7");
+    expect(mark.className).toContain("annot-yellow");
+    expect(mark.className).toContain("has-note");
+    expect(mark.textContent).toBe("time-division multiplexing");
   });
 
   it("marks only the first occurrence", () => {
-    const out = highlightAnnotations("<p>DS-1 and DS-1 again</p>", [
-      { id: 1, quote: "DS-1", color: "blue", hasNote: false },
-    ]);
-    expect(out.match(/<mark/g)).toHaveLength(1);
+    const el = root("<p>DS-1 and DS-1 again</p>");
+    applyHighlights(el, [], [{ id: 1, quote: "DS-1", color: "blue", hasNote: false }]);
+    expect(el.querySelectorAll("mark.annot").length).toBe(1);
   });
 
-  it("never rewrites tag internals even when the quote appears in an attribute", () => {
-    const html = '<p style="margin-left:1em">margin-left is an indent</p>';
-    const out = highlightAnnotations(html, [
-      { id: 2, quote: "margin-left", color: "green", hasNote: false },
+  it("matches a quote that spans a <b> and tolerates whitespace differences", () => {
+    // stored quote has single spaces; DOM splits across a bold word + newline
+    const el = root("<p>the villagers were\n   <b>united</b> only when threatened</p>");
+    applyHighlights(el, [], [
+      { id: 2, quote: "were united only", color: "green", hasNote: false },
     ]);
-    expect(out).toContain('style="margin-left:1em"');
-    expect(out).toContain(">margin-left</mark> is an indent");
+    const mark = el.querySelector("mark.annot");
+    expect(mark).toBeTruthy();
+    expect(mark!.textContent!.replace(/\s+/g, " ")).toBe("were united only");
   });
 
-  it("escapes regex metacharacters in quotes", () => {
-    const out = highlightAnnotations("<p>cost is $1.50 (approx)</p>", [
-      { id: 3, quote: "$1.50 (approx)", color: "red", hasNote: false },
-    ]);
-    expect(out).toContain(">$1.50 (approx)</mark>");
+  it("tolerates HTML entities decoded in the DOM (it&#x27;s ↔ it's)", () => {
+    const el = root("<p>it&#x27;s a fine day</p>");
+    applyHighlights(el, [], [{ id: 3, quote: "it's a fine", color: "red", hasNote: false }]);
+    expect(el.querySelector("mark.annot")?.textContent).toBe("it's a fine");
   });
 
-  it("leaves html unchanged when the quote no longer matches", () => {
-    const html = "<p>The text was edited.</p>";
-    const out = highlightAnnotations(html, [
-      { id: 4, quote: "vanished sentence", color: "yellow", hasNote: false },
+  it("leaves the DOM unchanged when the quote no longer matches", () => {
+    const el = root("<p>The text was edited.</p>");
+    const before = el.innerHTML;
+    applyHighlights(el, [], [{ id: 4, quote: "vanished sentence", color: "yellow", hasNote: false }]);
+    expect(el.innerHTML).toBe(before);
+  });
+});
+
+describe("applyHighlights — overlap + idempotency", () => {
+  it("annotations win over terms on overlap", () => {
+    const el = root("<p>study the attenuation curve</p>");
+    applyHighlights(
+      el,
+      ["attenuation"],
+      [{ id: 9, quote: "the attenuation curve", color: "yellow", hasNote: false }],
+    );
+    // the annotation covers 'attenuation', so no term-mark is emitted there
+    expect(el.querySelectorAll("mark.term-mark").length).toBe(0);
+    const annot = el.querySelector("mark.annot");
+    expect(annot?.textContent).toBe("the attenuation curve");
+  });
+
+  it("clearHighlights restores the original text; re-apply is stable", () => {
+    const el = root("<p>Signal attenuation grows.</p>");
+    const original = el.innerHTML;
+    applyHighlights(el, ["attenuation"], []);
+    clearHighlights(el);
+    expect(el.innerHTML).toBe(original);
+    // applyHighlights is itself idempotent (clears first)
+    applyHighlights(el, ["attenuation"], []);
+    applyHighlights(el, ["attenuation"], []);
+    expect(el.querySelectorAll("mark.term-mark").length).toBe(1);
+  });
+});
+
+describe("highlightHtml (pure string → string)", () => {
+  it("returns html with marks baked in, matching applyHighlights", () => {
+    const html = "<p>The NPA studied irrigated land.</p>";
+    const out = highlightHtml(html, ["NPA"], []);
+    expect(out).toContain('<mark class="term-mark">NPA</mark>');
+    expect(out).toContain("irrigated"); // no false substring match
+  });
+
+  it("bakes a cross-tag annotation into the string", () => {
+    const out = highlightHtml("<p>were <b>united</b> only</p>", [], [
+      { id: 1, quote: "were united only", color: "blue", hasNote: false },
     ]);
-    expect(out).toBe(html);
+    expect(out).toContain('data-annot="1"');
+    expect(out).toContain("annot-blue");
+  });
+
+  it("returns the input unchanged when nothing matches", () => {
+    const html = "<p>nothing to see</p>";
+    expect(highlightHtml(html, ["absent"], [])).toBe(html);
+  });
+});
+
+describe("countTermsPresent", () => {
+  it("counts case-insensitively", () => {
+    expect(countTermsPresent("The NPA and IRRI", ["npa", "irri", "absent"])).toBe(2);
   });
 });

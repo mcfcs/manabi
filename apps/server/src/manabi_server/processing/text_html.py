@@ -17,6 +17,54 @@ from manabi_server.storage import files
 
 USER_EDITED_MARKER = "<!--user-edited-->"
 
+_BLOCK_RE = re.compile(
+    r"<p\b[^>]*>.*?</p>|<table\b[^>]*>.*?</table>|<pre\b[^>]*>.*?</pre>",
+    re.DOTALL | re.IGNORECASE,
+)
+_INNER_P_RE = re.compile(r"(?is)^<p\b[^>]*>(.*)</p>\s*$")
+
+
+def _block_plain(block: str) -> str:
+    return html.unescape(re.sub(r"<[^>]+>", " ", block)).strip()
+
+
+def _merge_paragraphs(a: str, b: str) -> str:
+    """Splice two <p> blocks into one, dehyphenating a split word."""
+    ia = (_INNER_P_RE.sub(r"\1", a)).rstrip()
+    ib = (_INNER_P_RE.sub(r"\1", b)).lstrip()
+    if _block_plain(a).endswith("-"):
+        ia = re.sub(r"-\s*$", "", ia)
+        return f"<p>{ia}{ib}</p>"
+    return f"<p>{ia} {ib}</p>"
+
+
+def merge_pages_html(page_htmls: list[str | None]) -> str:
+    """One continuous document: every page's text_html concatenated, with a
+    paragraph that continues onto the next page joined into one flowing block
+    (so cross-page breaks don't read as info on 'the wrong page'). Pure function
+    over the ordered per-page HTML."""
+    from manabi_server.processing.textmerge import should_join
+
+    out: list[tuple[str, str]] = []  # (kind, html)
+    for text_html in page_htmls:
+        page_html = text_html or ""
+        if page_html.startswith(USER_EDITED_MARKER):
+            page_html = page_html[len(USER_EDITED_MARKER) :]
+        for m in _BLOCK_RE.finditer(page_html):
+            block = m.group(0)
+            kind = "p" if block[:2].lower() == "<p" else "other"
+            if (
+                kind == "p"
+                and out
+                and out[-1][0] == "p"
+                and should_join(_block_plain(out[-1][1]), _block_plain(block))
+            ):
+                out[-1] = ("p", _merge_paragraphs(out[-1][1], block))
+            else:
+                out.append((kind, block))
+    return "".join(b for _, b in out)
+
+
 BOLD_FLAG = 1 << 4  # PyMuPDF span flag bit for bold
 ITALIC_FLAG = 1 << 1
 MONO_FLAG = 1 << 3  # PyMuPDF: monospaced font
@@ -26,9 +74,20 @@ _MONO_FONT = ("courier", "mono", "consolas", "typewriter")
 # Postgres text columns reject NUL; some PDF fonts leak NUL/control chars
 _CONTROL_CHARS = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f]")
 
+# Runs of horizontal whitespace (spaces/tabs). PDF and OCR extraction pad
+# justified text with several spaces between words and tabs mid-line; those
+# read as ragged gaps and make selections mismatch the visible text.
+_HSPACE_RUN = re.compile(r"[ \t]+")
+
 
 def sanitize(text: str) -> str:
     return _CONTROL_CHARS.sub("", text)
+
+
+def collapse_hspace(text: str) -> str:
+    """Collapse runs of spaces/tabs to a single space. Newlines are preserved
+    so line structure survives; leading/trailing trimming is the caller's job."""
+    return _HSPACE_RUN.sub(" ", text)
 
 
 # ── Repeated-line (boilerplate) detection ─────────────────────────────────
@@ -120,10 +179,15 @@ def _pdf_page_html(page, skip: set[str] | None = None) -> str | None:
             if _is_repeat(raw_line, skip):
                 continue
             spans = []
+            prev_trailing_space = True  # start-of-line → trim any leading spaces
             for span in line.get("spans", []):
                 text = span.get("text", "")
                 if not text.strip():
                     continue
+                text = collapse_hspace(text)
+                if prev_trailing_space:
+                    text = text.lstrip(" ")  # avoid a double space across spans
+                prev_trailing_space = text.endswith(" ")
                 flags = span.get("flags", 0)
                 font = span.get("font", "").lower()
                 bold = bool(flags & BOLD_FLAG) or "bold" in font
@@ -166,7 +230,7 @@ def _elements_page_html(elements: list[DocElement]) -> str | None:
 
     def flush_run() -> None:
         for para in merge_fragments(paragraph_run):
-            escaped = html.escape(para).replace("\n", "<br>")
+            escaped = html.escape(collapse_hspace(para)).replace("\n", "<br>")
             parts.append(f"<p>{escaped}</p>")
         paragraph_run.clear()
 
@@ -182,12 +246,12 @@ def _elements_page_html(elements: list[DocElement]) -> str | None:
             continue
         if el.element_type == "heading":
             flush_run()
-            parts.append(f"<p><b>{html.escape(text)}</b></p>")
+            parts.append(f"<p><b>{html.escape(collapse_hspace(text))}</b></p>")
         elif el.element_type in ("paragraph", "text", "caption"):
             paragraph_run.append(text)
         else:
             flush_run()
-            parts.append(f"<p>{html.escape(text).replace(chr(10), '<br>')}</p>")
+            parts.append(f"<p>{html.escape(collapse_hspace(text)).replace(chr(10), '<br>')}</p>")
     flush_run()
     joined = "".join(parts)
     return joined if joined.strip() else None
@@ -305,7 +369,11 @@ def build_text_html(db: Session, document_id: int) -> int:
     else:
         import fitz
 
-        with fitz.open(files.resolve(doc.storage_path)) as pdf:
+        from manabi_server.processing.pipeline import parse_source_path
+
+        # Read the normalized (spread-split) PDF so native spans line up with
+        # the same logical pages the elements/renders use.
+        with fitz.open(parse_source_path(doc)) as pdf:
             skip = repeated_keys(
                 {no: _pdf_page_line_keys(pdf[no]) for no in range(pdf.page_count)}
             )

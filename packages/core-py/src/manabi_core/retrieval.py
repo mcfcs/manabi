@@ -95,6 +95,17 @@ async def retrieve(
                     FROM chunks c
                     {_scope_filter(document_ids)}
                 ),
+                q AS (
+                    -- OR-semantics FTS: reuse Postgres' lexemization (stemming,
+                    -- stopwords) from plainto_tsquery, then switch its '&'
+                    -- operators to '|' so a chunk matching ANY salient term
+                    -- ranks — plain AND excludes passages that lack filler words
+                    -- like "explain"/"passage" from a natural-language question.
+                    SELECT nullif(
+                        replace(plainto_tsquery('english', :q)::text, ' & ', ' | '),
+                        ''
+                    )::tsquery AS tq
+                ),
                 v AS (
                     SELECT s.id,
                            row_number() OVER (
@@ -106,10 +117,11 @@ async def retrieve(
                 f AS (
                     SELECT s.id,
                            row_number() OVER (
-                               ORDER BY ts_rank(s.tsv, plainto_tsquery('english', :q)) DESC
+                               ORDER BY ts_rank(s.tsv, (SELECT tq FROM q)) DESC
                            ) AS r
                     FROM scoped s
-                    WHERE s.tsv @@ plainto_tsquery('english', :q)
+                    WHERE (SELECT tq FROM q) IS NOT NULL
+                      AND s.tsv @@ (SELECT tq FROM q)
                 )
                 SELECT s.id, s.module_id, s.document_id, s.filename,
                        s.page_start, s.page_end, s.heading_path, s.text,

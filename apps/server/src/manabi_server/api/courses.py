@@ -1,12 +1,20 @@
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, UploadFile
+from fastapi.responses import FileResponse
 from manabi_core.models import Course, Document, Module, Note, User
 from pydantic import BaseModel
 from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from manabi_server.api.notes import (
+    ASSET_NAME_RE,
+    IMAGE_MIME,
+    MAX_IMAGE_BYTES,
+    sniff_image_ext,
+)
 from manabi_server.config import get_settings
 from manabi_server.db import get_db
 from manabi_server.security import get_default_user, require_csrf
+from manabi_server.storage import files
 
 router = APIRouter(prefix="/api/courses", tags=["courses"])
 
@@ -45,6 +53,7 @@ class CourseOut(BaseModel):
     card_count: int = 0
     canvas_url: str | None = None
     meeting_url: str | None = None
+    cover_image_url: str | None = None
 
 
 class ReorderIn(BaseModel):
@@ -75,6 +84,11 @@ def _course_out(
         card_count=card_count,
         canvas_url=canvas_course_url(course.canvas_course_id),
         meeting_url=course.meeting_url,
+        cover_image_url=(
+            f"/api/courses/{course.id}/cover/{course.cover_image_path.rsplit('/', 1)[-1]}"
+            if course.cover_image_path
+            else None
+        ),
     )
 
 
@@ -244,4 +258,66 @@ async def delete_course(
         await db.execute(delete(Module).where(Module.id.in_(module_ids)))
     await db.delete(course)
     await db.commit()
+    files.delete_course_files(course.id)
     return {"ok": True}
+
+
+# ── Cosmetic cover image (mirrors the note-image endpoints) ───────────────
+
+
+@router.post("/{course_id}/cover", dependencies=[Depends(require_csrf)])
+async def upload_cover(
+    course_id: int,
+    file: UploadFile,
+    user: User = Depends(get_default_user),
+    db: AsyncSession = Depends(get_db),
+) -> CourseOut:
+    course = await _get_course(db, user, course_id)
+    data = await file.read()
+    if len(data) > MAX_IMAGE_BYTES:
+        raise HTTPException(status_code=413, detail="Image too large (max 10 MB)")
+    ext = sniff_image_ext(data)
+    if ext is None:
+        raise HTTPException(status_code=422, detail="Only PNG, JPEG, GIF, or WebP images")
+    files.delete_course_files(course.id)  # one cover per course
+    rel = files.course_cover_path(course.id, ext)
+    files.write_atomic(rel, data)
+    course.cover_image_path = rel
+    await db.commit()
+    count = (
+        await db.execute(select(func.count(Module.id)).where(Module.course_id == course.id))
+    ).scalar_one()
+    return _course_out(course, count)
+
+
+@router.delete("/{course_id}/cover", dependencies=[Depends(require_csrf)])
+async def remove_cover(
+    course_id: int,
+    user: User = Depends(get_default_user),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    course = await _get_course(db, user, course_id)
+    files.delete_course_files(course.id)
+    course.cover_image_path = None
+    await db.commit()
+    return {"ok": True}
+
+
+@router.get("/{course_id}/cover/{name}")
+async def get_cover(
+    course_id: int,
+    name: str,
+    user: User = Depends(get_default_user),
+    db: AsyncSession = Depends(get_db),
+) -> FileResponse:
+    course = await _get_course(db, user, course_id)
+    if not ASSET_NAME_RE.fullmatch(name) or not course.cover_image_path:
+        raise HTTPException(status_code=404, detail="Cover not found")
+    path = files.resolve(f"course_covers/{course.id}/{name}")
+    if not path.is_file():
+        raise HTTPException(status_code=404, detail="Cover not found")
+    return FileResponse(
+        path,
+        media_type=IMAGE_MIME[name.rsplit(".", 1)[-1]],
+        headers={"Cache-Control": "private, max-age=31536000, immutable"},
+    )

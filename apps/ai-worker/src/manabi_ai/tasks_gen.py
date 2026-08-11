@@ -22,6 +22,7 @@ from manabi_core.models import (
     QuizQuestion,
 )
 from manabi_core.retrieval import ScopedChunk, load_context_chunks, source_fingerprint
+from procrastinate.exceptions import JobAborted
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -152,12 +153,26 @@ async def _start(db: AsyncSession, job_id: int) -> Job:
     return job
 
 
+async def _abort_if_requested(db: AsyncSession, job: Job, context) -> None:
+    """Cooperative cancellation checkpoint for long tasks. When the user cancels
+    a running job, procrastinate flags it for abortion; we mark our own job row
+    cancelled and raise JobAborted so procrastinate does NOT retry it. Callers
+    place this at loop boundaries, before any artifact is persisted."""
+    if context is not None and context.should_abort():
+        job.status = JobStatus.cancelled
+        job.progress_note = "Cancelled"
+        job.preview = None
+        job.finished_at = datetime.now(UTC)
+        await db.commit()
+        raise JobAborted()
+
+
 COVERAGE_TARGET = 0.9
 EXHAUSTIVE_CARD_CAP = 150
 
 
-@app.task(name="manabi_ai.tasks.generate_summary", queue="gpu", retry=1)
-async def generate_summary(job_id: int, module_id: int) -> None:
+@app.task(name="manabi_ai.tasks.generate_summary", queue="gpu", retry=1, pass_context=True)
+async def generate_summary(context, job_id: int, module_id: int) -> None:
     settings = get_settings()
     async with session_factory()() as db:
         job = await _start(db, job_id)
@@ -250,6 +265,7 @@ async def generate_summary(job_id: int, module_id: int) -> None:
 
             batches = batch_chunks(chunks)
             for bi, batch in enumerate(batches):
+                await _abort_if_requested(db, job, context)
                 await _progress(
                     db, job, 15 + int(50 * bi / len(batches)),
                     f"Generating with {settings.generation_model}"
@@ -308,6 +324,8 @@ async def generate_summary(job_id: int, module_id: int) -> None:
                 ):
                     db.add(row)
             await _finish(db, job, artifact.id, dropped)
+        except JobAborted:
+            raise  # cancelled — do not fail/retry
         except (GenerationError, Exception) as exc:  # noqa: BLE001
             log.exception("summary generation failed")
             await db.rollback()
@@ -315,8 +333,10 @@ async def generate_summary(job_id: int, module_id: int) -> None:
             raise
 
 
-@app.task(name="manabi_ai.tasks.generate_flashcards", queue="gpu", retry=1)
-async def generate_flashcards(job_id: int, module_id: int, count: int = 12) -> None:
+@app.task(name="manabi_ai.tasks.generate_flashcards", queue="gpu", retry=1, pass_context=True)
+async def generate_flashcards(
+    context, job_id: int, module_id: int, count: int = 12
+) -> None:
     settings = get_settings()
     async with session_factory()() as db:
         job = await _start(db, job_id)
@@ -386,6 +406,7 @@ async def generate_flashcards(job_id: int, module_id: int, count: int = 12) -> N
             rounds = 0
             max_rounds = 8 if exhaustive else 3
             while remaining > len(resolved_cards) and rounds < max_rounds:
+                await _abort_if_requested(db, job, context)
                 rounds += 1
                 added_this_round = 0
                 for batch in batches:
@@ -521,6 +542,8 @@ async def generate_flashcards(job_id: int, module_id: int, count: int = 12) -> N
                 )
                 ord_ += 1
             await _finish(db, job, artifact.id, dropped)
+        except JobAborted:
+            raise  # cancelled — do not fail/retry
         except (GenerationError, Exception) as exc:  # noqa: BLE001
             log.exception("flashcard generation failed")
             await db.rollback()
@@ -547,9 +570,9 @@ def _question_answer(item: dict) -> dict | None:
     return None
 
 
-@app.task(name="manabi_ai.tasks.generate_quiz", queue="gpu", retry=1)
+@app.task(name="manabi_ai.tasks.generate_quiz", queue="gpu", retry=1, pass_context=True)
 async def generate_quiz(
-    job_id: int, module_ids: list[int], types: list[str], count: int = 10
+    context, job_id: int, module_ids: list[int], types: list[str], count: int = 10
 ) -> None:
     settings = get_settings()
     async with session_factory()() as db:
@@ -568,6 +591,7 @@ async def generate_quiz(
             candidates: list[ResolvedItem] = []
             dropped = 0
             for mi, module in enumerate(modules):
+                await _abort_if_requested(db, job, context)
                 chunks = await load_context_chunks(db, [module.id])
                 if not chunks:
                     continue
@@ -651,6 +675,8 @@ async def generate_quiz(
                 ):
                     db.add(row)
             await _finish(db, job, artifact.id, dropped)
+        except JobAborted:
+            raise  # cancelled — do not fail/retry
         except (GenerationError, Exception) as exc:  # noqa: BLE001
             log.exception("quiz generation failed")
             await db.rollback()
@@ -722,6 +748,8 @@ async def define_term(
             ):
                 db.add(row)
             await _finish(db, job, artifact.id, 0)
+        except JobAborted:
+            raise  # cancelled — do not fail/retry
         except (GenerationError, Exception) as exc:  # noqa: BLE001
             log.exception("define_term failed")
             await db.rollback()
@@ -729,8 +757,8 @@ async def define_term(
             raise
 
 
-@app.task(name="manabi_ai.tasks.chat_answer", queue="gpu", retry=1)
-async def chat_answer(job_id: int, thread_id: int, chunk_ids: list[int]) -> None:
+@app.task(name="manabi_ai.tasks.chat_answer", queue="gpu", retry=1, pass_context=True)
+async def chat_answer(context, job_id: int, thread_id: int, chunk_ids: list[int]) -> None:
     """Answer one chat question: grounded in retrieved module passages with
     citations, or explicitly ungrounded general knowledge, never blended."""
     from manabi_core.models import ChatMessage, ChatRole, ChatThread
@@ -739,6 +767,7 @@ async def chat_answer(job_id: int, thread_id: int, chunk_ids: list[int]) -> None
         job = await _start(db, job_id)
         preview = _preview_writer(db, job)
         try:
+            await _abort_if_requested(db, job, context)
             thread = (
                 await db.execute(select(ChatThread).where(ChatThread.id == thread_id))
             ).scalar_one()
@@ -788,11 +817,11 @@ async def chat_answer(job_id: int, thread_id: int, chunk_ids: list[int]) -> None
                 + conversation
             )
             settings = get_settings()
+            await _abort_if_requested(db, job, context)
             await _progress(db, job, 30, "Answering")
-            chat_prompt = (
-                prompts.TEACHER_CHAT_PROMPT
-                if getattr(thread, "teacher_mode", False)
-                else prompts.CHAT_PROMPT
+            chat_prompt = prompts.chat_prompt_for(
+                getattr(thread, "teacher_mode", False),
+                getattr(thread, "strict_grounding", True),
             )
             result = await generate_structured(
                 chat_prompt,
@@ -839,11 +868,25 @@ async def chat_answer(job_id: int, thread_id: int, chunk_ids: list[int]) -> None
                 job_id=job.id,
             )
             db.add(assistant_msg)
-            job.status = JobStatus.succeeded
-            job.progress_pct = 100
-            job.progress_note = "Done"
-            job.preview = None
-            job.finished_at = datetime.now(UTC)
+            # Compare-and-set: if the user cancelled while we were generating,
+            # the endpoint already set status='cancelled' — don't resurrect the
+            # job to 'succeeded' or persist the (now unwanted) answer.
+            from sqlalchemy import update
+
+            res = await db.execute(
+                update(Job)
+                .where(Job.id == job.id, Job.status != JobStatus.cancelled)
+                .values(
+                    status=JobStatus.succeeded,
+                    progress_pct=100,
+                    progress_note="Done",
+                    preview=None,
+                    finished_at=datetime.now(UTC),
+                )
+            )
+            if res.rowcount == 0:
+                await db.rollback()  # discards the pending assistant message too
+                return
             await db.commit()
 
             # Steven speaks his own replies: teacher-mode threads auto-queue
@@ -861,6 +904,8 @@ async def chat_answer(job_id: int, thread_id: int, chunk_ids: list[int]) -> None
                     "manabi_ai.tasks.speak_text", queue="gpu"
                 ).defer_async(job_id=speak_job.id, message_id=assistant_msg.id)
                 await db.commit()
+        except JobAborted:
+            raise  # cancelled — do not fail/retry
         except (GenerationError, Exception) as exc:  # noqa: BLE001
             log.exception("chat answer failed")
             await db.rollback()
@@ -888,9 +933,13 @@ def sanitize_spoken(text: str) -> str:
     return " ".join(x for x in lines if x).strip()
 
 
-@app.task(name="manabi_ai.tasks.teach_module", queue="gpu", retry=1)
+@app.task(name="manabi_ai.tasks.teach_module", queue="gpu", retry=1, pass_context=True)
 async def teach_module(
-    job_id: int, module_id: int, mode: str = "standard", chunk_ids: list[int] | None = None
+    context,
+    job_id: int,
+    module_id: int,
+    mode: str = "standard",
+    chunk_ids: list[int] | None = None,
 ) -> None:
     """Generate a Steven Starphase lecture over the module (or, for
     remediation, over an explicit chunk subset)."""
@@ -943,6 +992,7 @@ async def teach_module(
 
             batches = batch_chunks(chunks)
             for bi, batch in enumerate(batches):
+                await _abort_if_requested(db, job, context)
                 await _progress(
                     db, job, 15 + int(60 * bi / len(batches)),
                     f"Steven is preparing the lesson ({bi + 1}/{len(batches)})"
@@ -1036,6 +1086,8 @@ async def teach_module(
                 ).defer_async(job_id=audio_job.id, artifact_id=artifact.id)
                 audio_job.procrastinate_job_id = pg_job
                 await db.commit()
+        except JobAborted:
+            raise  # cancelled — do not fail/retry
         except (GenerationError, Exception) as exc:  # noqa: BLE001
             log.exception("lecture generation failed")
             await db.rollback()

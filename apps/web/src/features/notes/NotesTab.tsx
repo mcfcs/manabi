@@ -215,6 +215,10 @@ function NoteSidebar({
   );
 }
 
+// Module-scoped so it survives NotesTab remounts (prevents duplicate empty
+// auto-created notes when the workspace re-renders/remounts).
+const autoCreateAttempted = new Set<string>();
+
 export function NotesTab({
   moduleId,
   initialNoteId,
@@ -231,19 +235,18 @@ export function NotesTab({
   });
 
   // First visit to a module with zero notes: create the initial section once.
-  const creatingRef = useRef(false);
+  // The guard is module-scoped (not per-instance) so remounts — or two mounts
+  // racing — can't each POST an empty duplicate note. Attempted once per
+  // session; the "New note" button covers the rare failure case.
   useEffect(() => {
     if (!notes.data) return;
-    if (notes.data.length === 0 && !creatingRef.current) {
-      creatingRef.current = true;
+    if (notes.data.length === 0 && !autoCreateAttempted.has(moduleId)) {
+      autoCreateAttempted.add(moduleId);
       api
         .post<NoteOut>(`/api/modules/${moduleId}/notes`, { title: "Notes" })
         .then((n) => {
           queryClient.invalidateQueries({ queryKey: ["notes", moduleId] });
           setActiveId(n.id);
-        })
-        .finally(() => {
-          creatingRef.current = false;
         });
       return;
     }

@@ -95,6 +95,7 @@ export interface CourseOut {
   card_count: number;
   canvas_url: string | null;
   meeting_url: string | null;
+  cover_image_url: string | null;
 }
 
 // ── Increment 9: schedule / calendar / tasks / settings ─────────────────
@@ -235,6 +236,7 @@ export interface SettingsOut {
   push_configured: boolean;
   canvas_last_synced_at: string | null;
   canvas_last_error: string | null;
+  chat_autovoice: boolean;
 }
 
 export interface ModuleOut {
@@ -271,9 +273,15 @@ export interface DocumentOut {
   error: string | null;
   page_count: number | null;
   ai_included: boolean;
+  page_layout: "auto" | "single" | "spread";
+  detected_layout: "single" | "spread" | null;
   job_id: number | null;
   progress_pct: number | null;
   progress_note: string | null;
+}
+
+export interface ReaderOut {
+  html: string;
 }
 
 export interface PageOut {
@@ -424,9 +432,13 @@ export interface ChatThreadOut {
   id: number;
   title: string;
   teacher_mode: boolean;
+  strict_grounding: boolean;
   // null = all module materials of that kind; [] = none of that kind
   scope_document_ids: number[] | null;
   scope_note_ids: number[] | null;
+  source_document_id: number | null;
+  source_page: number | null;
+  source_quote: string | null;
   created_at: string;
 }
 

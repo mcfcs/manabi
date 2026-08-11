@@ -17,6 +17,7 @@ from manabi_core.models import (
     LectureAudio,
     SpeechClip,
 )
+from procrastinate.exceptions import JobAborted
 from sqlalchemy import select
 
 from manabi_ai.app import app
@@ -34,8 +35,10 @@ def _chat_text_for_tts(text: str) -> str:
     return re.sub(r"\s+", " ", text).strip()
 
 
-@app.task(name="manabi_ai.tasks.synthesize_lecture", queue="gpu", retry=1)
-async def synthesize_lecture(job_id: int, artifact_id: int) -> None:
+@app.task(
+    name="manabi_ai.tasks.synthesize_lecture", queue="gpu", retry=1, pass_context=True
+)
+async def synthesize_lecture(context, job_id: int, artifact_id: int) -> None:
     settings = get_settings()
     async with session_factory()() as db:
         job = (await db.execute(select(Job).where(Job.id == job_id))).scalar_one()
@@ -63,6 +66,14 @@ async def synthesize_lecture(job_id: int, artifact_id: int) -> None:
                 (i, s) for i, s in enumerate(segments) if i not in existing
             ]
             for done, (i, seg) in enumerate(todo):
+                if context is not None and context.should_abort():
+                    # Segments already committed stay valid; the task resumes
+                    # and skips them if re-run. Just stop and mark cancelled.
+                    job.status = JobStatus.cancelled
+                    job.progress_note = "Cancelled"
+                    job.finished_at = datetime.now(UTC)
+                    await db.commit()
+                    raise JobAborted()
                 job.progress_pct = int(100 * done / max(len(todo), 1))
                 job.progress_note = f"Synthesizing segment {i + 1}/{len(segments)}"
                 await db.commit()
@@ -83,6 +94,8 @@ async def synthesize_lecture(job_id: int, artifact_id: int) -> None:
             job.progress_note = "Voice ready"
             job.finished_at = datetime.now(UTC)
             await db.commit()
+        except JobAborted:
+            raise  # cancelled — do not fail/retry
         except Exception as exc:  # noqa: BLE001
             log.exception("lecture synthesis failed")
             await db.rollback()

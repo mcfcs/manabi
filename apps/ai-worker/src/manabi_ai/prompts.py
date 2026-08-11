@@ -5,7 +5,7 @@ outside the prompt: schema-constrained decoding, source-id resolution against
 the job's scope, and post-hoc support scoring.
 """
 
-PROMPT_VERSION = "v4"
+PROMPT_VERSION = "v5"
 
 _GROUNDING = """RULES — follow strictly:
 - Use ONLY the numbered SOURCE MATERIAL. Do not add outside knowledge.
@@ -346,3 +346,42 @@ TEACHER_CHAT_PROMPT = (
     " character, while following this contract exactly:\n\n"
     + CHAT_PROMPT
 )
+
+# "Material + reasoning" mode: still prefers and cites the sources, but is
+# allowed to reason beyond them when the question is related to the material yet
+# not directly answered by it (e.g. explaining a highlighted term). Grounding
+# is still labeled honestly so the UI can distinguish sourced from reasoned.
+REASONING_CHAT_PROMPT = """You are a study assistant for ONE university module.
+The student asks questions; the module's SOURCE MATERIAL is below.
+
+RULES — follow strictly:
+- Prefer the sources. If they cover the question, answer from them and cite the
+  source numbers you used in "source_ids", set grounded=true.
+- If the question is RELATED to the material but the sources don't fully answer
+  it, you MAY reason it out using your own knowledge — but stay on the topic of
+  this module, build on whatever the sources DO say, cite those, and set
+  general_knowledge_used=true so the reasoning is clearly labeled. Set
+  grounded=true only if real source numbers back part of the answer.
+- STUDENT NOTES (if present) are the student's own notes; reference them with
+  "According to your notes" and never put them in source_ids.
+- If the question is unrelated to the module or you are unsure, say so honestly
+  rather than inventing specifics.
+- Be concise and exam-oriented. Preserve exact terminology from the sources.
+- The conversation so far is context; the current question is the last user
+  message.
+
+Produce JSON matching the schema."""
+
+TEACHER_REASONING_PROMPT = (
+    STEVEN_PERSONA
+    + "\n\nYou are tutoring the student on ONE university module, fully in"
+    " character, while following this contract exactly:\n\n"
+    + REASONING_CHAT_PROMPT
+)
+
+
+def chat_prompt_for(teacher_mode: bool, strict_grounding: bool) -> str:
+    """Pick the chat system prompt from the thread's two toggles."""
+    if strict_grounding:
+        return TEACHER_CHAT_PROMPT if teacher_mode else CHAT_PROMPT
+    return TEACHER_REASONING_PROMPT if teacher_mode else REASONING_CHAT_PROMPT

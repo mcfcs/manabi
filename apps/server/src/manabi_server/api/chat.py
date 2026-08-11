@@ -38,9 +38,14 @@ class ThreadOut(BaseModel):
     id: int
     title: str
     teacher_mode: bool
+    strict_grounding: bool  # False = material + free reasoning
     # None = all module materials of that kind; [] = none of that kind
     scope_document_ids: list[int] | None
     scope_note_ids: list[int] | None
+    # Viewer-originated "discussion": the passage this thread is about.
+    source_document_id: int | None
+    source_page: int | None
+    source_quote: str | None
     created_at: datetime
 
 
@@ -49,8 +54,12 @@ def _thread_out(t: ChatThread) -> ThreadOut:
         id=t.id,
         title=t.title,
         teacher_mode=t.teacher_mode,
+        strict_grounding=t.strict_grounding,
         scope_document_ids=t.scope_document_ids,
         scope_note_ids=t.scope_note_ids,
+        source_document_id=t.source_document_id,
+        source_page=t.source_page,
+        source_quote=t.source_quote,
         created_at=t.created_at,
     )
 
@@ -119,6 +128,7 @@ async def create_thread(
 
 class ThreadPatch(BaseModel):
     teacher_mode: bool | None = None
+    strict_grounding: bool | None = None
     title: str | None = None
     # Omitted field = unchanged; explicit null = back to "all" (model_fields_set
     # distinguishes the two).
@@ -134,6 +144,8 @@ async def update_thread(
 ) -> ThreadOut:
     if data.teacher_mode is not None:
         thread.teacher_mode = data.teacher_mode
+    if data.strict_grounding is not None:
+        thread.strict_grounding = data.strict_grounding
     if data.title is not None and data.title.strip():
         thread.title = data.title.strip()[:255]
     if "scope_document_ids" in data.model_fields_set:
@@ -176,6 +188,78 @@ async def delete_thread(
     await db.delete(thread)
     await db.commit()
     return {"ok": True}
+
+
+# ── Viewer discussions: source-anchored threads about a document passage ──
+
+
+async def _owned_document(
+    document_id: int,
+    user: User = Depends(get_default_user),
+    db: AsyncSession = Depends(get_db),
+) -> Document:
+    doc = (
+        await db.execute(
+            select(Document)
+            .join(Module, Module.id == Document.module_id)
+            .join(Course, Course.id == Module.course_id)
+            .where(Document.id == document_id, Course.user_id == user.id)
+        )
+    ).scalar_one_or_none()
+    if doc is None or doc.deleted_at is not None:
+        raise HTTPException(status_code=404, detail="Document not found")
+    return doc
+
+
+class DiscussIn(BaseModel):
+    quote: str
+    page: int | None = None
+
+
+@router.get("/documents/{document_id}/threads")
+async def list_document_threads(
+    doc: Document = Depends(_owned_document), db: AsyncSession = Depends(get_db)
+) -> list[ThreadOut]:
+    """Viewer-originated discussions about this document, newest first."""
+    rows = (
+        (
+            await db.execute(
+                select(ChatThread)
+                .where(ChatThread.source_document_id == doc.id)
+                .order_by(ChatThread.id.desc())
+            )
+        )
+        .scalars()
+        .all()
+    )
+    return [_thread_out(t) for t in rows]
+
+
+@router.post("/documents/{document_id}/discuss", dependencies=[Depends(require_csrf)])
+async def discuss_document(
+    data: DiscussIn,
+    doc: Document = Depends(_owned_document),
+    db: AsyncSession = Depends(get_db),
+) -> ThreadOut:
+    """Open a Steven-taught, reasoning-mode thread anchored to a passage. The
+    caller then posts the seed question via the normal messages endpoint."""
+    quote = data.quote.strip()[:2000]
+    title = (quote[:60] + "…") if len(quote) > 60 else (quote or "Discussion")
+    thread = ChatThread(
+        module_id=doc.module_id,
+        title=title,
+        teacher_mode=True,
+        strict_grounding=False,  # explaining a passage often needs reasoning
+        # Focus retrieval on the document the passage came from so the quoted
+        # text is actually found (module-wide search can miss one page).
+        scope_document_ids=[doc.id],
+        source_document_id=doc.id,
+        source_page=data.page,
+        source_quote=quote or None,
+    )
+    db.add(thread)
+    await db.commit()
+    return _thread_out(thread)
 
 
 @router.get("/chat/threads/{thread_id}/messages")
@@ -223,12 +307,13 @@ async def post_message(
     if not content:
         raise HTTPException(status_code=422, detail="Message is empty")
 
-    # one question in flight per thread
+    # One question in flight per THREAD (not per module) — so a viewer
+    # discussion isn't blocked by the module Chat tab still answering.
     in_flight = (
         await db.execute(
             select(Job).where(
                 Job.job_type == "chat_answer",
-                Job.module_id == thread.module_id,
+                Job.payload["thread_id"].as_string() == str(thread.id),
                 Job.status.in_([JobStatus.queued, JobStatus.running]),
             )
         )

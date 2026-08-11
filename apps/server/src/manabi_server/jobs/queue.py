@@ -58,3 +58,16 @@ async def defer_task(task_name: str, queue: str, **task_kwargs) -> int:
         return app.configure_task(task_name, queue=queue).defer(**task_kwargs)
 
     return await asyncio.to_thread(_defer)
+
+
+async def cancel_task(procrastinate_job_id: int) -> bool:
+    """Cancel a queued job, or request abortion of a running one. Returns True
+    if procrastinate changed the row. abort=True is safe for both states: a
+    'todo' job is cancelled outright, a 'doing' job is flagged for the worker's
+    cooperative abort (observed via JobContext.should_abort())."""
+
+    def _cancel() -> bool:
+        app = _get_open_app()
+        return app.job_manager.cancel_job_by_id(procrastinate_job_id, abort=True)
+
+    return await asyncio.to_thread(_cancel)

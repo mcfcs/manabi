@@ -26,6 +26,7 @@ from sqlalchemy import (
     Text,
     UniqueConstraint,
     func,
+    text,
 )
 from sqlalchemy.dialects.postgresql import ARRAY, JSONB
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
@@ -81,6 +82,7 @@ class Course(Base, TimestampMixin):
     archived_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     canvas_course_id: Mapped[int | None] = mapped_column(BigInteger)
     meeting_url: Mapped[str | None] = mapped_column(String(512))  # gmeet/zoom
+    cover_image_path: Mapped[str | None] = mapped_column(String(1024))  # cosmetic card cover
 
     modules: Mapped[list["Module"]] = relationship(
         back_populates="course", order_by="Module.position"
@@ -150,6 +152,10 @@ class Document(Base, TimestampMixin):
     processing_mode: Mapped[str] = mapped_column(
         String(16), nullable=False, default="full"
     )
+    # Two-page-spread handling: 'auto' (detect) | 'single' | 'spread' (force split).
+    page_layout: Mapped[str] = mapped_column(String(8), nullable=False, default="auto")
+    # What auto-detection concluded on the last extract: 'single' | 'spread' | None.
+    detected_layout: Mapped[str | None] = mapped_column(String(8))
     deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
     pages: Mapped[list["DocumentPage"]] = relationship(
@@ -157,7 +163,15 @@ class Document(Base, TimestampMixin):
     )
 
     __table_args__ = (
-        UniqueConstraint("module_id", "content_hash", name="uq_documents_module_hash"),
+        # Partial unique: a soft-deleted document must not block re-uploading
+        # the same file (the dedup query also filters deleted_at IS NULL).
+        Index(
+            "uq_documents_module_hash",
+            "module_id",
+            "content_hash",
+            unique=True,
+            postgresql_where=text("deleted_at IS NULL"),
+        ),
         Index("ix_documents_module_id", "module_id"),
     )
 
@@ -448,6 +462,14 @@ class ChatThread(Base, TimestampMixin):
     # Material scope: NULL = all module materials, [] = none of that kind.
     scope_document_ids: Mapped[list[int] | None] = mapped_column(ARRAY(BigInteger))
     scope_note_ids: Mapped[list[int] | None] = mapped_column(ARRAY(BigInteger))
+    # True = strict material-first grounding; False = material + free reasoning.
+    strict_grounding: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    # Viewer-originated "discussion": the passage/page this thread is about.
+    source_document_id: Mapped[int | None] = mapped_column(
+        BigInteger, ForeignKey("documents.id", ondelete="SET NULL")
+    )
+    source_page: Mapped[int | None] = mapped_column()
+    source_quote: Mapped[str | None] = mapped_column(Text)
 
     __table_args__ = (Index("ix_chat_threads_module_id", "module_id"),)
 
@@ -601,6 +623,9 @@ class AppSettings(Base):
     last_announcement_id: Mapped[int | None] = mapped_column(BigInteger)
     canvas_last_synced_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     canvas_last_error: Mapped[str | None] = mapped_column(Text)
+    # Auto-play Steven's voice for chat replies (default off; per-device toggle
+    # in the chat UI overrides this for the session).
+    chat_autovoice: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
 
 
 class CalendarEvent(Base, TimestampMixin):

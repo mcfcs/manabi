@@ -27,6 +27,7 @@ class SettingsOut(BaseModel):
     push_configured: bool  # VAPID keys present in .env
     canvas_last_synced_at: datetime | None
     canvas_last_error: str | None
+    chat_autovoice: bool
 
 
 class SettingsPatch(BaseModel):
@@ -34,6 +35,7 @@ class SettingsPatch(BaseModel):
     semester_end: date | None = None
     gcal_ics_url: str | None = None  # "" clears the feed
     class_reminders: bool | None = None
+    chat_autovoice: bool | None = None
 
 
 async def get_app_settings(db: AsyncSession) -> AppSettings:
@@ -57,6 +59,7 @@ def _out(row: AppSettings) -> SettingsOut:
         push_configured=bool(env.vapid_public_key and env.vapid_private_key),
         canvas_last_synced_at=row.canvas_last_synced_at,
         canvas_last_error=row.canvas_last_error,
+        chat_autovoice=row.chat_autovoice,
     )
 
 
@@ -76,6 +79,8 @@ async def patch_settings(
         row.semester_end = data.semester_end
     if data.class_reminders is not None:
         row.class_reminders = data.class_reminders
+    if data.chat_autovoice is not None:
+        row.chat_autovoice = data.chat_autovoice
     if data.gcal_ics_url is not None:
         url = data.gcal_ics_url.strip()
         row.gcal_ics_url = url or None

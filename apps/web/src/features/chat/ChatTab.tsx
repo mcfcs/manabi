@@ -3,12 +3,14 @@ import { Link, useNavigate, useSearch } from "@tanstack/react-router";
 import {
   BookMarked,
   GraduationCap,
+  Lightbulb,
   Loader2,
   MessageSquarePlus,
   SendHorizontal,
   Trash2,
   Volume2,
   VolumeX,
+  X,
 } from "lucide-react";
 import { type FormEvent, useEffect, useRef, useState } from "react";
 
@@ -20,7 +22,13 @@ import {
   type DocumentOut,
   type NoteListItem,
 } from "../../lib/api";
-import { AiOfflineBanner, useAiOnline, useGenerationJob } from "../ai/common";
+import {
+  AiOfflineBanner,
+  useAiOnline,
+  useCancelJob,
+  useChatVoice,
+  useGenerationJob,
+} from "../ai/common";
 import "./chat.css";
 
 function CitePill({ c }: { c: NonNullable<ChatMessageOut["citations"]>[number] }) {
@@ -180,9 +188,7 @@ export function ChatTab({ moduleId }: { moduleId: string }) {
   const [activeThread, setActiveThread] = useState<number | null>(null);
   const [input, setInput] = useState("");
   const [error, setError] = useState<string | null>(null);
-  const [voiceOn, setVoiceOn] = useState(
-    () => localStorage.getItem("manabi-chat-voice") === "1",
-  );
+  const [voiceOn, setVoiceOn] = useChatVoice();
   const [speakingId, setSpeakingId] = useState<number | null>(null);
   const [pendingSpeakId, setPendingSpeakId] = useState<number | null>(null);
   const audioRef = useRef<HTMLAudioElement>(null);
@@ -239,6 +245,7 @@ export function ChatTab({ moduleId }: { moduleId: string }) {
     enabled: activeThread != null,
   });
 
+  const cancelAnswer = useCancelJob();
   const answering = useGenerationJob(moduleId, "chat_answer", () => {
     queryClient.invalidateQueries({ queryKey: ["chat-messages", activeThread] });
     queryClient.invalidateQueries({ queryKey: ["chat-threads", moduleId] });
@@ -268,6 +275,12 @@ export function ChatTab({ moduleId }: { moduleId: string }) {
   const toggleTeacher = useMutation({
     mutationFn: (v: { id: number; teacher_mode: boolean }) =>
       api.patch(`/api/chat/threads/${v.id}`, { teacher_mode: v.teacher_mode }),
+    onSuccess: () =>
+      queryClient.invalidateQueries({ queryKey: ["chat-threads", moduleId] }),
+  });
+  const setGrounding = useMutation({
+    mutationFn: (v: { id: number; strict_grounding: boolean }) =>
+      api.patch(`/api/chat/threads/${v.id}`, { strict_grounding: v.strict_grounding }),
     onSuccess: () =>
       queryClient.invalidateQueries({ queryKey: ["chat-threads", moduleId] }),
   });
@@ -435,6 +448,21 @@ export function ChatTab({ moduleId }: { moduleId: string }) {
               <GraduationCap size={14} strokeWidth={1.75} />
               Steven mode {activeThreadObj.teacher_mode ? "on" : "off"}
             </button>
+            <button
+              className={`chat-teacher-toggle${!activeThreadObj.strict_grounding ? " on" : ""}`}
+              onClick={() =>
+                setGrounding.mutate({
+                  id: activeThreadObj.id,
+                  strict_grounding: !activeThreadObj.strict_grounding,
+                })
+              }
+              title="Material only: answer strictly from the materials. Material + reasoning: let the AI reason about related points the materials don't fully cover."
+            >
+              <Lightbulb size={14} strokeWidth={1.75} />
+              {activeThreadObj.strict_grounding
+                ? "Material only"
+                : "Material + reasoning"}
+            </button>
             <SourcesPicker moduleId={moduleId} thread={activeThreadObj} />
           </div>
         )}
@@ -443,8 +471,7 @@ export function ChatTab({ moduleId }: { moduleId: string }) {
             className={`chat-teacher-toggle${voiceOn ? " on" : ""}`}
             onClick={() => {
               const next = !voiceOn;
-              setVoiceOn(next);
-              localStorage.setItem("manabi-chat-voice", next ? "1" : "0");
+              setVoiceOn(next); // persists to localStorage as a per-device override
               if (!next) {
                 audioRef.current?.pause();
                 setSpeakingId(null);
@@ -528,6 +555,15 @@ export function ChatTab({ moduleId }: { moduleId: string }) {
                       ? "waiting for the AI node…"
                       : "reading your materials…"}
                   </p>
+                )}
+                {answering.job && (
+                  <button
+                    className="link-btn job-cancel chat-stop"
+                    onClick={() => cancelAnswer.mutate(answering.job!.id)}
+                    disabled={cancelAnswer.isPending}
+                  >
+                    <X size={13} strokeWidth={2} /> stop
+                  </button>
                 )}
               </div>
             </div>

@@ -3,8 +3,10 @@ import { Link } from "@tanstack/react-router";
 import {
   AlertCircle,
   Brain,
+  BookOpen,
   CheckCircle2,
   CloudDownload,
+  Columns2,
   FileText,
   Loader2,
   Presentation,
@@ -31,6 +33,19 @@ function StatusChip({ doc }: { doc: DocumentOut }) {
         <span className="chip ready">
           <CheckCircle2 size={13} strokeWidth={1.5} />
           {doc.page_count} pages
+          {doc.page_layout === "spread" && (
+            <span className="chip-spread" title="You split this two-page scan into single pages">
+              <Columns2 size={11} strokeWidth={1.75} /> split
+            </span>
+          )}
+          {doc.page_layout !== "spread" && doc.detected_layout === "spread" && (
+            <span
+              className="chip-spread"
+              title="Looks like a two-page scan — use the layout control to split into single pages if you want"
+            >
+              <Columns2 size={11} strokeWidth={1.75} /> 2-up?
+            </span>
+          )}
         </span>
       );
     case "failed":
@@ -82,6 +97,13 @@ export function MaterialsTab({ moduleId }: { moduleId: string }) {
 
   const retry = useMutation({
     mutationFn: (id: number) => api.post(`/api/documents/${id}/retry`),
+    onSuccess: () =>
+      queryClient.invalidateQueries({ queryKey: ["documents", moduleId] }),
+  });
+
+  const setLayout = useMutation({
+    mutationFn: (v: { id: number; page_layout: string }) =>
+      api.post(`/api/documents/${v.id}/layout`, { page_layout: v.page_layout }),
     onSuccess: () =>
       queryClient.invalidateQueries({ queryKey: ["documents", moduleId] }),
   });
@@ -203,6 +225,30 @@ export function MaterialsTab({ moduleId }: { moduleId: string }) {
               >
                 <Brain size={15} strokeWidth={1.5} />
               </button>
+              {doc.kind === "pdf" &&
+                (doc.extract_status === "ready" || doc.extract_status === "failed") && (
+                  <label
+                    className="doc-layout"
+                    title="How to read this scan: auto-detect, treat as single pages, or split two-page spreads. Changing this re-extracts the file."
+                  >
+                    <BookOpen size={13} strokeWidth={1.5} />
+                    <select
+                      value={doc.page_layout}
+                      onChange={(e) => {
+                        if (
+                          window.confirm(
+                            "Re-extract this file with the new page layout? Existing highlights on it may shift.",
+                          )
+                        )
+                          setLayout.mutate({ id: doc.id, page_layout: e.target.value });
+                      }}
+                    >
+                      <option value="auto">Layout: auto</option>
+                      <option value="single">Single pages</option>
+                      <option value="spread">Two-page spread</option>
+                    </select>
+                  </label>
+                )}
               {doc.extract_status === "failed" && (
                 <button
                   className="icon-btn"

@@ -324,8 +324,11 @@ async def module_detail(
             )
         )
     ).scalar_one_or_none()
+    # Modules can hold multiple notes now — surface the most recently edited.
     note_updated = (
-        await db.execute(select(Note.updated_at).where(Note.module_id == module.id))
+        await db.execute(
+            select(func.max(Note.updated_at)).where(Note.module_id == module.id)
+        )
     ).scalar_one_or_none()
 
     return ModuleDetail(

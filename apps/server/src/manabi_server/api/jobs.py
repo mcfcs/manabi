@@ -1,11 +1,13 @@
+from datetime import UTC, datetime
+
 from fastapi import APIRouter, Depends, HTTPException
 from manabi_core.models import Job, JobQueue, JobStatus, User
 from pydantic import BaseModel
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from manabi_server.db import get_db
-from manabi_server.jobs.queue import ECHO_TASK, defer_task
+from manabi_server.jobs.queue import ECHO_TASK, cancel_task, defer_task
 from manabi_server.security import get_default_user, require_csrf
 
 router = APIRouter(prefix="/api/jobs", tags=["jobs"])
@@ -94,4 +96,42 @@ async def get_job(
     ).scalar_one_or_none()
     if job is None:
         raise HTTPException(status_code=404, detail="Job not found")
+    return _to_out(job)
+
+
+@router.post("/{job_id}/cancel", dependencies=[Depends(require_csrf)])
+async def cancel_job(
+    job_id: int,
+    user: User = Depends(get_default_user),
+    db: AsyncSession = Depends(get_db),
+) -> JobOut:
+    """Cancel a queued/running generation. Idempotent for terminal jobs. The
+    optimistic status write clears the UI even if no live worker observes the
+    abort (e.g. an orphaned job) — the worker reaper cleans procrastinate up."""
+    job = (
+        await db.execute(select(Job).where(Job.id == job_id, Job.user_id == user.id))
+    ).scalar_one_or_none()
+    if job is None:
+        raise HTTPException(status_code=404, detail="Job not found")
+    if job.status in (JobStatus.succeeded, JobStatus.failed, JobStatus.cancelled):
+        return _to_out(job)  # no-op
+
+    if job.procrastinate_job_id is not None:
+        import contextlib
+
+        # Proceed with the DB flip even if procrastinate can't be reached.
+        with contextlib.suppress(Exception):
+            await cancel_task(job.procrastinate_job_id)
+    # Compare-and-set: never clobber a job that JUST reached a terminal state.
+    await db.execute(
+        update(Job)
+        .where(Job.id == job.id, Job.status.in_([JobStatus.queued, JobStatus.running]))
+        .values(
+            status=JobStatus.cancelled,
+            progress_note="Cancelled",
+            finished_at=datetime.now(UTC),
+        )
+    )
+    await db.commit()
+    await db.refresh(job)
     return _to_out(job)

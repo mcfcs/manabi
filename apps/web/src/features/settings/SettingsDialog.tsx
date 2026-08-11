@@ -354,6 +354,20 @@ export function SettingsDialog({ onClose }: { onClose: () => void }) {
           Push a reminder ~15 minutes before each class
         </label>
 
+        <h3 className="settings-heading">Chat</h3>
+        <label className="event-weekly settings-reminders">
+          <input
+            type="checkbox"
+            checked={s?.chat_autovoice ?? false}
+            onChange={(e) => save.mutate({ chat_autovoice: e.target.checked })}
+          />
+          Automatically play Steven's voice in chat
+        </label>
+        <p className="settings-hint">
+          When on, Steven's chat replies play aloud as they arrive (you can
+          still toggle voice per conversation).
+        </p>
+
         <VoiceLab />
 
         {error && <p className="error-text">{error}</p>}
