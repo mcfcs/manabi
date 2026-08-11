@@ -246,6 +246,13 @@ export interface AiModelsOut {
   worker: string | null;
 }
 
+export interface BriefingOut {
+  thread_id: number;
+  message_id: number | null;
+  job_id: number | null;
+  generating: boolean;
+}
+
 export interface ModuleOut {
   id: number;
   course_id: number;

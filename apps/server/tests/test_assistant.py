@@ -153,3 +153,95 @@ async def test_general_thread_per_chat_model_override_wins(monkeypatch):
         monkeypatch, _thread(module_id=None, model_override="dolphin3:8b")
     )
     assert captured.get("model") == "dolphin3:8b"
+
+
+# ── Daily briefing endpoint ───────────────────────────────────────────────
+
+import datetime as _dt  # noqa: E402
+
+
+class _Res:
+    def __init__(self, value=None):
+        self._value = value
+
+    def scalar_one_or_none(self):
+        return self._value
+
+
+class _ScriptedDB:
+    """Returns a scripted sequence of execute() results; records adds + commit."""
+
+    def __init__(self, results):
+        self._results = list(results)
+        self.added: list = []
+        self.committed = False
+
+    async def execute(self, *a, **k):
+        return self._results.pop(0) if self._results else _Res(None)
+
+    def add(self, obj):
+        self.added.append(obj)
+        if getattr(obj, "id", None) is None:
+            obj.id = len(self.added)
+
+    async def flush(self):
+        pass
+
+    async def commit(self):
+        self.committed = True
+
+
+def _patch_briefing_deps(monkeypatch, *, last_date, model="gpt-oss:20b"):
+    from manabi_server.api import assistant as asst
+
+    captured: dict = {}
+
+    async def fake_defer(task, queue, **kwargs):
+        captured.update(kwargs)
+        captured["task"] = task
+        return 999
+
+    settings = types.SimpleNamespace(
+        last_briefing_date=last_date, general_chat_model=model
+    )
+
+    async def fake_get_settings(db):
+        return settings
+
+    async def fake_ctx(db, user, forward_days=7):
+        return "PERSONAL CONTEXT: today is testday."
+
+    import manabi_server.api.settings as settings_mod
+    import manabi_server.services.context as ctx_mod
+
+    monkeypatch.setattr(asst, "defer_task", fake_defer)
+    monkeypatch.setattr(asst, "today_manila", lambda: _dt.date(2026, 8, 12))
+    monkeypatch.setattr(settings_mod, "get_app_settings", fake_get_settings)
+    monkeypatch.setattr(ctx_mod, "build_personal_context", fake_ctx)
+    return asst, captured, settings
+
+
+async def test_briefing_first_call_creates_thread_and_job(monkeypatch):
+    asst, captured, settings = _patch_briefing_deps(monkeypatch, last_date=None)
+    db = _ScriptedDB([_Res(None)])  # today's briefing thread doesn't exist yet
+    out = await asst.ensure_daily_briefing(user=_User(), db=db)
+    assert out.generating is True
+    assert out.job_id is not None
+    assert captured["task"] == asst.DAILY_BRIEFING_TASK
+    assert captured["personal_context"].startswith("PERSONAL CONTEXT")
+    assert captured["model"] == "gpt-oss:20b"
+    assert settings.last_briefing_date == _dt.date(2026, 8, 12)  # gate flipped
+    assert db.committed is True
+
+
+async def test_briefing_idempotent_same_day(monkeypatch):
+    asst, captured, _ = _patch_briefing_deps(
+        monkeypatch, last_date=_dt.date(2026, 8, 12)
+    )
+    existing = types.SimpleNamespace(id=5)
+    db = _ScriptedDB([_Res(existing), _Res(42)])  # thread found, then its msg id
+    out = await asst.ensure_daily_briefing(user=_User(), db=db)
+    assert out.thread_id == 5
+    assert out.generating is False
+    assert out.message_id == 42
+    assert "task" not in captured  # no new job deferred

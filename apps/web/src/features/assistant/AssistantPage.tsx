@@ -20,6 +20,7 @@ import {
   type AiModelsOut,
   api,
   ApiError,
+  type BriefingOut,
   type ChatMessageOut,
   type ChatThreadOut,
   type ThreadAllOut,
@@ -144,6 +145,7 @@ export function AssistantPage() {
   const audioRef = useRef<HTMLAudioElement>(null);
   const autoPlayed = useRef<Set<number>>(new Set());
   const bottomRef = useRef<HTMLDivElement>(null);
+  const briefingFired = useRef(false);
 
   const threads = useQuery({
     queryKey: ["assistant-threads"],
@@ -182,6 +184,25 @@ export function AssistantPage() {
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ block: "end" });
   }, [messages.data, answering.job?.preview]);
+
+  // On open, ensure today's morning briefing exists (generated once per Manila
+  // day, cached). Steven's greeting arrives as the first message of the daily
+  // thread, so it renders + reads aloud through the existing chat flow.
+  const briefing = useMutation({
+    mutationFn: () => api.post<BriefingOut>(`/api/assistant/briefing`),
+    onSuccess: (b) => {
+      setActiveThread(b.thread_id);
+      if (b.generating && b.job_id != null) answering.start(b.job_id);
+      qc.invalidateQueries({ queryKey: ["assistant-threads"] });
+      qc.invalidateQueries({ queryKey: ["chat-threads-all"] });
+    },
+  });
+  useEffect(() => {
+    if (briefingFired.current) return;
+    briefingFired.current = true;
+    briefing.mutate();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const newThread = useMutation({
     mutationFn: () => api.post<ChatThreadOut>(`/api/assistant/threads`),

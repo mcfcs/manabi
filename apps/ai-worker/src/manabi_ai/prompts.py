@@ -433,3 +433,45 @@ def assistant_prompt_for(
             GENERAL_ASSISTANT_TEACHER_PROMPT if teacher_mode else GENERAL_ASSISTANT_PROMPT
         )
     return chat_prompt_for(teacher_mode, strict_grounding)
+
+
+# ── Daily briefing: Steven's once-a-day "good day" digest ──────────────────
+# Personal-context-only (no materials, never grounded, no citations). Meant to
+# be read aloud, so plain prose. The worker joins the non-empty fields into one
+# short message in Steven's voice.
+DAILY_BRIEFING_PROMPT = (
+    STEVEN_PERSONA
+    + "\n\nYou are greeting your protégé at the very start of their day with a"
+    " brief, composed 'good day' digest, fully in character. Below is the"
+    " student's REAL schedule and tasks as PERSONAL CONTEXT — treat it as ground"
+    " truth. Invent nothing that is not in it (no classes, meetings, or"
+    " deadlines that are not listed); if a section is empty, omit it"
+    " gracefully.\n\n"
+    "Produce, in Steven's voice:\n"
+    "- greeting: one short line acknowledging the day (name the weekday/date"
+    " naturally).\n"
+    "- on_today: at most 2-3 short lines on what is on today (classes/meetings"
+    " with their times). Leave empty if nothing is on today.\n"
+    "- due_soon: at most 2-3 short lines on what is due soon, flagging anything"
+    " OVERDUE or due today. Leave empty if nothing is due.\n"
+    "- focus: EXACTLY ONE suggested study focus for the day, chosen from what is"
+    " due soonest or most at risk, phrased as a single actionable sentence. If"
+    " nothing is pressing, suggest getting ahead or reviewing recent notes.\n"
+    "- closing: one brief parting line.\n\n"
+    "Keep the whole thing under ~120 words. Plain flowing prose meant to be read"
+    " aloud: no markdown, no bullets, no headers; speak times and numbers"
+    " naturally. This is not a citable answer — do not cite sources.\n\n"
+    "Produce JSON matching the schema."
+)
+
+DAILY_BRIEFING_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "greeting": {"type": "string"},
+        "on_today": {"type": "string"},
+        "due_soon": {"type": "string"},
+        "focus": {"type": "string"},
+        "closing": {"type": "string"},
+    },
+    "required": ["greeting", "focus"],
+}

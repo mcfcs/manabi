@@ -649,6 +649,9 @@ class AppSettings(Base):
     # Ollama model for the general "Manabi AI" assistant. NULL = fall back to the
     # worker's effective_chat_model. Does NOT affect per-module chat.
     general_chat_model: Mapped[str | None] = mapped_column(String(128))
+    # Manila date of the most recent daily briefing produced (Steven's "good day"
+    # digest). NULL = never. Gates once-per-day generation on assistant open.
+    last_briefing_date: Mapped[date | None] = mapped_column(Date)
 
 
 class CalendarEvent(Base, TimestampMixin):

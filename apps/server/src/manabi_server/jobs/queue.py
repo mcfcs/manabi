@@ -23,6 +23,7 @@ GENERATE_FLASHCARDS_TASK = "manabi_ai.tasks.generate_flashcards"  # gpu
 GENERATE_QUIZ_TASK = "manabi_ai.tasks.generate_quiz"  # gpu
 DEFINE_TERM_TASK = "manabi_ai.tasks.define_term"  # gpu
 CHAT_ANSWER_TASK = "manabi_ai.tasks.chat_answer"  # gpu
+DAILY_BRIEFING_TASK = "manabi_ai.tasks.daily_briefing"  # gpu
 TEACH_MODULE_TASK = "manabi_ai.tasks.teach_module"  # gpu
 SYNTHESIZE_LECTURE_TASK = "manabi_ai.tasks.synthesize_lecture"  # gpu
 SPEAK_TEXT_TASK = "manabi_ai.tasks.speak_text"  # gpu

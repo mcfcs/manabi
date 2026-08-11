@@ -937,6 +937,101 @@ async def chat_answer(
             raise
 
 
+@app.task(name="manabi_ai.tasks.daily_briefing", queue="gpu", retry=1, pass_context=True)
+async def daily_briefing(
+    context,
+    job_id: int,
+    thread_id: int,
+    personal_context: str | None = None,
+    model: str | None = None,
+) -> None:
+    """Steven's once-a-day "good day" digest, posted as his first assistant
+    message in the daily briefing thread. Personal-context only — no retrieval,
+    no citations, never grounded. Voice auto-queues for the teacher-mode thread
+    exactly like chat_answer."""
+    from manabi_core.models import ChatMessage, ChatRole, ChatThread
+
+    async with session_factory()() as db:
+        job = await _start(db, job_id)
+        preview = _preview_writer(db, job)
+        try:
+            await _abort_if_requested(db, job, context)
+            thread = (
+                await db.execute(select(ChatThread).where(ChatThread.id == thread_id))
+            ).scalar_one()
+            settings = get_settings()
+            await _progress(db, job, 30, "Composing your briefing")
+            result = await generate_structured(
+                prompts.DAILY_BRIEFING_PROMPT,
+                personal_context or "PERSONAL CONTEXT: (unavailable)",
+                prompts.DAILY_BRIEFING_SCHEMA,
+                preview,
+                model=model or settings.effective_chat_model,
+            )
+            parts = [
+                (result.get("greeting") or "").strip(),
+                (result.get("on_today") or "").strip(),
+                (result.get("due_soon") or "").strip(),
+                (result.get("focus") or "").strip(),
+                (result.get("closing") or "").strip(),
+            ]
+            content = "\n\n".join(p for p in parts if p)
+            if not content:
+                raise GenerationError("Empty briefing from model")
+
+            assistant_msg = ChatMessage(
+                thread_id=thread_id,
+                role=ChatRole.assistant,
+                content=content,
+                grounded=False,
+                general_knowledge=False,
+                citations=None,
+                job_id=job.id,
+            )
+            db.add(assistant_msg)
+            # Compare-and-set (see chat_answer): a cancel while generating must not
+            # resurrect the job or persist the unwanted message.
+            from sqlalchemy import update
+
+            res = await db.execute(
+                update(Job)
+                .where(Job.id == job.id, Job.status != JobStatus.cancelled)
+                .values(
+                    status=JobStatus.succeeded,
+                    progress_pct=100,
+                    progress_note="Done",
+                    preview=None,
+                    finished_at=datetime.now(UTC),
+                )
+            )
+            if res.rowcount == 0:
+                await db.rollback()
+                return
+            await db.commit()
+
+            # Steven reads his briefing aloud on teacher-mode threads.
+            if getattr(thread, "teacher_mode", False) and settings.tts_enabled:
+                speak_job = Job(
+                    user_id=job.user_id,
+                    job_type="speak_text",
+                    queue=job.queue,
+                    module_id=thread.module_id,
+                )
+                db.add(speak_job)
+                await db.flush()
+                speak_job.procrastinate_job_id = await app.configure_task(
+                    "manabi_ai.tasks.speak_text", queue="gpu"
+                ).defer_async(job_id=speak_job.id, message_id=assistant_msg.id)
+                await db.commit()
+        except JobAborted:
+            raise  # cancelled — do not fail/retry
+        except (GenerationError, Exception) as exc:  # noqa: BLE001
+            log.exception("daily briefing failed")
+            await db.rollback()
+            await _fail(db, job, exc)
+            raise
+
+
 # ── Teacher lecture ───────────────────────────────────────────────────────
 
 _MD_CHARS = str.maketrans({"*": "", "#": "", "`": "", "[": "", "]": "", "|": " "})
