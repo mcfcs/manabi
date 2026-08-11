@@ -251,6 +251,7 @@ export interface BriefingOut {
   message_id: number | null;
   job_id: number | null;
   generating: boolean;
+  body: string | null;
 }
 
 export interface ModuleOut {

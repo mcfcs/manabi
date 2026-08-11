@@ -576,6 +576,9 @@ export function ChatTab({ moduleId }: { moduleId: string }) {
           )}
           {(messages.data ?? []).map((m) => (
             <div key={m.id} className={`chat-msg ${m.role}`}>
+              {m.role === "assistant" && (
+                <img className="chat-avatar" src="/steven.jpg" alt="Steven" />
+              )}
               <div className="chat-bubble">
                 {m.general_knowledge && (
                   <span className="badge stale chat-gk-badge">
@@ -617,6 +620,7 @@ export function ChatTab({ moduleId }: { moduleId: string }) {
           ))}
           {answering.running && (
             <div className="chat-msg assistant">
+              <img className="chat-avatar" src="/steven.jpg" alt="Steven" />
               <div className="chat-bubble chat-typing">
                 {answering.job?.preview ? (
                   <p className="chat-preview">{answering.job.preview}</p>

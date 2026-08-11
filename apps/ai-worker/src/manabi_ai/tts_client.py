@@ -48,38 +48,74 @@ def _tool(name: str) -> str:
     )
 
 
+_SENT_END = re.compile(r"(?<=[.!?…])\s+")
+
+
+def _normalize_for_tts(text: str) -> str:
+    """Make text friendlier to GPT-SoVITS: turn ellipses/dashes/line breaks into
+    plain pauses and collapse repeats. Stray "…", "—", run-on lines and doubled
+    punctuation are a common source of the model gasping or skipping words."""
+    t = text or ""
+    t = t.replace("…", ". ")
+    t = re.sub(r"\.{3,}", ". ", t)  # "..." → one pause
+    t = re.sub(r"\s*[—–]\s*", ", ", t)  # em/en dash → comma pause
+    t = re.sub(r"[ \t]*\n+[ \t]*", ". ", t)  # line breaks → sentence breaks
+    t = re.sub(r"\s+", " ", t)
+    t = re.sub(r"\s+([.,!?;:])", r"\1", t)  # no space before punctuation
+    t = re.sub(r"([.,!?;:])\1+", r"\1", t)  # collapse repeated punctuation
+    return t.strip()
+
+
 def split_sentences(text: str, group_chars: int = GROUP_CHARS) -> list[str]:
-    sentences = re.split(r"(?<=[.!?])\s+", (text or "").strip())
-    groups: list[str] = []
-    buf = ""
-    for s in sentences:
-        if buf and len(buf) + len(s) + 1 > group_chars:
-            groups.append(buf)
-            buf = s
-        else:
-            buf = f"{buf} {s}".strip()
-    if buf:
-        groups.append(buf)
-    return groups
+    """One TTS fragment per sentence. GPT-SoVITS is most reliable synthesizing a
+    single utterance at a time — combining several sentences into one request is
+    what made it gasp through and skip the earlier ones. Over-long sentences are
+    hard-wrapped on spaces; empty pieces are dropped."""
+    text = _normalize_for_tts(text)
+    out: list[str] = []
+    for s in _SENT_END.split(text):
+        s = s.strip()
+        while len(s) > group_chars:
+            cut = s.rfind(" ", 0, group_chars)
+            cut = cut if cut > 0 else group_chars
+            head = s[:cut].strip()
+            if head:
+                out.append(head)
+            s = s[cut:].strip()
+        if s:
+            out.append(s)
+    return out
 
 
 async def _request_wav(client: httpx.AsyncClient, text: str) -> bytes:
+    """Synthesize one fragment. Retries once on a transient failure or a
+    suspiciously tiny response (an error page / empty clip), so a single bad
+    fragment doesn't silently drop words from the middle of a reply."""
     settings = get_settings()
-    r = await client.get(
-        f"{settings.tts_url.rstrip('/')}/tts",
-        params={
-            "text": text,
-            "text_lang": "en",
-            "ref_audio_path": settings.tts_ref_audio,
-            "prompt_text": settings.tts_ref_text,
-            "prompt_lang": "en",
-            "speed_factor": settings.tts_speed,
-            "media_type": "wav",
-        },
-        timeout=300,
-    )
-    r.raise_for_status()
-    return r.content
+    last: Exception | None = None
+    for attempt in range(2):
+        try:
+            r = await client.get(
+                f"{settings.tts_url.rstrip('/')}/tts",
+                params={
+                    "text": text,
+                    "text_lang": "en",
+                    "ref_audio_path": settings.tts_ref_audio,
+                    "prompt_text": settings.tts_ref_text,
+                    "prompt_lang": "en",
+                    "speed_factor": settings.tts_speed,
+                    "media_type": "wav",
+                },
+                timeout=300,
+            )
+            r.raise_for_status()
+            if len(r.content) > 1000:  # a real WAV, not an error / empty body
+                return r.content
+            last = ValueError(f"tiny TTS response ({len(r.content)} bytes)")
+        except Exception as exc:  # noqa: BLE001
+            last = exc
+        log.warning("tts fragment retry (attempt %d): %s", attempt + 1, last)
+    raise last or ValueError("tts request failed")
 
 
 def _encode_mp3(wav_paths: list[Path], out_path: Path) -> None:

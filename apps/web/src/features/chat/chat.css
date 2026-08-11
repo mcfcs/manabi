@@ -89,6 +89,22 @@
 .chat-msg.user {
   justify-content: flex-end;
 }
+/* Steven's avatar sits to the left of his replies */
+.chat-msg.assistant {
+  gap: var(--s-2);
+  align-items: flex-start;
+}
+.chat-avatar {
+  width: 30px;
+  height: 30px;
+  border-radius: 50%;
+  object-fit: cover;
+  object-position: center top;
+  flex-shrink: 0;
+  margin-top: 2px;
+  border: 1px solid var(--rule);
+  background: var(--surface);
+}
 
 .chat-bubble {
   max-width: 52ch;
@@ -150,8 +166,12 @@
   resize: none;
   overflow-y: auto;
   max-height: 140px;
-  line-height: 1.5;
+  line-height: 1.4;
   font-family: inherit;
+  /* vertical padding centers a single line inside the 44px touch target
+     (and reads fine once it grows to multiple lines) */
+  padding-top: 10px;
+  padding-bottom: 10px;
 }
 .chat-send {
   flex: 0 0 auto;

@@ -1,5 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
-import { Link } from "@tanstack/react-router";
+import { Link, useRouterState } from "@tanstack/react-router";
 import {
   CalendarClock,
   CalendarDays,
@@ -137,6 +137,16 @@ export function AppShell({
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [searchOpen, setSearchOpen] = useState(false);
   const [moreOpen, setMoreOpen] = useState(false);
+
+  // Close global overlays on navigation — the Settings dialog / More sheet /
+  // search palette live in the never-unmounting shell, so without this they
+  // linger after you move to another page (e.g. out of the mobile "More" menu).
+  const pathname = useRouterState({ select: (s) => s.location.pathname });
+  useEffect(() => {
+    setSettingsOpen(false);
+    setMoreOpen(false);
+    setSearchOpen(false);
+  }, [pathname]);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {

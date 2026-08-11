@@ -342,7 +342,7 @@ export function AssistantPage() {
             <Menu size={18} strokeWidth={1.75} />
           </button>
           <span className="chat-mbar-title">
-            {activeThreadObj?.title ?? "Steven Starphase"}
+            {activeThreadObj?.title ?? "Steven AI Starphase"}
           </span>
           <button
             className="icon-btn chat-mbar-btn"
@@ -362,7 +362,7 @@ export function AssistantPage() {
             onClick={() => setSettingsOpen(true)}
           >
             <SlidersHorizontal size={13} strokeWidth={1.75} />
-            {activeThreadObj.teacher_mode ? "Steven Starphase" : "Plain assistant"} ·{" "}
+            {activeThreadObj.teacher_mode ? "Steven AI Starphase" : "Plain assistant"} ·{" "}
             {activeThreadObj.scope_module_ids?.length
               ? `${activeThreadObj.scope_module_ids.length} modules`
               : activeThreadObj.auto_materials
@@ -380,7 +380,7 @@ export function AssistantPage() {
         <div className="chat-messages">
           {(messages.data ?? []).length === 0 && !answering.running && (
             <div className="gen-empty chat-empty">
-              <p className="asst-empty-title">Steven Starphase</p>
+              <p className="asst-empty-title">Steven AI Starphase</p>
               <p>
                 Your personal assistant. Ask about your schedule, tasks, or any
                 of your courses — or anything else, like coding, math, or
@@ -390,6 +390,9 @@ export function AssistantPage() {
           )}
           {(messages.data ?? []).map((m) => (
             <div key={m.id} className={`chat-msg ${m.role}`}>
+              {m.role === "assistant" && (
+                <img className="chat-avatar" src="/steven.jpg" alt="Steven" />
+              )}
               <div className="chat-bubble">
                 {m.general_knowledge && (
                   <span className="badge stale chat-gk-badge">
@@ -425,6 +428,7 @@ export function AssistantPage() {
           ))}
           {answering.running && (
             <div className="chat-msg assistant">
+              <img className="chat-avatar" src="/steven.jpg" alt="Steven" />
               <div className="chat-bubble chat-typing">
                 {answering.job?.preview ? (
                   <p className="chat-preview">{answering.job.preview}</p>
@@ -470,7 +474,7 @@ export function AssistantPage() {
             <div className="chat-drawer-backdrop" onClick={() => setDrawer(false)} />
             <aside className="chat-drawer" role="dialog" aria-label="Conversations">
               <header className="chat-drawer-head">
-                <span>Steven Starphase</span>
+                <span>Steven AI Starphase</span>
                 <button
                   className="icon-btn"
                   onClick={() => setDrawer(false)}

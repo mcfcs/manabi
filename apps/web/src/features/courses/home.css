@@ -26,6 +26,89 @@
   margin: 0;
 }
 
+/* ── A letter from Steven (daily briefing on the home page) ──── */
+
+.steven-letter {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-2);
+  padding: var(--s-4);
+  margin-bottom: var(--s-5);
+  background: var(--surface-raised);
+  border: 1px solid var(--rule);
+  border-left: 3px solid var(--accent-red);
+  border-radius: var(--radius);
+}
+.steven-letter-head {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+}
+.steven-letter-avatar {
+  width: 38px;
+  height: 38px;
+  border-radius: 50%;
+  object-fit: cover;
+  object-position: center top;
+  border: 1px solid var(--rule);
+  background: var(--surface);
+  flex-shrink: 0;
+}
+.steven-letter-from {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  flex: 1;
+}
+.steven-letter-label {
+  font-family: var(--font-display);
+  font-weight: 600;
+  font-size: 15px;
+  color: var(--ink);
+}
+.steven-letter-date {
+  font-size: 12px;
+  color: var(--ink-faint);
+}
+.steven-letter-x {
+  flex-shrink: 0;
+  border: none;
+  background: none;
+  color: var(--ink-faint);
+  padding: var(--s-1);
+  border-radius: var(--radius-sm);
+}
+.steven-letter-x:hover {
+  background: var(--surface);
+  color: var(--ink-soft);
+}
+.steven-letter-body {
+  font-family: var(--font-reading);
+  line-height: 1.65;
+  color: var(--ink);
+  white-space: pre-wrap;
+  max-width: 68ch;
+}
+.steven-letter-body p {
+  margin: 0;
+}
+.steven-letter-composing {
+  color: var(--ink-faint);
+  font-style: italic;
+}
+.steven-letter-open {
+  align-self: flex-start;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 13px;
+  color: var(--accent-blue);
+}
+.steven-letter-open:hover {
+  color: var(--accent-blue-deep);
+  text-decoration: none;
+}
+
 /* ── Course cards ───────────────────────────────────────────── */
 
 .course-grid {
@@ -181,21 +264,31 @@
 .course-card-actions:focus-within {
   opacity: 1;
 }
-/* Touch: keep actions visible but move them into normal flow at the
-   card's bottom edge so they never sit on top of the title */
+/* Touch: keep actions visible but move them into normal flow at the card's
+   bottom edge. The single border wraps the WHOLE card (body + actions), so the
+   inner Link drops its own border/radius/background. */
 @media (pointer: coarse), (max-width: 767px) {
-  .course-card-actions {
-    position: static;
-    opacity: 1;
-    justify-content: flex-end;
-    padding: 0 var(--s-2) var(--s-2);
-    margin-top: calc(-1 * var(--s-2));
-  }
   .course-card-wrap {
     display: flex;
     flex-direction: column;
     background: var(--surface-raised);
+    border: 1px solid var(--rule);
     border-radius: var(--radius);
+    overflow: hidden;
+  }
+  .course-card-wrap > .course-card {
+    border: none;
+    border-radius: 0;
+    background: none;
+    min-height: 0;
+  }
+  .course-card-actions {
+    position: static;
+    opacity: 1;
+    justify-content: flex-end;
+    padding: var(--s-1) var(--s-2);
+    margin-top: 0;
+    border-top: 1px solid var(--rule);
   }
 }
 .course-card-actions .icon-btn {

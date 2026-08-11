@@ -167,6 +167,9 @@ class _Res:
     def scalar_one_or_none(self):
         return self._value
 
+    def first(self):
+        return self._value
+
 
 class _ScriptedDB:
     """Returns a scripted sequence of execute() results; records adds + commit."""
@@ -239,9 +242,11 @@ async def test_briefing_idempotent_same_day(monkeypatch):
         monkeypatch, last_date=_dt.date(2026, 8, 12)
     )
     existing = types.SimpleNamespace(id=5)
-    db = _ScriptedDB([_Res(existing), _Res(42)])  # thread found, then its msg id
+    # thread found, then its first assistant message row (id, content)
+    db = _ScriptedDB([_Res(existing), _Res((42, "Good day, testday."))])
     out = await asst.ensure_daily_briefing(user=_User(), db=db)
     assert out.thread_id == 5
     assert out.generating is False
     assert out.message_id == 42
+    assert out.body == "Good day, testday."
     assert "task" not in captured  # no new job deferred

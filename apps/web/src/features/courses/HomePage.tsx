@@ -24,6 +24,7 @@ import { api, type CourseOut } from "../../lib/api";
 import { Announcements } from "./Announcements";
 import { CourseDialog } from "./CourseDialog";
 import { HomeWidgets } from "./HomeWidgets";
+import { StevenLetter } from "./StevenLetter";
 import "./home.css";
 
 function CourseCard({
@@ -150,6 +151,7 @@ export function HomePage() {
 
   return (
     <div className="home">
+      <StevenLetter />
       <header className="home-head">
         <h1>Your Courses</h1>
         <button

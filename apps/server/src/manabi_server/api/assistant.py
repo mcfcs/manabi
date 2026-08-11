@@ -96,6 +96,19 @@ class BriefingOut(BaseModel):
     message_id: int | None = None
     job_id: int | None = None
     generating: bool
+    body: str | None = None  # Steven's greeting text, once written
+
+
+async def _briefing_in_flight(db: AsyncSession, thread_id: int) -> Job | None:
+    return (
+        await db.execute(
+            select(Job).where(
+                Job.job_type == "daily_briefing",
+                Job.payload["thread_id"].as_string() == str(thread_id),
+                Job.status.in_([JobStatus.queued, JobStatus.running]),
+            )
+        )
+    ).scalar_one_or_none()
 
 
 @router.post("/briefing", dependencies=[Depends(require_csrf)])
@@ -103,9 +116,9 @@ async def ensure_daily_briefing(
     user: User = Depends(get_default_user), db: AsyncSession = Depends(get_db)
 ) -> BriefingOut:
     """Ensure today's (Manila) morning briefing exists. Steven posts a "good day"
-    digest as his first assistant message in a per-day thread. Idempotent: called
-    on assistant open, it generates ONCE per Manila day — repeat calls the same
-    day return the same thread with no new job."""
+    digest as his first assistant message in a per-day thread; the greeting text
+    is returned in `body` once written. Idempotent per Manila day — called on
+    both the home page and the assistant open."""
     # Lazy imports (mirror api/chat.py) to avoid app-startup import cycles.
     from manabi_server.api.settings import get_app_settings
     from manabi_server.services.context import build_personal_context
@@ -124,11 +137,12 @@ async def ensure_daily_briefing(
         )
     ).scalar_one_or_none()
 
-    # Already produced today → return the cached thread + its greeting, no job.
-    if settings.last_briefing_date == today and thread is not None:
-        msg_id = (
+    if thread is not None:
+        # Greeting already written → return it (ready); the message is the
+        # authoritative "done" signal.
+        msg = (
             await db.execute(
-                select(ChatMessage.id)
+                select(ChatMessage.id, ChatMessage.content)
                 .where(
                     ChatMessage.thread_id == thread.id,
                     ChatMessage.role == ChatRole.assistant,
@@ -136,24 +150,20 @@ async def ensure_daily_briefing(
                 .order_by(ChatMessage.id)
                 .limit(1)
             )
-        ).scalar_one_or_none()
-        return BriefingOut(thread_id=thread.id, message_id=msg_id, generating=False)
-
-    # A briefing job already in flight for today's thread → don't double-generate.
-    if thread is not None:
-        in_flight = (
-            await db.execute(
-                select(Job).where(
-                    Job.job_type == "daily_briefing",
-                    Job.payload["thread_id"].as_string() == str(thread.id),
-                    Job.status.in_([JobStatus.queued, JobStatus.running]),
-                )
-            )
-        ).scalar_one_or_none()
-        if in_flight is not None:
+        ).first()
+        if msg is not None:
             return BriefingOut(
-                thread_id=thread.id, job_id=in_flight.id, generating=True
+                thread_id=thread.id, message_id=msg[0], body=msg[1], generating=False
             )
+        # Not written yet — a job may still be composing it (the home page and
+        # the assistant both POST on load, so one triggers, the other waits).
+        in_flight = await _briefing_in_flight(db, thread.id)
+        if in_flight is not None:
+            return BriefingOut(thread_id=thread.id, job_id=in_flight.id, generating=True)
+        # Thread exists, no greeting, no job: if already briefed today, don't
+        # loop — otherwise fall through and (re)generate.
+        if settings.last_briefing_date == today:
+            return BriefingOut(thread_id=thread.id, generating=False)
 
     if thread is None:
         thread = ChatThread(
