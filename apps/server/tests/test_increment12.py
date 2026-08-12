@@ -64,6 +64,94 @@ def test_has_native_text_gate():
     assert layout.has_native_text(blank) is False
 
 
+# ── Rotation baking (scanned pages) ───────────────────────────────────────
+
+
+def _rotated_scan_pdf(rotation: int) -> pymupdf.Document:
+    """A synthetic 'scan' (vector marks, NO text layer) with an asymmetric
+    red/blue marker, then rotated via /Rotate — the shape a rotated book scan
+    takes: get_text() is empty so normalize_rotation rasterizes it upright."""
+    doc = pymupdf.open()
+    page = doc.new_page(width=300, height=400)  # portrait media box
+    page.draw_rect(pymupdf.Rect(20, 20, 140, 110), color=(1, 0, 0), fill=(1, 0, 0))
+    page.draw_circle(pymupdf.Point(60, 360), 26, color=(0, 0, 1), fill=(0, 0, 1))
+    page.set_rotation(rotation)
+    return doc
+
+
+def _gray(page):
+    import numpy as np
+
+    px = page.get_pixmap(dpi=72)
+    return np.frombuffer(px.samples, dtype=np.uint8).reshape(px.height, px.width, px.n)
+
+
+def test_normalize_rotation_bakes_scan_upright():
+    """A rotated scan must bake to a rotation-0 page whose rendered pixels match
+    the source's upright appearance (get_pixmap honours /Rotate = ground truth).
+    Guards the bug where show_pdf_page silently produced sideways images."""
+    import numpy as np
+
+    for rot in (90, 180, 270):
+        src = _rotated_scan_pdf(rot)
+        ref = _gray(src[0])  # ground-truth upright view
+        baked = layout.normalize_rotation(src)
+        assert baked is not None
+        assert baked[0].rotation == 0
+        assert round(baked[0].rect.width) == round(src[0].rect.width)
+        assert round(baked[0].rect.height) == round(src[0].rect.height)
+        got = _gray(baked[0])
+        assert got.shape == ref.shape, f"rot {rot}: {got.shape} != {ref.shape}"
+        diff = float(np.abs(got.astype(int) - ref.astype(int)).mean())
+        assert diff < 6, f"rot {rot}: baked not upright (mean pixel diff {diff:.1f})"
+
+
+def test_normalize_rotation_noop_when_upright():
+    doc = pymupdf.open()
+    doc.new_page(width=300, height=400)
+    assert layout.normalize_rotation(doc) is None
+
+
+def _p(text, typ="paragraph"):
+    return {"type": typ, "text": text, "page_no": 1, "bbox": None}
+
+
+def test_join_drop_caps_merges_after_heading():
+    els = pipeline._join_drop_caps(
+        [_p("ONE", "heading"), _p("S creams broke the evening stillness in San Ricardo now")]
+    )
+    assert els[1]["text"].startswith("Screams broke")
+
+
+def test_join_drop_caps_preserves_single_letter_words():
+    # A / I / O are real words — never merged, even right after a heading.
+    for lead in ("A", "I", "O"):
+        els = pipeline._join_drop_caps(
+            [_p("H", "heading"), _p(f"{lead} man walked slowly along the quiet dusty village road")]
+        )
+        assert els[1]["text"].startswith(f"{lead} ")
+
+
+def test_join_drop_caps_ignores_short_and_unanchored():
+    # short 'T cell' label (not long prose) and a paragraph not after a heading
+    a = pipeline._join_drop_caps([_p("H", "heading"), _p("T cells")])
+    assert a[1]["text"] == "T cells"
+    b = pipeline._join_drop_caps([_p("body first"), _p("S creams broke the evening stillness here now")])
+    assert b[1]["text"].startswith("S creams")  # no preceding heading → untouched
+
+
+def test_normalize_rotation_preserves_rotated_text_layer():
+    """A rotated page that DOES carry text keeps its text (copied verbatim,
+    not rasterized) so native-text PDFs never lose their selectable layer."""
+    doc = pymupdf.open()
+    page = doc.new_page(width=300, height=400)
+    page.insert_text((40, 60), "SELECTABLE", fontsize=18)
+    page.set_rotation(90)
+    baked = layout.normalize_rotation(doc)
+    assert baked is not None
+    assert "SELECTABLE" in baked[0].get_text("text")
+
+
 # ── Column-aware reading order ────────────────────────────────────────────
 
 

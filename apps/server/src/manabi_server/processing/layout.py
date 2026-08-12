@@ -79,22 +79,42 @@ def detect_spread(fitz_doc) -> tuple[bool, list[float | None]]:
     return doc_is_spread, gutters
 
 
+# Rasterization DPI when baking a rotated *scan* upright. The source scans run
+# ~150 DPI; 200 gives OCR headroom without inflating the file for no new detail.
+_BAKE_DPI = 200
+
+
 def normalize_rotation(fitz_doc):
-    """Return a NEW upright PDF with every page's /Rotate baked in — each source
-    page drawn upright via show_pdf_page (preserves the native text layer AND
-    image content; page_count unchanged). Returns None when no page is rotated
-    (caller keeps the original). Reused by the split and no-split normalization
-    paths so parse/render/bbox share one upright coordinate space — clipping or
-    OCRing a rotated source otherwise yields sideways/mis-mapped output."""
+    """Return a NEW upright PDF with every page's /Rotate baked in (page_count
+    unchanged), or None when no page is rotated (caller keeps the original).
+    Reused by the split and no-split paths so parse/render/bbox share one upright
+    coordinate space — clipping or OCRing a rotated source otherwise yields
+    sideways/mis-mapped output.
+
+    Every baked page ends up rotation-0 and upright, but the mechanism differs
+    by content because PyMuPDF 1.28's show_pdf_page honours a page's /Rotate for
+    text/vector content yet silently draws embedded IMAGES sideways:
+      • rotated SCAN page (no text layer) → rasterize upright via get_pixmap,
+        which reliably applies /Rotate (this is the bug fix — the old blanket
+        show_pdf_page produced sideways scans that scrambled OCR);
+      • rotated NATIVE-text page → show_pdf_page, which orients text correctly
+        AND keeps the selectable text layer;
+      • unrotated page → copied verbatim."""
     import pymupdf
 
     if not any(page.rotation for page in fitz_doc):
         return None
     baked = pymupdf.open()
     for i, page in enumerate(fitz_doc):
-        r = page.rect  # visible rect: rotation already applied
-        np = baked.new_page(width=r.width, height=r.height)
-        np.show_pdf_page(np.rect, fitz_doc, i)  # draws the page upright
+        if not page.rotation:
+            baked.insert_pdf(fitz_doc, from_page=i, to_page=i)
+            continue
+        r = page.rect  # visible (rotation-applied) dimensions
+        new_page = baked.new_page(width=r.width, height=r.height)
+        if page.get_text("text").strip():
+            new_page.show_pdf_page(new_page.rect, fitz_doc, i)  # text stays upright
+        else:
+            new_page.insert_image(new_page.rect, pixmap=page.get_pixmap(dpi=_BAKE_DPI))
     return baked
 
 

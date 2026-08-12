@@ -10,6 +10,7 @@ Stages: structure (Docling parse + speaker notes + persist pages/elements)
 """
 
 import logging
+import re
 import subprocess
 import tempfile
 from pathlib import Path
@@ -229,6 +230,9 @@ def _stage_structure(db: Session, doc: Document) -> None:
         # Running heads on scanned books OCR differently each page, defeating
         # exact-repeat stripping — remove them by position instead.
         parsed["elements"] = _strip_margin_repeats(parsed["elements"])
+    # Re-join scanned drop-cap initials ("S creams" → "Screams"); safe no-op on
+    # native text and non-drop-cap paragraphs.
+    parsed["elements"] = _join_drop_caps(parsed["elements"])
 
     notes_by_page: dict[int, str] = {}
     titles_by_page: dict[int, str] = {}
@@ -356,6 +360,35 @@ def _strip_margin_repeats(elements: list[dict]) -> list[dict]:
     return kept
 
 
+# A scanned drop-cap initial is read by full-page OCR as a lone capital split
+# from its word ("S creams"). Re-join it — but ONLY a consonant excluding the
+# real single-letter words A/I/O, so "A man", "I have", "O nce" are never
+# touched. Position + length are further gated by the caller.
+_DROP_CAP_RE = re.compile(r"^([B-HJ-NP-Z]) (?=[a-z])")
+_DROP_CAP_MIN_LEN = 40  # drop caps lead real body prose, not short labels
+
+
+def _join_drop_caps(elements: list[dict]) -> list[dict]:
+    """Re-attach a drop-cap initial to its word in the first body paragraph
+    right after a heading — the classic drop-cap position. Gated tightly (post-
+    heading + long paragraph + consonant≠A/I/O) so ordinary text and technical
+    openers ('T cell') are never merged. No-op when OCR already joined it."""
+    prev_heading = False
+    for el in elements:
+        text = el.get("text") or ""
+        if (
+            el.get("type") == "paragraph"
+            and prev_heading
+            and len(text) >= _DROP_CAP_MIN_LEN
+        ):
+            joined = _DROP_CAP_RE.sub(r"\1", text, count=1)
+            if joined != text:
+                el["text"] = joined
+                log.info("re-joined drop-cap initial: %r → %r", text[:14], joined[:12])
+        prev_heading = el.get("type") == "heading"
+    return elements
+
+
 INVERSION_TOLERANCE_PTS = 5
 # Scrambled OCR pages measure ~20%+; genuine multi-column pages have one
 # inversion per column break (a few % with realistic element counts).
@@ -461,14 +494,20 @@ def _fix_reading_order(
     return fixed
 
 
-_converter = None
+_converters: dict[bool, object] = {}
 
 
-def _get_converter():
-    """Docling converter singleton — model initialization is expensive (tens of
-    seconds); pay it once per worker process, not once per document."""
-    global _converter
-    if _converter is None:
+def _get_converter(full_page_ocr: bool = False):
+    """Docling converter singletons (one per OCR mode) — model initialization is
+    expensive (tens of seconds); pay it once per mode per worker process.
+
+    full_page_ocr re-OCRs the whole page image instead of only the regions the
+    layout model flags as needing it. It recovers large decorative initials
+    (drop caps / chapter caps) that region OCR drops, so scanned books read
+    correctly ("ONE", "Screams" rather than "NE", "creams"). It's slower and
+    would override a real text layer, so it's used ONLY for scans — native-text
+    PDFs keep the fast, exact default path."""
+    if full_page_ocr not in _converters:
         import os
 
         from docling.datamodel.base_models import InputFormat
@@ -483,14 +522,33 @@ def _get_converter():
         opts = PdfPipelineOptions(
             accelerator_options=AcceleratorOptions(num_threads=os.cpu_count() or 4)
         )
-        _converter = DocumentConverter(
+        if full_page_ocr:
+            try:
+                from docling.datamodel.pipeline_options import OcrMode
+
+                opts.ocr_options.mode = OcrMode.FULL_PAGE
+            except Exception:  # noqa: BLE001 — older docling: deprecated flag
+                opts.ocr_options.force_full_page_ocr = True
+        _converters[full_page_ocr] = DocumentConverter(
             format_options={InputFormat.PDF: PdfFormatOption(pipeline_options=opts)}
         )
-    return _converter
+    return _converters[full_page_ocr]
+
+
+# Bump whenever parse or normalization logic changes (e.g. rotation baking,
+# reading-order, boilerplate rules) so stale cached parses are auto-invalidated
+# instead of silently re-served on the next re-extraction.
+#   v2: rotated scans rasterized upright in normalize_rotation (was sideways).
+#   v3: scanned PDFs use full-page OCR (recovers dropped drop-cap initials).
+_PARSE_CACHE_VERSION = 3
 
 
 def _parse_cache_path(cache_key: str) -> Path:
-    return files.storage_root() / "parse-cache" / f"{cache_key}.json"
+    return (
+        files.storage_root()
+        / "parse-cache"
+        / f"v{_PARSE_CACHE_VERSION}-{cache_key}.json"
+    )
 
 
 def _docling_parse(source: Path, cache_key: str | None = None) -> dict:
@@ -511,7 +569,15 @@ def _docling_parse(source: Path, cache_key: str | None = None) -> dict:
         except Exception:  # noqa: BLE001 — corrupt cache → re-parse
             log.warning("parse cache unreadable, re-parsing: %s", cache_path)
 
-    result = _get_converter().convert(str(source))
+    # Scans (no usable text layer) get full-page OCR so drop-cap initials survive;
+    # native-text PDFs use the fast default path (its real text layer is exact).
+    import pymupdf
+
+    from manabi_server.processing import layout
+
+    with pymupdf.open(str(source)) as _probe:
+        is_scan = not layout.has_native_text(_probe)
+    result = _get_converter(full_page_ocr=is_scan).convert(str(source))
     dl_doc = result.document
 
     elements: list[dict] = []
