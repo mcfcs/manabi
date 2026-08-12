@@ -9,6 +9,7 @@ import {
 } from "lucide-react";
 import { useState } from "react";
 
+import { Markdown } from "../../components/Markdown";
 import { api, type LectureOut } from "../../lib/api";
 import { CitationPill, JobProgress, StalenessBadge, useGenerationJob } from "../ai/common";
 import { LecturePlayer } from "./LecturePlayer";
@@ -108,6 +109,12 @@ export function TeacherTab({ moduleId }: { moduleId: string }) {
       api.post<{ job_id: number }>(`/api/modules/${moduleId}/lecture/remediate`),
     onSuccess: (r) => gen.start(r.job_id),
   });
+  const genAudio = useMutation({
+    mutationFn: (artifactId: number) =>
+      api.post(`/api/artifacts/${artifactId}/audio/generate`),
+    onSuccess: () =>
+      queryClient.invalidateQueries({ queryKey: ["lecture", moduleId] }),
+  });
 
   const l = lecture.data;
 
@@ -187,6 +194,24 @@ export function TeacherTab({ moduleId }: { moduleId: string }) {
               configured on the AI node, lectures get Steven's voice.
             </p>
           )}
+          {/* Configured but nothing rendered and no job running → synthesis
+              likely failed (e.g. the TTS server is offline). Offer a retry. */}
+          {l.voice_available &&
+            !l.audio_job_active &&
+            !l.segments.some((s) => s.audio_ready) && (
+              <div className="teacher-voice-note teacher-voice-retry">
+                <span>
+                  Steven's voice isn't ready — the TTS server may be offline.
+                </span>
+                <button
+                  className="btn"
+                  onClick={() => genAudio.mutate(l.artifact_id)}
+                  disabled={genAudio.isPending}
+                >
+                  {genAudio.isPending ? "Starting…" : "Generate voice"}
+                </button>
+              </div>
+            )}
 
           <LecturePlayer lecture={l} activeIndex={openSeg} onSeek={setOpenSeg} />
 
@@ -220,7 +245,9 @@ export function TeacherTab({ moduleId }: { moduleId: string }) {
                       {seg.display_text && (
                         <div className="teacher-board">
                           <span className="teacher-board-label">On the board</span>
-                          <p>{seg.display_text}</p>
+                          <Markdown className="teacher-board-md">
+                            {seg.display_text}
+                          </Markdown>
                         </div>
                       )}
                       {seg.citations.length > 0 && (

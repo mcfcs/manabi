@@ -26,15 +26,23 @@ blocks should cite as close to EVERY source number as possible — do not skip
 topics, slides, or sections of the material. Prefer creating more sections
 over dropping content.
 
-Organize the material into logical sections (not one per source — group by
-concept). Each section has a short title and 2-8 blocks. Each block is one
-focused paragraph (or a compact definition/list rendered as text).
+Organize the material into logical sections. When the material has clear
+top-level sections or headings (e.g. "Introduction", named chapters/parts),
+MIRROR them as your sections — same order, matching titles; otherwise group by
+concept (not one per source). Each section has a short title and 2-8 blocks.
+Each block is one focused paragraph (or a compact definition/list as text).
 
-Also extract:
+Also produce:
+- "overview": a tight 3-5 sentence summary of the WHOLE document — the big
+  picture and how the parts fit together. It synthesizes the sections below, so
+  it needs no source numbers.
 - "key_terms": EVERY term the sources define or explain, each with its
   precise definition exactly as the sources give it. Do not limit the count.
 - "acronyms": EVERY acronym/abbreviation the sources use or expand, with its
   meaning (empty list only if none appear).
+- "people": named people, characters, authors, or figures the material actually
+  discusses, each with a one-line role/description. EMPTY LIST for material not
+  about specific people (most technical/scientific material). Invent no one.
 {{acronym_candidates}}
 Produce JSON matching the schema."""
 
@@ -53,6 +61,7 @@ _CITED = {
 SUMMARY_SCHEMA = {
     "type": "object",
     "properties": {
+        "overview": {"type": "string"},
         "sections": {
             "type": "array",
             "minItems": 1,
@@ -100,8 +109,20 @@ SUMMARY_SCHEMA = {
                 "required": ["acronym", "meaning", "source_ids"],
             },
         },
+        "people": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "name": {"type": "string"},
+                    "description": {"type": "string"},
+                    "source_ids": _CITED,
+                },
+                "required": ["name", "description", "source_ids"],
+            },
+        },
     },
-    "required": ["sections", "key_terms", "acronyms"],
+    "required": ["overview", "sections", "key_terms", "acronyms", "people"],
 }
 
 FLASHCARDS_PROMPT = f"""You are creating {{count}} study flashcards for a university module.
@@ -309,7 +330,9 @@ Each segment needs TWO renditions of the same content:
 - "spoken_text": what you SAY. Plain flowing prose for text-to-speech: no
   markdown, no bullets, no code or table readouts (describe what the code
   DOES instead), numbers and symbols spoken naturally ("about twelve
-  percent", "H two O"), acronyms expanded on first use.
+  percent", "H two O"), acronyms expanded on first use. Break it into SHORT
+  paragraphs (2-4 sentences each) separated by a blank line, so the on-screen
+  script reads cleanly — do NOT return one long block.
 - "display_text": what appears on the board. Markdown allowed — short
   bullets, bold terms, compact notation.
 {{mode_directive}}
@@ -492,24 +515,34 @@ def assistant_prompt_for(
 # short message in Steven's voice.
 DAILY_BRIEFING_PROMPT = (
     STEVEN_PERSONA
-    + "\n\nYou are greeting your protégé at the very start of their day with a"
-    " brief, composed 'good day' digest, fully in character. Below is the"
-    " student's REAL schedule and tasks as PERSONAL CONTEXT — treat it as ground"
-    " truth. Invent nothing that is not in it (no classes, meetings, or"
-    " deadlines that are not listed); if a section is empty, omit it"
-    " gracefully.\n\n"
+    + "\n\nYou are opening your protégé's day with a short, FIRM briefing — a"
+    " demanding but caring mentor who wants them to take today seriously, fully"
+    " in character. Below is the student's REAL schedule and tasks as PERSONAL"
+    " CONTEXT — it is the ONLY ground truth.\n\n"
+    "STRICT GROUNDING (this is where briefings usually go wrong):\n"
+    "- Name ONLY the exact classes, events, and tasks that appear in the"
+    " context, by their real code/title. If it is not listed, it does not"
+    " exist.\n"
+    "- Do NOT invent activities. There is no 'lecture', 'reading', 'review"
+    " session', 'key concepts', or deadline unless a listed item literally says"
+    " so. A class code in the schedule means the class meets — nothing more.\n"
+    "- If a section of the context is empty, omit that part; never pad.\n\n"
+    "TONE: direct, grounded, and motivating. Short declarative sentences. No"
+    " hedging, no fluff, no vague encouragement. Push toward action. A touch of"
+    " Steven's dry steel is welcome; empty cheer is not.\n\n"
     "Produce, in Steven's voice:\n"
-    "- greeting: one short line acknowledging the day (name the weekday/date"
-    " naturally).\n"
-    "- on_today: at most 2-3 short lines on what is on today (classes/meetings"
-    " with their times). Leave empty if nothing is on today.\n"
-    "- due_soon: at most 2-3 short lines on what is due soon, flagging anything"
-    " OVERDUE or due today. Leave empty if nothing is due.\n"
-    "- focus: EXACTLY ONE suggested study focus for the day, chosen from what is"
-    " due soonest or most at risk, phrased as a single actionable sentence. If"
-    " nothing is pressing, suggest getting ahead or reviewing recent notes.\n"
-    "- closing: one brief parting line.\n\n"
-    "Keep the whole thing under ~120 words. Plain flowing prose meant to be read"
+    "- greeting: one short line naming the weekday/date naturally, with intent"
+    " (not just 'good morning').\n"
+    "- on_today: at most 2-3 short lines listing today's actual classes/events"
+    " WITH their times, exactly as given. Empty if none.\n"
+    "- due_soon: at most 2-3 short lines on what is actually due, leading with"
+    " anything OVERDUE or due today. Empty if nothing is due.\n"
+    "- focus: EXACTLY ONE concrete directive for today, and it MUST name a real"
+    " item from the context (the soonest/most-at-risk task, or a class meeting"
+    " today). If truly nothing is listed, order them to get ahead on their"
+    " weakest course — without inventing a specific assignment.\n"
+    "- closing: one short, firm parting line.\n\n"
+    "Keep the whole thing under ~110 words. Plain flowing prose meant to be read"
     " aloud: no markdown, no bullets, no headers; speak times and numbers"
     " naturally. This is not a citable answer — do not cite sources.\n\n"
     "Produce JSON matching the schema."

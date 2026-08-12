@@ -375,19 +375,42 @@ export function AssistantPage() {
       return;
     }
     setPendingSpeakId(id);
+    setError(null);
     try {
-      await api.post(`/api/chat/messages/${id}/speak`);
+      const res = await api.post<{ ready: boolean; job_id?: number }>(
+        `/api/chat/messages/${id}/speak`,
+      );
+      if (res.ready) {
+        playMessage(id);
+        return;
+      }
       for (let i = 0; i < 40; i++) {
         await new Promise((r) => setTimeout(r, 2500));
+        // Surface a failed synthesis (e.g. the TTS server is offline) instead
+        // of spinning silently for the full timeout.
+        if (res.job_id) {
+          try {
+            const job = await api.get<{ status: string }>(`/api/jobs/${res.job_id}`);
+            if (job.status === "failed") {
+              setError(
+                "Steven's voice is unavailable — start the TTS server and try again.",
+              );
+              return;
+            }
+          } catch {
+            /* transient — keep polling for the audio itself */
+          }
+        }
         const head = await fetch(`/api/chat/messages/${id}/audio`, {
           credentials: "same-origin",
         });
         if (head.ok) {
           qc.invalidateQueries({ queryKey: ["chat-messages", activeThread] });
           playMessage(id);
-          break;
+          return;
         }
       }
+      setError("Voice timed out — the TTS server may be offline.");
     } finally {
       setPendingSpeakId(null);
     }

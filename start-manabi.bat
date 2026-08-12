@@ -88,7 +88,7 @@ REM Moves with the GPU worker; skipped automatically if C:\GPT-SoVITS is absent.
 if exist "C:\GPT-SoVITS\api_v2.py" (
     powershell -NoProfile -Command "exit [int][bool](Get-NetTCPConnection -LocalPort 9880 -State Listen -ErrorAction SilentlyContinue)" >nul 2>&1
     if not errorlevel 1 (
-        start "Manabi TTS (Steven)" cmd /k "cd /d C:\GPT-SoVITS && set PYTHONUTF8=1 && .venv\Scripts\python api_v2.py -a 127.0.0.1 -p 9880"
+        start "Manabi TTS (Steven)" cmd /k "cd /d C:\GPT-SoVITS && set PYTHONUTF8=1&& .venv\Scripts\python api_v2.py -a 127.0.0.1 -p 9880"
         echo [tts]      Steven voice server starting on 127.0.0.1:9880
     ) else (
         echo [tts]      Steven voice server already running on 9880

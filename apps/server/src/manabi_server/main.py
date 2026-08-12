@@ -1,11 +1,18 @@
 import asyncio
 import contextlib
+import mimetypes
 from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import FileResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
+
+# Windows' registry maps .mjs/.js to text/plain, which browsers reject for
+# module scripts (the pdf.js worker is an ES module). Force the JS MIME type so
+# StaticFiles/FileResponse serve worker + chunks correctly.
+mimetypes.add_type("text/javascript", ".mjs")
+mimetypes.add_type("text/javascript", ".js")
 
 from manabi_server.api import (
     ai,

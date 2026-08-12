@@ -4,11 +4,96 @@
   gap: var(--s-4);
 }
 
+/* Sidebar + reading column. Sidebar sticks on desktop; on mobile it becomes a
+   horizontally-scrollable chip bar above the summary. */
+.summary-layout {
+  display: grid;
+  grid-template-columns: 190px minmax(0, 1fr);
+  gap: var(--s-6);
+  align-items: start;
+}
+.summary-nav {
+  position: sticky;
+  top: var(--s-3);
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  max-height: calc(100vh - 120px);
+  overflow-y: auto;
+  padding-right: var(--s-2);
+  border-right: 1px solid var(--rule);
+}
+.summary-nav-item {
+  text-align: left;
+  background: none;
+  border: none;
+  cursor: pointer;
+  font-size: 13px;
+  color: var(--ink-soft);
+  padding: 6px 8px;
+  border-radius: var(--radius-sm);
+  border-left: 2px solid transparent;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  transition: background var(--t-fast) var(--ease), color var(--t-fast) var(--ease);
+}
+.summary-nav-item:hover {
+  background: var(--surface);
+  color: var(--ink);
+  border-left-color: var(--accent-blue);
+}
+
+.summary-overview {
+  background: var(--surface);
+  border-left: 3px solid var(--accent-blue);
+  border-radius: var(--radius-sm);
+  padding: var(--s-3) var(--s-4);
+}
+.summary-overview h2 {
+  margin-top: 0 !important;
+  border-bottom: none !important;
+  font-size: 15px !important;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--ink-faint);
+}
+.summary-overview p {
+  margin: 0;
+}
+
 .summary-body {
   max-width: 74ch;
   font-family: var(--font-reading);
   font-size: 16px;
   line-height: 1.7;
+}
+
+@media (max-width: 760px) {
+  .summary-layout {
+    grid-template-columns: 1fr;
+    gap: var(--s-3);
+  }
+  .summary-nav {
+    position: static;
+    flex-direction: row;
+    max-height: none;
+    overflow-x: auto;
+    overflow-y: hidden;
+    border-right: none;
+    border-bottom: 1px solid var(--rule);
+    padding: 0 0 var(--s-2);
+    -webkit-overflow-scrolling: touch;
+  }
+  .summary-nav-item {
+    border-left: none;
+    border-bottom: 2px solid transparent;
+    flex: 0 0 auto;
+  }
+  .summary-nav-item:hover {
+    border-left-color: transparent;
+    border-bottom-color: var(--accent-blue);
+  }
 }
 
 .summary-body h2 {

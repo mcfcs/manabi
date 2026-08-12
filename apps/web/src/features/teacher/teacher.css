@@ -91,6 +91,13 @@
   padding: var(--s-2) var(--s-3);
   margin: 0;
 }
+.teacher-voice-retry {
+  justify-content: space-between;
+  flex-wrap: wrap;
+}
+.teacher-voice-retry .btn {
+  flex-shrink: 0;
+}
 
 /* ── Player ────────────────────────────────────────────────── */
 
@@ -184,10 +191,14 @@
   color: var(--ink-faint);
   margin-bottom: var(--s-1);
 }
-.teacher-board p {
-  margin: 0;
+.teacher-board-md {
   font-size: 13.5px;
-  white-space: pre-line;
+}
+.teacher-board-md p {
+  margin: 0 0 var(--s-1);
+}
+.teacher-board-md p:last-child {
+  margin-bottom: 0;
 }
 .teacher-cites {
   display: flex;

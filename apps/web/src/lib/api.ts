@@ -405,15 +405,22 @@ export interface Acronym {
   user_added?: boolean;
 }
 
+export interface Person {
+  name: string;
+  description: string;
+}
+
 export interface SummaryOut {
   artifact_id: number;
   title: string;
   model_name: string;
   generated_at: string;
   staleness: Staleness;
+  overview: string;
   sections: SummarySection[];
   key_terms: KeyTerm[];
   acronyms: Acronym[];
+  people: Person[];
   coverage: { cited: number; total: number } | null;
   citations: Record<string, CitationOut[]>;
 }

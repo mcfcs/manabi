@@ -36,6 +36,7 @@ import {
   type SummaryOut,
 } from "../../lib/api";
 import { ChatPanel } from "../chat/ChatPanel";
+import { PdfJsView } from "./PdfJsView";
 import {
   type AnnotationMark,
   countTermsPresent,
@@ -192,10 +193,14 @@ function useSelectionPopover({
       }
       const rect = range.getBoundingClientRect();
       const POP_W = 236;
+      // Centre the popover under the selection's midpoint (viewport coords —
+      // the popover is portalled to <body>, so `fixed` is viewport-relative and
+      // never inherits the sidebar-offset of a transformed ancestor).
+      const centerX = (rect.left + rect.right) / 2;
       pending.current = {
         quote: text.slice(0, 2000),
         pageNo,
-        x: Math.max(8, Math.min(rect.left, window.innerWidth - POP_W - 8)),
+        x: Math.max(8, Math.min(centerX - POP_W / 2, window.innerWidth - POP_W - 8)),
         y:
           rect.bottom + 8 + 52 > window.innerHeight
             ? Math.max(8, rect.top - 52)
@@ -612,7 +617,7 @@ export function DocumentViewer() {
               className={`icon-btn${mode === "original" ? " active" : ""}`}
               onClick={() => setMode("original")}
               aria-label="Original PDF"
-              title="Browser PDF viewer — Ctrl+F and copy/paste work natively"
+              title="Original PDF — select text to highlight or ask Steven"
             >
               <FileSearch size={17} strokeWidth={1.5} />
             </button>
@@ -671,19 +676,18 @@ export function DocumentViewer() {
         </div>
       )}
 
-      {mode === "original" && (
-        <iframe
-          className="viewer-original"
-          // When actually split, the logical page number no longer maps to the
-          // original PDF's page — open the original without a jump.
-          src={
-            d.page_layout === "spread"
-              ? `/api/documents/${documentId}/original?inline=1`
-              : `/api/documents/${documentId}/original?inline=1#page=${page}`
-          }
-          title={d.filename}
-        />
-      )}
+      {mode === "original" &&
+        (d.kind === "pdf" ? (
+          // Real PDF rendered in-browser (pdf.js) with a selectable text layer,
+          // so highlight + Ask work directly on the page — see PdfJsView.
+          <PdfJsView documentId={documentId} />
+        ) : (
+          <iframe
+            className="viewer-original"
+            src={`/api/documents/${documentId}/original?inline=1`}
+            title={d.filename}
+          />
+        ))}
 
       {mode === "grid" && (
         <div className="viewer-grid">

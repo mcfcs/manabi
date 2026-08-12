@@ -310,9 +310,11 @@ async def get_artifact_version(
         "citations": {k: [c.model_dump() for c in v] for k, v in citations.items()},
     }
     if artifact.artifact_type == ArtifactType.summary:
+        base["overview"] = artifact.content.get("overview", "")
         base["sections"] = artifact.content.get("sections", [])
         base["key_terms"] = artifact.content.get("key_terms", [])
         base["acronyms"] = artifact.content.get("acronyms", [])
+        base["people"] = artifact.content.get("people", [])
     elif artifact.artifact_type == ArtifactType.flashcard_deck:
         cards = (
             (
@@ -521,9 +523,11 @@ class SummaryOut(BaseModel):
     model_name: str
     generated_at: datetime
     staleness: str
+    overview: str = ""
     sections: list[dict]
     key_terms: list[dict] = []
     acronyms: list[dict] = []
+    people: list[dict] = []
     coverage: dict | None = None
     citations: dict[str, list[CitationOut]]
 
@@ -541,9 +545,11 @@ async def get_summary(
         model_name=artifact.model_name,
         generated_at=artifact.created_at,
         staleness=await _staleness(db, artifact),
+        overview=artifact.content.get("overview", ""),
         sections=artifact.content.get("sections", []),
         key_terms=artifact.content.get("key_terms", []),
         acronyms=artifact.content.get("acronyms", []),
+        people=artifact.content.get("people", []),
         coverage=artifact.content.get("coverage"),
         citations=await _citations_by_ref(db, artifact.id),
     )

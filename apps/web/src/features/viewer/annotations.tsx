@@ -1,6 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Highlighter, NotebookPen, Sparkles, Trash2, X } from "lucide-react";
 import { useEffect, useState } from "react";
+import { createPortal } from "react-dom";
 
 import { api, type AnnotationOut } from "../../lib/api";
 
@@ -58,7 +59,10 @@ export function SelectionPopover({
 }) {
   const [noting, setNoting] = useState(false);
   const [note, setNote] = useState("");
-  return (
+  // Portalled to <body> so position:fixed is viewport-relative — otherwise a
+  // transformed ancestor (the routed content area beside the sidebar) becomes
+  // the containing block and the popover lands far to the right of the text.
+  return createPortal(
     <div
       className="annot-popover"
       style={{ left: selection.x, top: selection.y }}
@@ -136,7 +140,8 @@ export function SelectionPopover({
           )}
         </div>
       )}
-    </div>
+    </div>,
+    document.body,
   );
 }
 

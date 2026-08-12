@@ -7,6 +7,7 @@ artifact + citations → defer support-scoring on the cpu queue.
 """
 
 import logging
+import re
 from datetime import UTC, datetime
 
 from manabi_core.models import (
@@ -203,11 +204,17 @@ async def generate_summary(context, job_id: int, module_id: int) -> None:
             sections: list[dict] = []
             key_terms: list[dict] = []
             acronyms: list[dict] = []
+            people: list[dict] = []
+            overview = ""
             all_citations: list[tuple[str, list[ScopedChunk], str]] = []
             dropped = 0
 
             def absorb(result: dict, ctx) -> None:
-                nonlocal dropped
+                nonlocal dropped, overview
+                # Whole-document overview: keep the first non-empty one (batch 0
+                # opens the document; later batches only cover their slice).
+                if not overview and (ov := (result.get("overview") or "").strip()):
+                    overview = ov
                 for section in result.get("sections", []):
                     kept, d = resolve_items(
                         section.get("blocks", []), ctx.index_map, {module_id}
@@ -268,6 +275,26 @@ async def generate_summary(context, job_id: int, module_id: int) -> None:
                     excerpt = f"{resolved.item['acronym']} means {resolved.item['meaning']}"
                     all_citations.append((ref, resolved.chunks, excerpt))
 
+                kept_people, d = resolve_items(
+                    result.get("people", []), ctx.index_map, {module_id}
+                )
+                dropped += d
+                for resolved in kept_people:
+                    if any(
+                        p["name"].lower() == resolved.item["name"].lower()
+                        for p in people
+                    ):
+                        continue
+                    ref = f"pep:{len(people)}"
+                    people.append(
+                        {
+                            "name": resolved.item["name"],
+                            "description": resolved.item["description"],
+                        }
+                    )
+                    excerpt = f"{resolved.item['name']}: {resolved.item['description']}"
+                    all_citations.append((ref, resolved.chunks, excerpt))
+
             batches = batch_chunks(chunks)
             for bi, batch in enumerate(batches):
                 await _abort_if_requested(db, job, context)
@@ -309,9 +336,11 @@ async def generate_summary(context, job_id: int, module_id: int) -> None:
                 scope_module_ids=[module_id],
                 title=f"Study summary — {module.title}",
                 content={
+                    "overview": overview,
                     "sections": sections,
                     "key_terms": key_terms,
                     "acronyms": acronyms,
+                    "people": people,
                     "coverage": {"cited": len(cited_ids), "total": len(chunks)},
                 },
                 model_name=settings.generation_model,
@@ -1079,7 +1108,10 @@ _MD_CHARS = str.maketrans({"*": "", "#": "", "`": "", "[": "", "]": "", "|": " "
 
 def sanitize_spoken(text: str) -> str:
     """Belt-and-suspenders TTS cleanup on top of the prompt rules: strip
-    markdown remnants and drop code-looking lines."""
+    markdown remnants and drop code-looking lines. Paragraph breaks are KEPT —
+    the same text is both shown as the on-screen script (white-space: pre-line)
+    and split per-sentence for TTS, so collapsing it into one block made the
+    script an unreadable wall of text."""
     lines = []
     for line in (text or "").split("\n"):
         stripped = line.strip()
@@ -1089,7 +1121,8 @@ def sanitize_spoken(text: str) -> str:
         if line.startswith(("    ", "\t")) and symbol_share > 0.08:
             continue  # code block leak — narrated version exists in prose
         lines.append(stripped.translate(_MD_CHARS))
-    return " ".join(x for x in lines if x).strip()
+    # Keep line/paragraph structure; collapse runs of blank lines to one break.
+    return re.sub(r"\n{3,}", "\n\n", "\n".join(lines)).strip()
 
 
 @app.task(name="manabi_ai.tasks.teach_module", queue="gpu", retry=1, pass_context=True)

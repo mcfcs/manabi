@@ -21,68 +21,126 @@ import {
 import "./summary.css";
 
 function SummaryBody({ s }: { s: SummaryOut }) {
-  return (
-    <article className="summary-body">
-      {s.key_terms.length > 0 && (
-        <section>
-          <h2>Key terms</h2>
-          <dl className="key-terms">
-            {s.key_terms.map((t, i) => (
-              <div className="key-term" key={i}>
-                <dt>{t.term}</dt>
-                <dd>
-                  {t.definition}
-                  <span className="summary-cites">
-                    {t.user_added && <span className="badge stale">added by you</span>}
-                    {t.found_by_ai && <span className="badge fresh">found on request</span>}
-                    {(s.citations[`kt:${i}`] ?? []).map((c) => (
-                      <CitationPill key={c.id} citation={c} />
-                    ))}
-                  </span>
-                </dd>
-              </div>
-            ))}
-          </dl>
-        </section>
-      )}
+  // Sidebar jump-nav: Overview → per-section summaries → People → Key terms →
+  // Acronyms. Only surface a section when it has content.
+  const nav: { id: string; label: string }[] = [];
+  if (s.overview) nav.push({ id: "sum-overview", label: "Overview" });
+  s.sections.forEach((sec, si) =>
+    nav.push({ id: `sum-sec-${si}`, label: sec.title || `Section ${si + 1}` }),
+  );
+  if (s.people?.length) nav.push({ id: "sum-people", label: "People" });
+  if (s.key_terms.length) nav.push({ id: "sum-terms", label: "Key terms" });
+  if (s.acronyms.length) nav.push({ id: "sum-acronyms", label: "Acronyms" });
 
-      {s.acronyms.length > 0 && (
-        <section>
-          <h2>Acronyms</h2>
-          <div className="acronym-grid">
-            {s.acronyms.map((a, i) => (
-              <div className="acronym" key={i}>
-                <span className="acronym-short">{a.acronym}</span>
-                <span className="acronym-long">
-                  {a.meaning}
-                  {(s.citations[`ac:${i}`] ?? []).slice(0, 1).map((c) => (
+  const jump = (id: string) =>
+    document.getElementById(id)?.scrollIntoView({ behavior: "smooth", block: "start" });
+
+  return (
+    <div className="summary-layout">
+      <nav className="summary-nav" aria-label="Summary sections">
+        {nav.map((n) => (
+          <button
+            key={n.id}
+            className="summary-nav-item"
+            onClick={() => jump(n.id)}
+          >
+            {n.label}
+          </button>
+        ))}
+      </nav>
+
+      <article className="summary-body">
+        {s.overview && (
+          <section id="sum-overview" className="summary-overview">
+            <h2>Overview</h2>
+            <p>{s.overview}</p>
+          </section>
+        )}
+
+        {s.sections.map((section, si) => (
+          <section id={`sum-sec-${si}`} key={si}>
+            <h2>
+              {si + 1}. {section.title}
+            </h2>
+            {section.blocks.map((block, bi) => (
+              <div className="summary-block" key={bi}>
+                <p>{block.text}</p>
+                <span className="summary-cites">
+                  {(s.citations[`s${si}:b${bi}`] ?? []).map((c) => (
                     <CitationPill key={c.id} citation={c} />
                   ))}
                 </span>
               </div>
             ))}
-          </div>
-        </section>
-      )}
+          </section>
+        ))}
 
-      {s.sections.map((section, si) => (
-        <section key={si}>
-          <h2>
-            {si + 1}. {section.title}
-          </h2>
-          {section.blocks.map((block, bi) => (
-            <div className="summary-block" key={bi}>
-              <p>{block.text}</p>
-              <span className="summary-cites">
-                {(s.citations[`s${si}:b${bi}`] ?? []).map((c) => (
-                  <CitationPill key={c.id} citation={c} />
-                ))}
-              </span>
+        {s.people?.length > 0 && (
+          <section id="sum-people">
+            <h2>People</h2>
+            <dl className="key-terms">
+              {s.people.map((p, i) => (
+                <div className="key-term" key={i}>
+                  <dt>{p.name}</dt>
+                  <dd>
+                    {p.description}
+                    <span className="summary-cites">
+                      {(s.citations[`pep:${i}`] ?? []).map((c) => (
+                        <CitationPill key={c.id} citation={c} />
+                      ))}
+                    </span>
+                  </dd>
+                </div>
+              ))}
+            </dl>
+          </section>
+        )}
+
+        {s.key_terms.length > 0 && (
+          <section id="sum-terms">
+            <h2>Key terms</h2>
+            <dl className="key-terms">
+              {s.key_terms.map((t, i) => (
+                <div className="key-term" key={i}>
+                  <dt>{t.term}</dt>
+                  <dd>
+                    {t.definition}
+                    <span className="summary-cites">
+                      {t.user_added && <span className="badge stale">added by you</span>}
+                      {t.found_by_ai && (
+                        <span className="badge fresh">found on request</span>
+                      )}
+                      {(s.citations[`kt:${i}`] ?? []).map((c) => (
+                        <CitationPill key={c.id} citation={c} />
+                      ))}
+                    </span>
+                  </dd>
+                </div>
+              ))}
+            </dl>
+          </section>
+        )}
+
+        {s.acronyms.length > 0 && (
+          <section id="sum-acronyms">
+            <h2>Acronyms</h2>
+            <div className="acronym-grid">
+              {s.acronyms.map((a, i) => (
+                <div className="acronym" key={i}>
+                  <span className="acronym-short">{a.acronym}</span>
+                  <span className="acronym-long">
+                    {a.meaning}
+                    {(s.citations[`ac:${i}`] ?? []).slice(0, 1).map((c) => (
+                      <CitationPill key={c.id} citation={c} />
+                    ))}
+                  </span>
+                </div>
+              ))}
             </div>
-          ))}
-        </section>
-      ))}
-    </article>
+          </section>
+        )}
+      </article>
+    </div>
   );
 }
 
