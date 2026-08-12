@@ -330,6 +330,11 @@ export function ChatTab({ moduleId }: { moduleId: string }) {
       setActiveThread(null);
     },
   });
+  const deleteMsg = useMutation({
+    mutationFn: (id: number) => api.delete(`/api/chat/messages/${id}`),
+    onSuccess: () =>
+      queryClient.invalidateQueries({ queryKey: ["chat-messages", activeThread] }),
+  });
 
   const toggleTeacher = useMutation({
     mutationFn: (v: { id: number; teacher_mode: boolean }) =>
@@ -616,6 +621,15 @@ export function ChatTab({ moduleId }: { moduleId: string }) {
                   </button>
                 )}
               </div>
+              <button
+                className="chat-msg-del"
+                onClick={() => deleteMsg.mutate(m.id)}
+                disabled={deleteMsg.isPending}
+                aria-label="Delete message"
+                title="Delete message"
+              >
+                <Trash2 size={13} strokeWidth={1.5} />
+              </button>
             </div>
           ))}
           {answering.running && (

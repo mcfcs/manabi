@@ -70,16 +70,26 @@
 }
 
 @media (max-width: 767px) {
-  /* Fill the content box (viewport minus the top pad and the bottom-nav
-     clearance) so the composer rests at the bottom, not mid-screen. */
+  /* Native-chat feel: the header + composer are PINNED and only the messages
+     scroll. A FIXED height (= the .content box: viewport minus its top pad and
+     the bottom-nav clearance) means the tab never overflows, so the whole page
+     doesn't scroll — only .chat-messages does (min-height:0 down the chain). */
   .assistant-tab {
-    min-height: calc(100dvh - var(--s-4) - 64px - env(safe-area-inset-bottom));
+    height: calc(100dvh - var(--s-4) - 64px - env(safe-area-inset-bottom));
   }
-  /* .content already reserves 64px of bottom padding to clear the fixed nav, so
-     the base composer's own bottom: 56px double-spaced it ~64px above the nav.
-     A hair of offset is all it needs here. */
+  .assistant-tab .chat-main {
+    min-height: 0;
+  }
+  .assistant-tab .chat-mbar {
+    flex: 0 0 auto; /* pinned header */
+  }
+  .assistant-tab .chat-messages {
+    min-height: 0; /* the only scroll region */
+  }
+  /* the composer is the bottom flex item now — no sticky needed */
   .assistant-tab .chat-input {
-    bottom: var(--s-1);
+    position: static;
+    bottom: auto;
   }
 }
 

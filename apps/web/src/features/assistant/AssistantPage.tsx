@@ -302,6 +302,11 @@ export function AssistantPage() {
       api.patch<ChatThreadOut>(`/api/chat/threads/${activeThread}`, body),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["assistant-threads"] }),
   });
+  const deleteMsg = useMutation({
+    mutationFn: (id: number) => api.delete(`/api/chat/messages/${id}`),
+    onSuccess: () =>
+      qc.invalidateQueries({ queryKey: ["chat-messages", activeThread] }),
+  });
   const send = useMutation({
     mutationFn: (content: string) =>
       api.post<{ job_id: number }>(`/api/chat/threads/${activeThread}/messages`, {
@@ -498,6 +503,15 @@ export function AssistantPage() {
                   </button>
                 )}
               </div>
+              <button
+                className="chat-msg-del"
+                onClick={() => deleteMsg.mutate(m.id)}
+                disabled={deleteMsg.isPending}
+                aria-label="Delete message"
+                title="Delete message"
+              >
+                <Trash2 size={13} strokeWidth={1.5} />
+              </button>
             </div>
           ))}
           {answering.running && (

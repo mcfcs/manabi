@@ -333,3 +333,25 @@ async def test_cancel_action_marks_cancelled():
     assert out["status"] == "cancelled"
     assert msg.action["status"] == "cancelled"
     assert db.committed is True
+
+
+async def test_delete_message():
+    from manabi_server.api import chat
+
+    class _DelDB:
+        def __init__(self):
+            self.deleted = None
+            self.committed = False
+
+        async def delete(self, obj):
+            self.deleted = obj
+
+        async def commit(self):
+            self.committed = True
+
+    msg = types.SimpleNamespace(id=5)
+    db = _DelDB()
+    out = await chat.delete_message(message=msg, db=db)
+    assert out == {"ok": True}
+    assert db.deleted is msg
+    assert db.committed is True

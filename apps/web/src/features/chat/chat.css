@@ -106,6 +106,34 @@
   background: var(--surface);
 }
 
+/* Per-message delete (rewind) — appears on hover; always faintly visible on
+   touch. Sits just outside the bubble. */
+.chat-msg-del {
+  align-self: flex-start;
+  flex-shrink: 0;
+  margin-top: 2px;
+  border: none;
+  background: none;
+  color: var(--ink-faint);
+  padding: var(--s-1);
+  border-radius: var(--radius-sm);
+  opacity: 0;
+  transition: opacity var(--t-fast) var(--ease);
+}
+.chat-msg:hover .chat-msg-del,
+.chat-msg-del:focus-visible {
+  opacity: 1;
+}
+.chat-msg-del:hover {
+  color: var(--accent-red);
+  background: var(--surface);
+}
+@media (max-width: 767px) {
+  .chat-msg-del {
+    opacity: 0.4;
+  }
+}
+
 .chat-bubble {
   max-width: 52ch;
   padding: var(--s-3) var(--s-4);

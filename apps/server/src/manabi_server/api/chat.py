@@ -560,6 +560,17 @@ async def message_audio(
     )
 
 
+@router.delete("/chat/messages/{message_id}", dependencies=[Depends(require_csrf)])
+async def delete_message(
+    message: ChatMessage = Depends(_get_owned_message),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """Delete a single chat message (its audio clip cascades)."""
+    await db.delete(message)
+    await db.commit()
+    return {"ok": True}
+
+
 @router.post(
     "/chat/threads/{thread_id}/voice-message", dependencies=[Depends(require_csrf)]
 )
