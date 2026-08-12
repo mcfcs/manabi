@@ -2,8 +2,11 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useNavigate } from "@tanstack/react-router";
 import {
   BookMarked,
+  CalendarPlus,
+  Check,
   GraduationCap,
   Layers,
+  ListTodo,
   Loader2,
   Menu,
   MessageSquarePlus,
@@ -50,6 +53,81 @@ function CitePill({ c }: { c: NonNullable<ChatMessageOut["citations"]>[number] }
     >
       {c.document_title} · {pages}
     </Link>
+  );
+}
+
+const actionNoun = (kind: string) => (kind === "create_task" ? "task" : "event");
+
+/** Confirm card for Steven-proposed actions (one or many). Nothing runs until
+ * "Add" is tapped; the server re-reads the stored proposals and executes them. */
+function ActionCard({ message }: { message: ChatMessageOut }) {
+  const qc = useQueryClient();
+  const a = message.action!;
+  const items = a.items ?? [];
+  const run = (verb: "confirm" | "cancel") => ({
+    mutationFn: () =>
+      api.post(`/api/assistant/messages/${message.id}/action/${verb}`),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["chat-messages"] }),
+  });
+  const confirm = useMutation(run("confirm"));
+  const cancel = useMutation(run("cancel"));
+  const busy = confirm.isPending || cancel.isPending;
+
+  if (a.status === "done") {
+    const results = a.results ?? [];
+    const kinds = new Set(items.map((it) => it.kind));
+    const noun = kinds.size === 1 ? actionNoun([...kinds][0]) : "item";
+    const label =
+      results.length === 1
+        ? `Added ${noun}: ${results[0]?.title ?? items[0]?.summary}`
+        : `Added ${results.length} ${noun}${results.length === 1 ? "" : "s"}`;
+    return (
+      <div className="action-card done">
+        <Check size={14} strokeWidth={2} />
+        <span>{label}</span>
+      </div>
+    );
+  }
+  if (a.status === "cancelled") {
+    return <div className="action-card cancelled">Dismissed.</div>;
+  }
+  const single = items.length === 1;
+  return (
+    <div className="action-card">
+      <ul className="action-list">
+        {items.map((it, i) => {
+          const Icon = it.kind === "create_task" ? ListTodo : CalendarPlus;
+          return (
+            <li key={i} className="action-list-item">
+              <Icon size={13} strokeWidth={1.75} />
+              <span>{it.summary}</span>
+            </li>
+          );
+        })}
+      </ul>
+      <div className="action-card-buttons">
+        <button
+          className="btn btn-primary action-btn"
+          onClick={() => confirm.mutate()}
+          disabled={busy}
+        >
+          {confirm.isPending ? (
+            <Loader2 size={13} className="spin" />
+          ) : single ? (
+            `Add ${actionNoun(items[0].kind)}`
+          ) : (
+            `Add all ${items.length}`
+          )}
+        </button>
+        <button
+          className="btn action-btn"
+          onClick={() => cancel.mutate()}
+          disabled={busy}
+        >
+          Cancel
+        </button>
+      </div>
+    </div>
   );
 }
 
@@ -394,12 +472,8 @@ export function AssistantPage() {
                 <img className="chat-avatar" src="/steven.jpg" alt="Steven" />
               )}
               <div className="chat-bubble">
-                {m.general_knowledge && (
-                  <span className="badge stale chat-gk-badge">
-                    general knowledge — not from your materials
-                  </span>
-                )}
                 <p>{m.content}</p>
+                {m.action && <ActionCard message={m} />}
                 {m.citations && m.citations.length > 0 && (
                   <div className="chat-cites">
                     {m.citations.map((c, i) => (

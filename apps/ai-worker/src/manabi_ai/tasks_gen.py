@@ -856,8 +856,17 @@ async def chat_answer(
             )
 
             answer = (result.get("answer") or "").strip()
+            raw_actions = result.get("actions") if is_general else None
+            has_actions = isinstance(raw_actions, list) and any(
+                isinstance(a, dict)
+                and a.get("kind") in ("create_task", "create_event")
+                for a in raw_actions
+            )
             if not answer:
-                raise GenerationError("Empty answer from model")
+                if has_actions:
+                    answer = "I've lined these up — confirm below and I'll take care of it."
+                else:
+                    raise GenerationError("Empty answer from model")
             grounded = bool(result.get("grounded")) and bool(result.get("source_ids"))
             citations_snapshot: list[dict] = []
             if grounded and ctx is not None:
@@ -880,6 +889,36 @@ async def chat_answer(
                 else:
                     grounded = False  # cited ids didn't resolve — don't fake it
 
+            # Proposed actions ("Steven takes actions") — general assistant only,
+            # stored as pending; nothing runs until the user confirms. Supports
+            # several tasks/events in one reply (e.g. one per day).
+            action = None
+            if has_actions:
+                _fields = (
+                    "title", "notes", "course_code", "due_date", "due_minute",
+                    "date", "start_minute", "end_minute",
+                )
+                items = []
+                for a in raw_actions:
+                    if not isinstance(a, dict) or a.get("kind") not in (
+                        "create_task",
+                        "create_event",
+                    ):
+                        continue
+                    params = {k: a.get(k) for k in _fields if a.get(k) not in (None, "")}
+                    for mk in ("due_minute", "start_minute", "end_minute"):
+                        if params.get(mk) == 0:  # unset default, not a real time
+                            params.pop(mk, None)
+                    if not params.get("title"):
+                        continue
+                    items.append({
+                        "kind": a["kind"],
+                        "summary": (a.get("summary") or "").strip() or params["title"],
+                        "params": params,
+                    })
+                if items:
+                    action = {"status": "proposed", "items": items}
+
             assistant_msg = ChatMessage(
                 thread_id=thread_id,
                 role=ChatRole.assistant,
@@ -889,6 +928,7 @@ async def chat_answer(
                 # notes-derived answers say "According to your notes" instead
                 general_knowledge=bool(result.get("general_knowledge_used")),
                 citations=citations_snapshot or None,
+                action=action,
                 job_id=job.id,
             )
             db.add(assistant_msg)

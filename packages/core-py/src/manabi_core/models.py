@@ -514,6 +514,10 @@ class ChatMessage(Base, TimestampMixin):
     grounded: Mapped[bool] = mapped_column(nullable=False, default=True)
     general_knowledge: Mapped[bool] = mapped_column(nullable=False, default=False)
     citations: Mapped[list | None] = mapped_column(JSONB)  # snapshot list
+    # An assistant-proposed action (Steven "takes actions"): {kind, status,
+    # summary, params, result?}. NULL = a normal message. Nothing executes until
+    # the user confirms — the server re-reads this to run it.
+    action: Mapped[dict | None] = mapped_column(JSONB)
     job_id: Mapped[int | None] = mapped_column(
         BigInteger, ForeignKey("jobs.id", ondelete="SET NULL")
     )

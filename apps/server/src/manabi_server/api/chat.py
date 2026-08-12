@@ -83,6 +83,7 @@ class MessageOut(BaseModel):
     grounded: bool
     general_knowledge: bool
     citations: list | None
+    action: dict | None = None  # Steven's proposed action (create_task/event)
     has_audio: bool = False
     audio_id: int | None = None  # cache-buster; changes if re-synthesized
     created_at: datetime
@@ -385,6 +386,7 @@ async def list_messages(
             grounded=m.grounded,
             general_knowledge=m.general_knowledge,
             citations=m.citations,
+            action=m.action,
             has_audio=clip_id is not None,
             audio_id=clip_id,
             created_at=m.created_at,

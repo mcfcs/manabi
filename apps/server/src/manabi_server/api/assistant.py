@@ -3,7 +3,7 @@ owned by user_id. PATCH / DELETE / messages / voice reuse the chat router
 (they're thread-id based), so only list + create live here.
 """
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
 from manabi_core.models import (
     ChatMessage,
     ChatRole,
@@ -19,10 +19,14 @@ from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from manabi_server.api.chat import ThreadOut, _thread_out
+from manabi_server.api.chat import ThreadOut, _get_owned_message, _thread_out
 from manabi_server.db import get_db
 from manabi_server.jobs.queue import DAILY_BRIEFING_TASK, defer_task
 from manabi_server.security import get_default_user, require_csrf
+from manabi_server.services.ai_actions import (
+    execute_event_action,
+    execute_task_action,
+)
 from manabi_server.timeutil import today_manila
 
 router = APIRouter(prefix="/api/assistant", tags=["assistant"])
@@ -197,3 +201,53 @@ async def ensure_daily_briefing(
     settings.last_briefing_date = today
     await db.commit()
     return BriefingOut(thread_id=thread.id, job_id=job.id, generating=True)
+
+
+# ── Steven takes actions: confirm / cancel a proposed action ──────────────
+# The proposal is stored on the message server-side; the client only triggers
+# execution, and the server re-reads the params (never trusts client input).
+
+
+@router.post(
+    "/messages/{message_id}/action/confirm", dependencies=[Depends(require_csrf)]
+)
+async def confirm_action(
+    message: ChatMessage = Depends(_get_owned_message),
+    user: User = Depends(get_default_user),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    action = message.action
+    if not action or action.get("status") != "proposed":
+        raise HTTPException(status_code=409, detail="No pending action here")
+    results: list[dict] = []
+    try:
+        for item in action.get("items") or []:
+            params = item.get("params") or {}
+            if item.get("kind") == "create_task":
+                results.append(await execute_task_action(db, user, params))
+            elif item.get("kind") == "create_event":
+                results.append(await execute_event_action(db, user, params))
+    except ValueError as exc:
+        await db.rollback()  # all-or-nothing
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    if not results:
+        raise HTTPException(status_code=422, detail="Nothing to add")
+    # Reassign the dict so SQLAlchemy flags the JSONB column dirty.
+    message.action = {**action, "status": "done", "results": results}
+    await db.commit()
+    return message.action
+
+
+@router.post(
+    "/messages/{message_id}/action/cancel", dependencies=[Depends(require_csrf)]
+)
+async def cancel_action(
+    message: ChatMessage = Depends(_get_owned_message),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    action = message.action
+    if not action or action.get("status") != "proposed":
+        raise HTTPException(status_code=409, detail="No pending action here")
+    message.action = {**action, "status": "cancelled"}
+    await db.commit()
+    return message.action

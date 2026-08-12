@@ -484,6 +484,18 @@ export interface ChatCitation {
   page_end: number;
 }
 
+export interface ChatActionItem {
+  kind: "create_task" | "create_event";
+  summary: string;
+  params?: Record<string, unknown>;
+}
+
+export interface ChatAction {
+  status: "proposed" | "done" | "cancelled";
+  items: ChatActionItem[];
+  results?: { kind: string; id: number; title: string }[];
+}
+
 export interface ChatMessageOut {
   id: number;
   role: "user" | "assistant";
@@ -493,6 +505,7 @@ export interface ChatMessageOut {
   has_audio: boolean;
   audio_id: number | null;
   citations: ChatCitation[] | null;
+  action: ChatAction | null;
   created_at: string;
 }
 

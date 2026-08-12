@@ -156,6 +156,27 @@ RULES — follow strictly:
 
 Produce JSON matching the schema."""
 
+# "Steven takes actions": a REQUIRED list (empty for a normal reply) so he can
+# draft several tasks/events at once. A required ARRAY-of-objects works with
+# Ollama's grammar decoding (like the quiz/flashcard schemas); an OPTIONAL nested
+# object does not (it collapses to an empty answer).
+_ACTION_ITEM_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "kind": {"type": "string", "enum": ["create_task", "create_event"]},
+        "title": {"type": "string"},
+        "summary": {"type": "string"},
+        "notes": {"type": "string"},
+        "course_code": {"type": "string"},
+        "due_date": {"type": "string"},
+        "due_minute": {"type": "integer"},
+        "date": {"type": "string"},
+        "start_minute": {"type": "integer"},
+        "end_minute": {"type": "integer"},
+    },
+    "required": ["kind", "title", "summary"],
+}
+
 CHAT_SCHEMA = {
     "type": "object",
     "properties": {
@@ -163,8 +184,15 @@ CHAT_SCHEMA = {
         "answer": {"type": "string"},
         "source_ids": {"type": "array", "items": {"type": "integer"}},
         "general_knowledge_used": {"type": "boolean"},
+        "actions": {"type": "array", "items": _ACTION_ITEM_SCHEMA},
     },
-    "required": ["grounded", "answer", "source_ids", "general_knowledge_used"],
+    "required": [
+        "grounded",
+        "answer",
+        "source_ids",
+        "general_knowledge_used",
+        "actions",
+    ],
 }
 
 DEFINE_TERM_SCHEMA = {
@@ -411,6 +439,29 @@ RULES:
   are a general assistant, not a single-module tutor.
 - Only put real SOURCE MATERIAL numbers in source_ids; never invent citations.
 - Be genuinely helpful, clear, and concise.
+
+ACTIONS — "actions" is a REQUIRED list; use [] for a normal reply. Whenever the
+student asks you to create, add, remind them of, schedule, or block time for
+something, DRAFT it here IMMEDIATELY with sensible defaults — do NOT ask a
+clarifying question first (nothing is saved until they confirm, so they can
+adjust then). Add one list item per thing to create:
+- kind: "create_task" (a to-do/reminder) or "create_event" (a scheduled block).
+- title: the task/event title.
+- due_date (task) or date (event): "YYYY-MM-DD". Read TODAY from the PERSONAL
+  CONTEXT header and resolve "today"/"tomorrow"/"Friday"/"next week"/etc. to a
+  real date.
+- If they ask for something on EACH DAY across a range (e.g. "every day until
+  next week"), add ONE item PER DAY in that range — not a single task.
+- summary: one short, natural line for that item, e.g. "Review OOP — Fri, Aug 15"
+  or "Anki decks — Tue, Aug 12, 11 PM".
+- notes (optional). Times (optional): minutes since midnight 0–1439 (11 PM =
+  1380, 3 PM = 900) — a timed task uses due_minute; an event uses start_minute
+  and end_minute. course_code (optional): the exact code if they name a course
+  (e.g. "CSCI 70").
+Write your "answer" in your own voice — a natural sentence or two saying what
+you've lined up and to confirm below. Only ask a question if the request is
+genuinely impossible to draft. NOTHING is saved until they confirm — never say
+you have already added anything.
 
 Produce JSON matching the schema."""
 

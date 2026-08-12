@@ -250,3 +250,86 @@ async def test_briefing_idempotent_same_day(monkeypatch):
     assert out.message_id == 42
     assert out.body == "Good day, testday."
     assert "task" not in captured  # no new job deferred
+
+
+# ── Steven takes actions ──────────────────────────────────────────────────
+
+import pytest  # noqa: E402
+
+
+async def test_execute_task_action_builds_task(monkeypatch):
+    from manabi_server.services import ai_actions
+
+    async def _no_course(db, user, code):
+        return None
+
+    monkeypatch.setattr(ai_actions, "_course_id_by_code", _no_course)
+    db = _ScriptedDB([])
+    out = await ai_actions.execute_task_action(
+        db, _User(), {"title": "Review OOP", "due_date": "2026-08-15", "due_minute": 900}
+    )
+    assert out == {"kind": "task", "id": 1, "title": "Review OOP"}
+    task = db.added[0]
+    assert task.title == "Review OOP"
+    assert str(task.due_date) == "2026-08-15"
+    assert task.due_minute == 900
+
+
+async def test_execute_task_action_requires_title():
+    from manabi_server.services import ai_actions
+
+    with pytest.raises(ValueError):
+        await ai_actions.execute_task_action(_ScriptedDB([]), _User(), {"title": "  "})
+
+
+async def test_confirm_action_executes_and_marks_done(monkeypatch):
+    from manabi_server.api import assistant as asst
+
+    async def _fake_task(db, user, params):
+        return {"kind": "task", "id": 9, "title": params["title"]}
+
+    monkeypatch.setattr(asst, "execute_task_action", _fake_task)
+    msg = types.SimpleNamespace(
+        id=1,
+        action={
+            "status": "proposed",
+            "items": [
+                {"kind": "create_task", "summary": "A", "params": {"title": "A"}},
+                {"kind": "create_task", "summary": "B", "params": {"title": "B"}},
+            ],
+        },
+    )
+    db = _ScriptedDB([])
+    out = await asst.confirm_action(message=msg, user=_User(), db=db)
+    assert out["status"] == "done"
+    assert len(out["results"]) == 2  # BOTH items created
+    assert {r["title"] for r in out["results"]} == {"A", "B"}
+    assert msg.action["status"] == "done"  # reassigned so the ORM sees the change
+    assert db.committed is True
+
+
+async def test_confirm_action_rejects_when_no_pending():
+    from fastapi import HTTPException
+    from manabi_server.api import assistant as asst
+
+    msg = types.SimpleNamespace(id=1, action=None)
+    with pytest.raises(HTTPException) as exc:
+        await asst.confirm_action(message=msg, user=_User(), db=_ScriptedDB([]))
+    assert exc.value.status_code == 409
+
+
+async def test_cancel_action_marks_cancelled():
+    from manabi_server.api import assistant as asst
+
+    msg = types.SimpleNamespace(
+        id=1,
+        action={
+            "status": "proposed",
+            "items": [{"kind": "create_event", "summary": "x", "params": {"title": "x"}}],
+        },
+    )
+    db = _ScriptedDB([])
+    out = await asst.cancel_action(message=msg, db=db)
+    assert out["status"] == "cancelled"
+    assert msg.action["status"] == "cancelled"
+    assert db.committed is True
