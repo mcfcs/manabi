@@ -4,12 +4,14 @@ import {
   BookMarked,
   CalendarPlus,
   Check,
+  Copy,
   GraduationCap,
   Layers,
   ListTodo,
   Loader2,
   Menu,
   MessageSquarePlus,
+  RefreshCw,
   SlidersHorizontal,
   Trash2,
   Volume2,
@@ -220,6 +222,7 @@ export function AssistantPage() {
   const [voiceOn, setVoiceOn] = useChatVoice();
   const [speakingId, setSpeakingId] = useState<number | null>(null);
   const [pendingSpeakId, setPendingSpeakId] = useState<number | null>(null);
+  const [copiedId, setCopiedId] = useState<number | null>(null);
   const audioRef = useRef<HTMLAudioElement>(null);
   const autoPlayed = useRef<Set<number>>(new Set());
   const bottomRef = useRef<HTMLDivElement>(null);
@@ -307,6 +310,22 @@ export function AssistantPage() {
     onSuccess: () =>
       qc.invalidateQueries({ queryKey: ["chat-messages", activeThread] }),
   });
+  const regenerate = useMutation({
+    mutationFn: (id: number) =>
+      api.post<{ job_id: number }>(`/api/chat/messages/${id}/regenerate`),
+    onSuccess: (r) => {
+      answering.start(r.job_id);
+      qc.invalidateQueries({ queryKey: ["chat-messages", activeThread] });
+    },
+    onError: (err) =>
+      setError(err instanceof ApiError ? err.message : "Couldn't regenerate"),
+  });
+  function copyMsg(id: number, text: string) {
+    navigator.clipboard?.writeText(text).then(() => {
+      setCopiedId(id);
+      setTimeout(() => setCopiedId((c) => (c === id ? null : c)), 1200);
+    });
+  }
   const send = useMutation({
     mutationFn: (content: string) =>
       api.post<{ job_id: number }>(`/api/chat/threads/${activeThread}/messages`, {
@@ -476,42 +495,74 @@ export function AssistantPage() {
               {m.role === "assistant" && (
                 <img className="chat-avatar" src="/steven.jpg" alt="Steven" />
               )}
-              <div className="chat-bubble">
-                <p>{m.content}</p>
-                {m.action && <ActionCard message={m} />}
-                {m.citations && m.citations.length > 0 && (
-                  <div className="chat-cites">
-                    {m.citations.map((c, i) => (
-                      <CitePill key={i} c={c} />
-                    ))}
-                  </div>
-                )}
-                {m.role === "assistant" && activeThreadObj?.teacher_mode && (
+              <div className="chat-msg-body">
+                <div className="chat-bubble">
+                  <p>{m.content}</p>
+                  {m.action && <ActionCard message={m} />}
+                  {m.citations && m.citations.length > 0 && (
+                    <div className="chat-cites">
+                      {m.citations.map((c, i) => (
+                        <CitePill key={i} c={c} />
+                      ))}
+                    </div>
+                  )}
+                </div>
+                <div className="chat-actions">
                   <button
-                    className={`chat-speak${speakingId === m.id ? " speaking" : ""}`}
-                    onClick={() => speakMessage(m.id, m.has_audio)}
-                    disabled={pendingSpeakId === m.id}
-                    title={speakingId === m.id ? "Stop" : "Play as Steven"}
+                    className="chat-act"
+                    onClick={() => copyMsg(m.id, m.content)}
+                    title="Copy"
+                    aria-label="Copy message"
                   >
-                    {pendingSpeakId === m.id ? (
-                      <Loader2 size={13} className="spin" />
-                    ) : speakingId === m.id ? (
-                      <VolumeX size={13} strokeWidth={1.75} />
+                    {copiedId === m.id ? (
+                      <Check size={14} strokeWidth={2} />
                     ) : (
-                      <Volume2 size={13} strokeWidth={1.75} />
+                      <Copy size={14} strokeWidth={1.75} />
                     )}
                   </button>
-                )}
+                  {m.role === "assistant" && (
+                    <button
+                      className="chat-act"
+                      onClick={() => regenerate.mutate(m.id)}
+                      disabled={regenerate.isPending || answering.running}
+                      title="Regenerate"
+                      aria-label="Regenerate reply"
+                    >
+                      <RefreshCw
+                        size={14}
+                        strokeWidth={1.75}
+                        className={regenerate.isPending ? "spin" : ""}
+                      />
+                    </button>
+                  )}
+                  {m.role === "assistant" && activeThreadObj?.teacher_mode && (
+                    <button
+                      className={`chat-act${speakingId === m.id ? " on" : ""}`}
+                      onClick={() => speakMessage(m.id, m.has_audio)}
+                      disabled={pendingSpeakId === m.id}
+                      title={speakingId === m.id ? "Stop" : "Play as Steven"}
+                      aria-label="Play as Steven"
+                    >
+                      {pendingSpeakId === m.id ? (
+                        <Loader2 size={14} className="spin" />
+                      ) : speakingId === m.id ? (
+                        <VolumeX size={14} strokeWidth={1.75} />
+                      ) : (
+                        <Volume2 size={14} strokeWidth={1.75} />
+                      )}
+                    </button>
+                  )}
+                  <button
+                    className="chat-act chat-act-del"
+                    onClick={() => deleteMsg.mutate(m.id)}
+                    disabled={deleteMsg.isPending}
+                    title="Delete"
+                    aria-label="Delete message"
+                  >
+                    <Trash2 size={14} strokeWidth={1.75} />
+                  </button>
+                </div>
               </div>
-              <button
-                className="chat-msg-del"
-                onClick={() => deleteMsg.mutate(m.id)}
-                disabled={deleteMsg.isPending}
-                aria-label="Delete message"
-                title="Delete message"
-              >
-                <Trash2 size={13} strokeWidth={1.5} />
-              </button>
             </div>
           ))}
           {answering.running && (
@@ -523,8 +574,13 @@ export function AssistantPage() {
                 ) : (
                   <p className="chat-thinking">
                     {answering.job?.status === "queued"
-                      ? "waiting for the AI node…"
-                      : "thinking…"}
+                      ? "waiting for the AI node"
+                      : "Steven is typing"}
+                    <span className="typing-dots" aria-hidden>
+                      <span />
+                      <span />
+                      <span />
+                    </span>
                   </p>
                 )}
                 {answering.job && (

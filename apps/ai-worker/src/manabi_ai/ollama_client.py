@@ -17,6 +17,17 @@ GENERATION_TIMEOUT = 1800  # generous: cold model load + long context
 KEEP_ALIVE = "30m"  # survive the summary→cards→quiz job sequence
 PREVIEW_INTERVAL = 1.5  # seconds between preview flushes
 
+# Connection-level failures that mean the primary node is DOWN/unreachable — the
+# signal to fail over to the local backup. Deliberately excludes ReadTimeout:
+# a slow (but reachable) generation should wait, not trigger failover.
+_NODE_DOWN = (
+    httpx.ConnectError,
+    httpx.ConnectTimeout,
+    httpx.ReadError,
+    httpx.RemoteProtocolError,
+    httpx.PoolTimeout,
+)
+
 PreviewWriter = Callable[[str], Awaitable[None]]
 
 
@@ -50,6 +61,13 @@ async def generate_structured(
             raise GenerationError(
                 f"Ollama error {exc.response.status_code}: {exc.response.text[:200]}"
             ) from exc
+        except _NODE_DOWN as exc:
+            # Primary down AND no (working) backup — nothing left to try.
+            raise GenerationError(
+                f"AI node unreachable: {exc.__class__.__name__}. "
+                "Primary Ollama is offline and no local backup is configured "
+                "(set OLLAMA_BACKUP_URL + OLLAMA_BACKUP_MODEL)."
+            ) from exc
     raise GenerationError(f"Model produced invalid JSON after 3 attempts: {last_error}")
 
 
@@ -61,15 +79,57 @@ async def _stream_chat(
     on_preview: PreviewWriter | None,
     model: str | None = None,
 ) -> str:
+    """Try the primary node; on a connection-level failure fall back to the
+    local backup Ollama (small model that fits this laptop's 8 GB GPU)."""
+    try:
+        return await _stream_once(
+            settings.ollama_url,
+            model or settings.generation_model,
+            system,
+            user,
+            schema,
+            on_preview,
+        )
+    except _NODE_DOWN as exc:
+        if not settings.backup_enabled:
+            raise
+        log.warning(
+            "primary Ollama (%s) unreachable (%s) — failing over to local backup "
+            "%s / %s",
+            settings.ollama_url,
+            exc.__class__.__name__,
+            settings.ollama_backup_url,
+            settings.ollama_backup_model,
+        )
+        # The backup only has ollama_backup_model pulled, so ignore the
+        # requested (phillmyeol-only) model name.
+        return await _stream_once(
+            settings.ollama_backup_url,
+            settings.ollama_backup_model,
+            system,
+            user,
+            schema,
+            on_preview,
+        )
+
+
+async def _stream_once(
+    url: str,
+    model: str,
+    system: str,
+    user: str,
+    schema: dict,
+    on_preview: PreviewWriter | None,
+) -> str:
     accumulated: list[str] = []
     last_flush = 0.0
     async with (
         httpx.AsyncClient(timeout=GENERATION_TIMEOUT) as client,
         client.stream(
             "POST",
-            f"{settings.ollama_url}/api/chat",
+            f"{url}/api/chat",
             json={
-                "model": model or settings.generation_model,
+                "model": model,
                 "messages": [
                     {"role": "system", "content": system},
                     {"role": "user", "content": user},

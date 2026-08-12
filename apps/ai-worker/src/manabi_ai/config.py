@@ -12,6 +12,12 @@ class WorkerSettings(CoreSettings):
     # Interactive tasks (chat, term lookups) use a smaller, faster model that
     # co-resides with the big one in VRAM. Empty → fall back to generation_model.
     chat_model: str = ""
+    # Failover: when the primary Ollama node (phillmyeol) is unreachable, retry
+    # against a local Ollama that fits this laptop's RTX 4070 (8 GB). One small
+    # model serves every job here (generation + chat), so the requested model
+    # name is ignored on the backup path. Both must be set to arm failover.
+    ollama_backup_url: str = ""  # e.g. http://127.0.0.1:11434
+    ollama_backup_model: str = ""  # e.g. qwen2.5:7b-instruct (~4.7 GB Q4_K_M)
     worker_name: str = "phillmyeol"
     heartbeat_interval_seconds: int = 15
     # Teacher voice (GPT-SoVITS api_v2 or compatible). Empty tts_url = voice
@@ -36,6 +42,10 @@ class WorkerSettings(CoreSettings):
     @property
     def effective_chat_model(self) -> str:
         return self.chat_model or self.generation_model
+
+    @property
+    def backup_enabled(self) -> bool:
+        return bool(self.ollama_backup_url and self.ollama_backup_model)
 
     @property
     def tts_enabled(self) -> bool:

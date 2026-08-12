@@ -16,6 +16,7 @@ from manabi_core.models import (
     Document,
     Job,
     JobQueue,
+    JobStatus,
     Module,
     Note,
     SpeechClip,
@@ -28,7 +29,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from manabi_server.api.modules import get_owned_module
 from manabi_server.db import get_db
-from manabi_server.jobs.queue import CHAT_ANSWER_TASK, SPEAK_TEXT_TASK, defer_task
+from manabi_server.jobs.queue import (
+    CHAT_ANSWER_TASK,
+    DAILY_BRIEFING_TASK,
+    SPEAK_TEXT_TASK,
+    defer_task,
+)
 from manabi_server.security import get_default_user, require_csrf
 
 router = APIRouter(prefix="/api", tags=["chat"])
@@ -395,45 +401,27 @@ async def list_messages(
     ]
 
 
-@router.post(
-    "/chat/threads/{thread_id}/messages", dependencies=[Depends(require_csrf)]
-)
-async def post_message(
-    data: MessageIn,
-    thread: ChatThread = Depends(_get_owned_thread),
-    user: User = Depends(get_default_user),
-    db: AsyncSession = Depends(get_db),
-) -> dict:
-    from manabi_core.models import JobStatus
-
-    from manabi_server.processing.embedding import embed_texts
-
-    content = data.content.strip()
-    if not content:
-        raise HTTPException(status_code=422, detail="Message is empty")
-
-    # One question in flight per THREAD (not per module) — so a viewer
-    # discussion isn't blocked by the module Chat tab still answering.
-    in_flight = (
+async def _answer_in_flight(db: AsyncSession, thread_id: int) -> Job | None:
+    """A chat_answer / daily_briefing job already generating for this thread."""
+    return (
         await db.execute(
             select(Job).where(
-                Job.job_type == "chat_answer",
-                Job.payload["thread_id"].as_string() == str(thread.id),
+                Job.job_type.in_(["chat_answer", "daily_briefing"]),
+                Job.payload["thread_id"].as_string() == str(thread_id),
                 Job.status.in_([JobStatus.queued, JobStatus.running]),
             )
         )
     ).scalar_one_or_none()
-    if in_flight is not None:
-        raise HTTPException(status_code=409, detail="Still answering the previous question")
 
-    message = ChatMessage(thread_id=thread.id, role=ChatRole.user, content=content)
-    db.add(message)
-    if thread.title == "New conversation":
-        thread.title = content[:80]
-    await db.flush()
 
-    # Retrieval happens here (app server owns the embedding model). The general
-    # (module_id NULL) branch also builds personal context + picks the model.
+async def _dispatch_answer(
+    db: AsyncSession, user: User, thread: ChatThread, content: str
+) -> int:
+    """Retrieve context for `content` and defer a chat_answer job; returns the
+    Job id. Shared by post_message (new question) and regenerate (re-answer the
+    same question). Retrieval runs here — the app server owns the embed model."""
+    from manabi_server.processing.embedding import embed_texts
+
     personal_context: str | None = None
     model: str | None = None
 
@@ -492,8 +480,33 @@ async def post_message(
         chunk_ids=chunk_ids,
         **extra,
     )
+    return job.id
+
+
+@router.post(
+    "/chat/threads/{thread_id}/messages", dependencies=[Depends(require_csrf)]
+)
+async def post_message(
+    data: MessageIn,
+    thread: ChatThread = Depends(_get_owned_thread),
+    user: User = Depends(get_default_user),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    content = data.content.strip()
+    if not content:
+        raise HTTPException(status_code=422, detail="Message is empty")
+    # One question in flight per THREAD (not per module).
+    if await _answer_in_flight(db, thread.id) is not None:
+        raise HTTPException(status_code=409, detail="Still answering the previous question")
+
+    message = ChatMessage(thread_id=thread.id, role=ChatRole.user, content=content)
+    db.add(message)
+    if thread.title == "New conversation":
+        thread.title = content[:80]
+    await db.flush()
+    job_id = await _dispatch_answer(db, user, thread, content)
     await db.commit()
-    return {"job_id": job.id, "message_id": message.id}
+    return {"job_id": job_id, "message_id": message.id}
 
 
 # ── Voice: spoken replies + voice input ───────────────────────────────────
@@ -569,6 +582,74 @@ async def delete_message(
     await db.delete(message)
     await db.commit()
     return {"ok": True}
+
+
+@router.post(
+    "/chat/messages/{message_id}/regenerate", dependencies=[Depends(require_csrf)]
+)
+async def regenerate_message(
+    message: ChatMessage = Depends(_get_owned_message),
+    user: User = Depends(get_default_user),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """Regenerate an assistant reply: delete it and re-answer the same question
+    (or re-run the daily briefing if it has no preceding question)."""
+    if message.role != ChatRole.assistant:
+        raise HTTPException(
+            status_code=422, detail="Only Steven's replies can be regenerated"
+        )
+    thread = (
+        await db.execute(select(ChatThread).where(ChatThread.id == message.thread_id))
+    ).scalar_one()
+    if await _answer_in_flight(db, thread.id) is not None:
+        raise HTTPException(status_code=409, detail="Still answering — try again in a moment")
+
+    # the question this reply answered = the last user message before it
+    last_user = (
+        await db.execute(
+            select(ChatMessage)
+            .where(
+                ChatMessage.thread_id == thread.id,
+                ChatMessage.role == ChatRole.user,
+                ChatMessage.id < message.id,
+            )
+            .order_by(ChatMessage.id.desc())
+            .limit(1)
+        )
+    ).scalar_one_or_none()
+    await db.delete(message)  # drop the old reply (its clip cascades)
+    await db.flush()
+
+    if last_user is not None:
+        job_id = await _dispatch_answer(db, user, thread, last_user.content)
+    elif thread.module_id is None:
+        # No question before it → the daily briefing. Rebuild + re-run it.
+        from manabi_server.api.settings import get_app_settings
+        from manabi_server.services.context import build_personal_context
+
+        personal_context = await build_personal_context(db, user)
+        model = (await get_app_settings(db)).general_chat_model
+        job = Job(
+            user_id=user.id,
+            job_type="daily_briefing",
+            queue=JobQueue.gpu,
+            payload={"thread_id": thread.id},
+        )
+        db.add(job)
+        await db.flush()
+        job.procrastinate_job_id = await defer_task(
+            DAILY_BRIEFING_TASK,
+            "gpu",
+            job_id=job.id,
+            thread_id=thread.id,
+            personal_context=personal_context,
+            model=model,
+        )
+        job_id = job.id
+    else:
+        raise HTTPException(status_code=422, detail="Nothing to regenerate")
+    await db.commit()
+    return {"job_id": job_id}
 
 
 @router.post(

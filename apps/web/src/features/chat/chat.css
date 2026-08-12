@@ -134,6 +134,93 @@
   }
 }
 
+/* ── Message body + hover action row (Claude/ChatGPT-style) ───── */
+.chat-msg-body {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+  align-items: flex-start;
+}
+.chat-msg.user .chat-msg-body {
+  align-items: flex-end;
+}
+.chat-actions {
+  display: flex;
+  gap: 1px;
+  padding: 0 2px;
+  opacity: 0;
+  transition: opacity var(--t-fast) var(--ease);
+}
+.chat-msg:hover .chat-actions,
+.chat-actions:focus-within {
+  opacity: 1;
+}
+.chat-act {
+  display: inline-flex;
+  align-items: center;
+  border: none;
+  background: none;
+  color: var(--ink-faint);
+  padding: 5px;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+}
+.chat-act:hover {
+  color: var(--ink);
+  background: var(--surface);
+}
+.chat-act:disabled {
+  opacity: 0.45;
+}
+.chat-act.on {
+  color: var(--accent-blue);
+}
+.chat-act-del:hover {
+  color: var(--accent-red);
+}
+@media (max-width: 767px) {
+  .chat-actions {
+    opacity: 0.55;
+  }
+}
+
+/* ── Dynamic typing indicator (bouncing dots) ─────────────────── */
+.chat-thinking {
+  display: inline-flex;
+  align-items: center;
+}
+.typing-dots {
+  display: inline-flex;
+  gap: 3px;
+  margin-left: 5px;
+}
+.typing-dots span {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--ink-faint);
+  animation: typing-bounce 1.2s infinite ease-in-out both;
+}
+.typing-dots span:nth-child(2) {
+  animation-delay: 0.15s;
+}
+.typing-dots span:nth-child(3) {
+  animation-delay: 0.3s;
+}
+@keyframes typing-bounce {
+  0%,
+  70%,
+  100% {
+    transform: translateY(0);
+    opacity: 0.35;
+  }
+  35% {
+    transform: translateY(-4px);
+    opacity: 1;
+  }
+}
+
 .chat-bubble {
   max-width: 52ch;
   padding: var(--s-3) var(--s-4);
