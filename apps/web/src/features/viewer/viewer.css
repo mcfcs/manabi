@@ -735,42 +735,28 @@ mark.annot-red, .annot-swatch.annot-red, .annot-item-dot.annot-red {
   }
 }
 
-/* ── pdf.js in-browser render (selectable) ─────────────────── */
-.pdfjs-scan-note {
-  align-self: stretch;
-  margin: 0;
-  font-size: 12.5px;
-  color: var(--ink-soft);
-  background: var(--surface);
-  border: 1px solid var(--rule);
-  border-radius: var(--radius-sm);
-  padding: var(--s-2) var(--s-3);
-}
-.viewer-pdfjs {
+.viewer-original-mobile {
   display: flex;
   flex-direction: column;
   align-items: center;
   gap: var(--s-4);
-  padding: var(--s-3) 0;
-  width: 100%;
+  text-align: center;
+  padding: var(--s-6) var(--s-3);
+  border: 1px solid var(--rule);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  color: var(--ink-soft);
 }
-.pdfjs-page {
-  position: relative;
-  box-shadow: 0 2px 12px rgba(28, 36, 52, 0.12);
-  border-radius: 2px;
-  background: #fff;
-  /* let the text layer receive the selection cursor */
+.viewer-original-mobile p {
+  margin: 0;
+  max-width: 34ch;
+  font-size: 13.5px;
 }
-.pdfjs-page .react-pdf__Page {
-  border-radius: 2px;
-  overflow: hidden;
-}
-/* react-pdf text layer: keep it selectable and crisp */
-.pdfjs-page .react-pdf__Page__textContent {
-  cursor: text;
-}
-.pdfjs-page .react-pdf__Page__textContent ::selection {
-  background: rgba(74, 124, 247, 0.32);
+.viewer-original-mobile-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: var(--s-2);
 }
 
 /* ── Ask-Steven / discussions ─────────────────────────────── */

@@ -8,10 +8,12 @@ import {
   AlignJustify,
   AlignLeft,
   FileSearch,
+  FileText,
   ChevronLeft,
   ChevronRight,
   Download,
   GalleryVertical,
+  ScrollText,
   Highlighter,
   LayoutGrid,
   MessageSquareText,
@@ -36,7 +38,6 @@ import {
   type SummaryOut,
 } from "../../lib/api";
 import { ChatPanel } from "../chat/ChatPanel";
-import { PdfJsView } from "./PdfJsView";
 import {
   type AnnotationMark,
   countTermsPresent,
@@ -141,6 +142,23 @@ function PageText({
       }}
     />
   );
+}
+
+/** Reactive "is this a phone/tablet-width viewport" flag. Mobile browsers can't
+ * render a PDF inside an <iframe>, so the Original view needs a different UI. */
+function useIsMobile(): boolean {
+  const [mobile, setMobile] = useState(
+    () =>
+      typeof window !== "undefined" &&
+      window.matchMedia("(max-width: 767px)").matches,
+  );
+  useEffect(() => {
+    const mq = window.matchMedia("(max-width: 767px)");
+    const on = () => setMobile(mq.matches);
+    mq.addEventListener("change", on);
+    return () => mq.removeEventListener("change", on);
+  }, []);
+  return mobile;
 }
 
 /** Container-level text-selection → popover, working for both mouse and touch
@@ -295,6 +313,7 @@ export function DocumentViewer() {
   });
   const navigate = useNavigate();
   const queryClient = useQueryClient();
+  const isMobile = useIsMobile();
   const [mode, setModeState] = useState<ViewMode>(loadMode);
   const [showNotes, setShowNotes] = useState(false);
   const [showText, setShowText] = useState(false);
@@ -617,7 +636,7 @@ export function DocumentViewer() {
               className={`icon-btn${mode === "original" ? " active" : ""}`}
               onClick={() => setMode("original")}
               aria-label="Original PDF"
-              title="Original PDF — select text to highlight or ask Steven"
+              title="Browser PDF viewer — Ctrl+F and copy/paste work natively"
             >
               <FileSearch size={17} strokeWidth={1.5} />
             </button>
@@ -677,14 +696,39 @@ export function DocumentViewer() {
       )}
 
       {mode === "original" &&
-        (d.kind === "pdf" ? (
-          // Real PDF rendered in-browser (pdf.js) with a selectable text layer,
-          // so highlight + Ask work directly on the page — see PdfJsView.
-          <PdfJsView documentId={documentId} />
+        (isMobile ? (
+          // Mobile browsers can't embed a PDF in an <iframe> (it renders blank),
+          // so offer to open it in its own tab and point at the inline page
+          // reader (Scroll) which renders fine on phones.
+          <div className="viewer-original-mobile">
+            <p>
+              Phone browsers can't display a PDF inline. Open the file in a new
+              tab, or read the pages here with the Scroll view.
+            </p>
+            <div className="viewer-original-mobile-actions">
+              <a
+                className="btn btn-primary"
+                href={`/api/documents/${documentId}/original?inline=1`}
+                target="_blank"
+                rel="noreferrer"
+              >
+                <FileText size={15} strokeWidth={1.75} /> Open PDF
+              </a>
+              <button className="btn" onClick={() => setMode("scroll")}>
+                <ScrollText size={15} strokeWidth={1.75} /> Read in Scroll view
+              </button>
+            </div>
+          </div>
         ) : (
           <iframe
             className="viewer-original"
-            src={`/api/documents/${documentId}/original?inline=1`}
+            // When actually split, the logical page number no longer maps to the
+            // original PDF's page — open the original without a jump.
+            src={
+              d.page_layout === "spread"
+                ? `/api/documents/${documentId}/original?inline=1`
+                : `/api/documents/${documentId}/original?inline=1#page=${page}`
+            }
             title={d.filename}
           />
         ))}

@@ -138,6 +138,18 @@ export function SelectionPopover({
               </button>
             </>
           )}
+          <span className="annot-popover-sep" />
+          <button
+            className="icon-btn"
+            onPointerDown={(e) => {
+              e.preventDefault();
+              onDismiss();
+            }}
+            aria-label="Close"
+            title="Close"
+          >
+            <X size={14} strokeWidth={1.5} />
+          </button>
         </div>
       )}
     </div>,
