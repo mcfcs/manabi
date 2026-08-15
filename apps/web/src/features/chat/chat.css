@@ -232,6 +232,18 @@
   margin: 0;
   white-space: pre-wrap;
 }
+/* Rendered markdown (assistant replies): breaks are real <br>/blocks, so drop
+   pre-wrap, and tighten block spacing to the bubble. */
+.chat-bubble .chat-md p {
+  white-space: normal;
+  margin: 0 0 0.5em;
+}
+.chat-bubble .chat-md > :first-child {
+  margin-top: 0;
+}
+.chat-bubble .chat-md > :last-child {
+  margin-bottom: 0;
+}
 
 .chat-msg.user .chat-bubble {
   background: var(--accent-blue-wash);

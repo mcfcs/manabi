@@ -34,6 +34,7 @@ import {
   useChatVoice,
   useGenerationJob,
 } from "../ai/common";
+import { Markdown } from "../../components/Markdown";
 import { ChatComposer } from "./ChatComposer";
 import "./chat.css";
 
@@ -611,7 +612,11 @@ export function ChatTab({ moduleId }: { moduleId: string }) {
                       general knowledge — not from your materials
                     </span>
                   )}
-                  <p>{m.content}</p>
+                  {m.role === "assistant" ? (
+                    <Markdown className="chat-md">{m.content}</Markdown>
+                  ) : (
+                    <p>{m.content}</p>
+                  )}
                   {m.citations && m.citations.length > 0 && (
                     <div className="chat-cites">
                       {m.citations.map((c, i) => (

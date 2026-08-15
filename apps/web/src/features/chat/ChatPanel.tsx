@@ -3,6 +3,7 @@ import { Link } from "@tanstack/react-router";
 import { Loader2, SendHorizontal, Volume2, VolumeX, X } from "lucide-react";
 import { type FormEvent, useEffect, useRef, useState } from "react";
 
+import { Markdown } from "../../components/Markdown";
 import { api, type ChatMessageOut, type ChatThreadOut } from "../../lib/api";
 import { useCancelJob, useChatVoice, useGenerationJob } from "../ai/common";
 import "./chat.css";
@@ -190,7 +191,11 @@ export function ChatPanel({
                     reasoned — not directly from the text
                   </span>
                 )}
-                <p>{m.content}</p>
+                {m.role === "assistant" ? (
+                  <Markdown className="chat-md">{m.content}</Markdown>
+                ) : (
+                  <p>{m.content}</p>
+                )}
                 {m.citations && m.citations.length > 0 && (
                   <div className="chat-cites">
                     {m.citations.map((c, i) =>

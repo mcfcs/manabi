@@ -37,6 +37,7 @@ import {
   useChatVoice,
   useJob,
 } from "../ai/common";
+import { Markdown } from "../../components/Markdown";
 import { ChatComposer } from "../chat/ChatComposer";
 import "../chat/chat.css";
 import "./assistant.css";
@@ -520,7 +521,11 @@ export function AssistantPage() {
               )}
               <div className="chat-msg-body">
                 <div className="chat-bubble">
-                  <p>{m.content}</p>
+                  {m.role === "assistant" ? (
+                    <Markdown className="chat-md">{m.content}</Markdown>
+                  ) : (
+                    <p>{m.content}</p>
+                  )}
                   {m.action && <ActionCard message={m} />}
                   {m.citations && m.citations.length > 0 && (
                     <div className="chat-cites">
