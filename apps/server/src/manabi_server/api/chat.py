@@ -22,7 +22,7 @@ from manabi_core.models import (
     SpeechClip,
     User,
 )
-from manabi_core.retrieval import retrieve, retrieve_relevant
+from manabi_core.retrieval import chunks_for_pages, retrieve, retrieve_relevant
 from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -58,6 +58,7 @@ class ThreadOut(BaseModel):
     # Viewer-originated "discussion": the passage this thread is about.
     source_document_id: int | None
     source_page: int | None
+    source_pages: list[int] | None = None
     source_quote: str | None
     created_at: datetime
 
@@ -77,6 +78,7 @@ def _thread_out(t: ChatThread) -> ThreadOut:
         model_override=t.model_override,
         source_document_id=t.source_document_id,
         source_page=t.source_page,
+        source_pages=t.source_pages,
         source_quote=t.source_quote,
         created_at=t.created_at,
     )
@@ -322,6 +324,21 @@ async def _owned_document(
 class DiscussIn(BaseModel):
     quote: str
     page: int | None = None
+    pages: list[int] | None = None  # "Ask about pages 1-3, 5" — grounds on these
+
+
+def _format_pages(pages: list[int]) -> str:
+    """[1,2,3,5] → '1-3, 5' — compress consecutive runs for a thread title."""
+    out: list[str] = []
+    run_start = prev = pages[0]
+    for p in pages[1:] + [None]:
+        if p == prev + 1:
+            prev = p
+            continue
+        out.append(str(run_start) if run_start == prev else f"{run_start}-{prev}")
+        if p is not None:
+            run_start = prev = p
+    return ", ".join(out)
 
 
 @router.get("/documents/{document_id}/threads")
@@ -353,7 +370,16 @@ async def discuss_document(
     """Open a Steven-taught, reasoning-mode thread anchored to a passage. The
     caller then posts the seed question via the normal messages endpoint."""
     quote = data.quote.strip()[:2000]
-    title = (quote[:60] + "…") if len(quote) > 60 else (quote or "Discussion")
+    # Dedup + sort the page selection; clamp to the doc's real pages.
+    pages = (
+        sorted({p for p in data.pages if 1 <= p <= (doc.page_count or 10**9)})
+        if data.pages
+        else None
+    ) or None
+    if pages:
+        title = "Pages " + _format_pages(pages)
+    else:
+        title = (quote[:60] + "…") if len(quote) > 60 else (quote or "Discussion")
     thread = ChatThread(
         user_id=user.id,
         module_id=doc.module_id,
@@ -364,7 +390,8 @@ async def discuss_document(
         # text is actually found (module-wide search can miss one page).
         scope_document_ids=[doc.id],
         source_document_id=doc.id,
-        source_page=data.page,
+        source_page=(pages[0] if pages else data.page),
+        source_pages=pages,
         source_quote=quote or None,
     )
     db.add(thread)
@@ -430,7 +457,14 @@ async def _dispatch_answer(
 
     if thread.module_id is not None:
         # ── Module thread (behavior unchanged) ──
-        if thread.scope_document_ids == []:
+        if thread.source_pages and thread.source_document_id:
+            # Page-anchored "Ask about pages 1-3, 5": ground on the exact text of
+            # those pages, deterministically, not embedding top-k.
+            pg_chunks = await chunks_for_pages(
+                db, thread.source_document_id, thread.source_pages
+            )
+            chunk_ids = [c.id for c in pg_chunks]
+        elif thread.scope_document_ids == []:
             chunk_ids: list[int] = []  # documents excluded from scope
         else:
             hits = await retrieve(

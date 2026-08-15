@@ -27,7 +27,7 @@ from manabi_core.models import (
 )
 from manabi_core.retrieval import load_context_chunks, source_fingerprint
 from pydantic import BaseModel
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from manabi_server.api.modules import get_owned_module
@@ -701,6 +701,70 @@ async def delete_card(
     await db.delete(card)
     await db.commit()
     return {"ok": True}
+
+
+class CardCreate(BaseModel):
+    front: str
+    back: str
+
+
+@router.post(
+    "/modules/{module_id}/flashcards/cards", dependencies=[Depends(require_csrf)]
+)
+async def add_card(
+    data: CardCreate,
+    module: Module = Depends(get_owned_module),
+    db: AsyncSession = Depends(get_db),
+) -> CardOut:
+    """Manually add a card to the module's latest deck (creating a manual deck if
+    none exists). No CardReview row is needed — a card without one is treated as
+    due, and the row is created on its first rating."""
+    front = data.front.strip()
+    back = data.back.strip()
+    if not front or not back:
+        raise HTTPException(status_code=422, detail="Front and back are required")
+    artifact = await _latest_artifact(db, module.id, ArtifactType.flashcard_deck)
+    if artifact is None:
+        artifact = Artifact(
+            module_id=module.id,
+            artifact_type=ArtifactType.flashcard_deck,
+            scope_module_ids=[module.id],
+            title=f"Flashcards — {module.title}",
+            content={},
+            model_name="manual",
+            prompt_version="manual",
+            source_chunk_ids=[],
+            source_fingerprint="",
+            module_version_at_gen=module.content_version,
+        )
+        db.add(artifact)
+        await db.flush()
+    next_ord = (
+        await db.execute(
+            select(func.coalesce(func.max(Flashcard.ord), -1) + 1).where(
+                Flashcard.artifact_id == artifact.id
+            )
+        )
+    ).scalar_one()
+    card = Flashcard(
+        artifact_id=artifact.id,
+        ord=next_ord,
+        front=front,
+        back=back,
+        edited=True,  # user-authored
+        status=FlashcardStatus.active,
+    )
+    db.add(card)
+    await db.commit()
+    await db.refresh(card)
+    return CardOut(
+        id=card.id,
+        front=card.front,
+        back=card.back,
+        status=card.status,
+        edited=card.edited,
+        citations=[],
+    )
 
 
 @router.get("/modules/{module_id}/flashcards/export.apkg")

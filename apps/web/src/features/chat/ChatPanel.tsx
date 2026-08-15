@@ -7,6 +7,24 @@ import { api, type ChatMessageOut, type ChatThreadOut } from "../../lib/api";
 import { useCancelJob, useChatVoice, useGenerationJob } from "../ai/common";
 import "./chat.css";
 
+/** [1,2,3,5] → "1-3, 5" — compress consecutive runs for the panel header. */
+function formatPages(pages: number[]): string {
+  const sorted = [...pages].sort((a, b) => a - b);
+  const out: string[] = [];
+  let start = sorted[0];
+  let prev = sorted[0];
+  for (let i = 1; i <= sorted.length; i++) {
+    const p = sorted[i];
+    if (p === prev + 1) {
+      prev = p;
+      continue;
+    }
+    out.push(start === prev ? `${start}` : `${start}-${prev}`);
+    start = prev = p;
+  }
+  return out.join(", ");
+}
+
 /** A source-anchored chat "discussion" surfaced over the document viewer.
  * Bottom-sheet on mobile, right-side panel on desktop/iPad. Reuses the module
  * chat endpoints, so these threads also appear in the module Chat tab. */
@@ -109,8 +127,14 @@ export function ChatPanel({
         <header className="chat-panel-head">
           <div className="chat-panel-title">
             <span>Ask</span>
-            {thread.source_page != null && (
-              <span className="chat-panel-ref">p. {thread.source_page}</span>
+            {thread.source_pages?.length ? (
+              <span className="chat-panel-ref">
+                pp. {formatPages(thread.source_pages)}
+              </span>
+            ) : (
+              thread.source_page != null && (
+                <span className="chat-panel-ref">p. {thread.source_page}</span>
+              )
             )}
           </div>
           <div className="chat-panel-head-actions">

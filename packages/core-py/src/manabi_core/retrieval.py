@@ -175,6 +175,41 @@ async def load_chunks_by_ids(
     return [ScopedChunk(*row) for row in rows]
 
 
+async def chunks_for_pages(
+    db: AsyncSession, document_id: int, pages: list[int], *, max_chunks: int = 40
+) -> list[ScopedChunk]:
+    """Every AI-eligible chunk of one document whose page span intersects `pages`,
+    in reading order. Deterministic grounding for a page-anchored discussion
+    ("Ask about pages 1-3, 5") — the exact pages, not embedding top-k."""
+    if not document_id or not pages:
+        return []
+    lo, hi = min(pages), max(pages)
+    rows = (
+        await db.execute(
+            text(
+                """
+                SELECT c.id, c.module_id, c.document_id, d.filename,
+                       c.page_start, c.page_end, c.heading_path, c.text,
+                       c.token_count, c.content_hash, c.element_ids
+                FROM chunks c
+                JOIN documents d ON d.id = c.document_id
+                WHERE c.document_id = :doc
+                  AND d.ai_included
+                  AND d.deleted_at IS NULL
+                  AND c.page_start <= :hi
+                  AND c.page_end >= :lo
+                ORDER BY c.page_start, c.id
+                """
+            ),
+            {"doc": document_id, "lo": lo, "hi": hi},
+        )
+    ).all()
+    want = set(pages)
+    chunks = [ScopedChunk(*row) for row in rows]
+    kept = [c for c in chunks if any(c.page_start <= p <= c.page_end for p in want)]
+    return kept[:max_chunks]
+
+
 # Query embeddings carry an asymmetric instruction prefix, so absolute cosine
 # similarities run lower than symmetric — calibrate against real material + a few
 # off-topic prompts ("write me bubble sort") if the gate feels off.

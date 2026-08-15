@@ -466,6 +466,7 @@ export interface ChatThreadOut {
   model_override: string | null;
   source_document_id: number | null;
   source_page: number | null;
+  source_pages: number[] | null;
   source_quote: string | null;
   created_at: string;
 }

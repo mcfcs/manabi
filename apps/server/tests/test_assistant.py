@@ -30,7 +30,8 @@ def test_thread_out_flags_general():
             id=1, title="t", teacher_mode=False, strict_grounding=False,
             scope_document_ids=None, scope_note_ids=None, scope_module_ids=None,
             auto_materials=False, model_override=None, module_id=module_id,
-            source_document_id=None, source_page=None, source_quote=None,
+            source_document_id=None, source_page=None, source_pages=None,
+            source_quote=None,
             created_at=__import__("datetime").datetime.now(),
         )
 
@@ -72,6 +73,8 @@ def _thread(module_id, **kw):
         scope_module_ids=kw.get("scope_module_ids"),
         auto_materials=kw.get("auto_materials", False),
         model_override=kw.get("model_override"),
+        source_document_id=kw.get("source_document_id"),
+        source_pages=kw.get("source_pages"),
     )
 
 
@@ -171,6 +174,22 @@ class _Res:
         return self._value
 
 
+def _apply_orm_defaults(obj) -> None:
+    """Apply the scalar column defaults a real INSERT/flush would set, so a
+    handler that builds an ORM row and immediately serializes it validates under
+    the no-DB scripted harness (e.g. ChatThread.auto_materials=False)."""
+    try:
+        from sqlalchemy import inspect as _sa_inspect
+
+        cols = _sa_inspect(type(obj)).columns
+    except Exception:  # not a mapped class
+        return
+    for col in cols:
+        if getattr(obj, col.key, None) is None and col.default is not None:
+            if getattr(col.default, "is_scalar", False):
+                setattr(obj, col.key, col.default.arg)
+
+
 class _ScriptedDB:
     """Returns a scripted sequence of execute() results; records adds + commit."""
 
@@ -186,6 +205,9 @@ class _ScriptedDB:
         self.added.append(obj)
         if getattr(obj, "id", None) is None:
             obj.id = len(self.added)
+        if hasattr(obj, "created_at") and getattr(obj, "created_at", None) is None:
+            obj.created_at = _dt.datetime.now()
+        _apply_orm_defaults(obj)  # scalar column defaults a real flush would set
 
     async def flush(self):
         pass
@@ -355,3 +377,58 @@ async def test_delete_message():
     assert out == {"ok": True}
     assert db.deleted is msg
     assert db.committed is True
+
+
+# ── Ask Steven across multiple pages ──────────────────────────────────────
+
+
+def test_format_pages_compresses_runs():
+    from manabi_server.api.chat import _format_pages
+
+    assert _format_pages([1, 2, 3, 5]) == "1-3, 5"
+    assert _format_pages([1]) == "1"
+    assert _format_pages([2, 4, 6]) == "2, 4, 6"
+    assert _format_pages([1, 2, 3, 4]) == "1-4"
+
+
+async def test_discuss_stores_sorted_deduped_pages():
+    from manabi_server.api import chat
+
+    doc = types.SimpleNamespace(id=9, module_id=3, page_count=20)
+    db = _ScriptedDB([])
+    out = await chat.discuss_document(
+        chat.DiscussIn(quote="", pages=[3, 1, 2, 2, 5]),  # unsorted + duplicate
+        doc=doc, user=_User(), db=db,
+    )
+    thread = db.added[0]
+    assert thread.source_pages == [1, 2, 3, 5]
+    assert thread.source_page == 1  # first, for display/back-compat
+    assert thread.title == "Pages 1-3, 5"
+    assert out.source_pages == [1, 2, 3, 5]
+
+
+async def test_discuss_clamps_pages_to_document():
+    from manabi_server.api import chat
+
+    doc = types.SimpleNamespace(id=9, module_id=3, page_count=4)
+    db = _ScriptedDB([])
+    await chat.discuss_document(
+        chat.DiscussIn(quote="", pages=[2, 99]),  # 99 is past the last page
+        doc=doc, user=_User(), db=db,
+    )
+    assert db.added[0].source_pages == [2]
+
+
+async def test_discuss_without_pages_keeps_single_passage():
+    from manabi_server.api import chat
+
+    doc = types.SimpleNamespace(id=9, module_id=3, page_count=20)
+    db = _ScriptedDB([])
+    await chat.discuss_document(
+        chat.DiscussIn(quote="a quoted passage", page=7),
+        doc=doc, user=_User(), db=db,
+    )
+    thread = db.added[0]
+    assert thread.source_pages is None
+    assert thread.source_page == 7
+    assert thread.source_quote == "a quoted passage"

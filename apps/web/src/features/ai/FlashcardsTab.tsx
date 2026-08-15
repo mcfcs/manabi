@@ -4,6 +4,7 @@ import {
   Download,
   Pencil,
   Play,
+  Plus,
   RotateCcw,
   Sparkle,
   Trash2,
@@ -120,17 +121,21 @@ function CardEditor({
   moduleId,
   onClose,
 }: {
-  card: CardOut;
+  card: CardOut | null; // null → add a new card
   moduleId: string;
   onClose: () => void;
 }) {
   const queryClient = useQueryClient();
-  const [front, setFront] = useState(card.front);
-  const [back, setBack] = useState(card.back);
+  const [front, setFront] = useState(card?.front ?? "");
+  const [back, setBack] = useState(card?.back ?? "");
   const save = useMutation({
-    mutationFn: () => api.patch(`/api/flashcards/${card.id}`, { front, back }),
+    mutationFn: () =>
+      card
+        ? api.patch(`/api/flashcards/${card.id}`, { front, back })
+        : api.post(`/api/modules/${moduleId}/flashcards/cards`, { front, back }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["deck", moduleId] });
+      queryClient.invalidateQueries({ queryKey: ["review-due-count"] });
       onClose();
     },
   });
@@ -141,7 +146,7 @@ function CardEditor({
   }
 
   return (
-    <Modal title="Edit card" onClose={onClose}>
+    <Modal title={card ? "Edit card" : "Add card"} onClose={onClose}>
       <form className="modal-form" onSubmit={submit}>
         <div>
           <label className="field-label" htmlFor="card-front">
@@ -190,6 +195,7 @@ export function FlashcardsTab({ moduleId }: { moduleId: string }) {
   const [count, setCount] = useState(12);
   const [reviewing, setReviewing] = useState(false);
   const [editing, setEditing] = useState<CardOut | null>(null);
+  const [adding, setAdding] = useState(false);
 
   const deck = useQuery({
     queryKey: ["deck", moduleId],
@@ -275,6 +281,11 @@ export function FlashcardsTab({ moduleId }: { moduleId: string }) {
           >
             <Play size={15} strokeWidth={1.75} /> Review
           </button>
+          {!viewingOld && (
+            <button className="btn" onClick={() => setAdding(true)}>
+              <Plus size={15} strokeWidth={1.75} /> Add card
+            </button>
+          )}
           <a className="btn" href={`/api/modules/${moduleId}/flashcards/export.apkg`}>
             <Download size={15} strokeWidth={1.75} /> Anki
           </a>
@@ -363,6 +374,13 @@ export function FlashcardsTab({ moduleId }: { moduleId: string }) {
           >
             <Sparkle size={15} strokeWidth={1.75} /> Generate cards
           </button>
+          <p className="gen-hint">
+            Or{" "}
+            <button className="link-btn" onClick={() => setAdding(true)}>
+              add a card by hand
+            </button>
+            .
+          </p>
         </div>
       )}
 
@@ -416,6 +434,9 @@ export function FlashcardsTab({ moduleId }: { moduleId: string }) {
 
       {editing && (
         <CardEditor card={editing} moduleId={moduleId} onClose={() => setEditing(null)} />
+      )}
+      {adding && (
+        <CardEditor card={null} moduleId={moduleId} onClose={() => setAdding(false)} />
       )}
     </div>
   );

@@ -802,6 +802,14 @@ mark.annot-red, .annot-swatch.annot-red, .annot-item-dot.annot-red {
   justify-content: center;
   gap: 4px;
 }
+.viewer-discuss-pages {
+  display: flex;
+  gap: var(--s-2);
+}
+.viewer-discuss-pages .input {
+  flex: 1;
+  min-width: 0;
+}
 .viewer-discuss-hint {
   margin: 0;
   font-size: 11.5px;

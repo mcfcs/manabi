@@ -161,6 +161,23 @@ function useIsMobile(): boolean {
   return mobile;
 }
 
+/** Parse a page spec like "1-3, 5" into a sorted, de-duped, in-range page list. */
+function parsePageRange(input: string, maxPage: number): number[] {
+  const pages = new Set<number>();
+  for (const part of input.split(",")) {
+    const seg = part.trim();
+    const range = seg.match(/^(\d+)\s*-\s*(\d+)$/);
+    if (range) {
+      const a = Number(range[1]);
+      const b = Number(range[2]);
+      for (let i = Math.min(a, b); i <= Math.max(a, b); i++) pages.add(i);
+    } else if (/^\d+$/.test(seg)) {
+      pages.add(Number(seg));
+    }
+  }
+  return [...pages].filter((p) => p >= 1 && p <= maxPage).sort((x, y) => x - y);
+}
+
 /** Container-level text-selection → popover, working for both mouse and touch
  * (iOS never fires onMouseUp for a long-press selection). Tracks a valid,
  * in-container selection via `selectionchange` (debounced) and presents the
@@ -317,6 +334,7 @@ export function DocumentViewer() {
   const [mode, setModeState] = useState<ViewMode>(loadMode);
   const [showNotes, setShowNotes] = useState(false);
   const [showText, setShowText] = useState(false);
+  const [pageRange, setPageRange] = useState(""); // "Ask about pages 1-3, 5"
   const [showMarks, setShowMarks] = useState(false);
   // Split view text layout: per-page (default — right for slides/PPTX) vs one
   // continuous merged document. Off by default; persisted per device.
@@ -379,10 +397,14 @@ export function DocumentViewer() {
     queryFn: () => api.get<ChatThreadOut[]>(`/api/documents/${documentId}/threads`),
   });
 
-  async function startDiscussion(quote: string, pageNo: number | null) {
+  async function startDiscussion(
+    quote: string,
+    pageNo: number | null,
+    pages?: number[],
+  ) {
     const thread = await api.post<ChatThreadOut>(
       `/api/documents/${documentId}/discuss`,
-      { quote: quote.slice(0, 2000), page: pageNo },
+      { quote: quote.slice(0, 2000), page: pageNo, pages },
     );
     queryClient.invalidateQueries({ queryKey: ["document-threads", documentId] });
     setDiscuss(thread); // panel prompts for a question (or explains on send)
@@ -1054,6 +1076,33 @@ export function DocumentViewer() {
             <Sparkles size={14} strokeWidth={1.75} /> Ask about this{" "}
             {isSlides ? "slide" : "page"}
           </button>
+          <form
+            className="viewer-discuss-pages"
+            onSubmit={(e) => {
+              e.preventDefault();
+              const pages = parsePageRange(pageRange, d.pages.length);
+              if (pages.length === 0) return;
+              setShowDiscussions(false);
+              setPageRange("");
+              startDiscussion("", pages[0], pages);
+            }}
+          >
+            <input
+              className="input"
+              value={pageRange}
+              onChange={(e) => setPageRange(e.target.value)}
+              placeholder={`Pages, e.g. 1-3, 5 (of ${d.pages.length})`}
+              inputMode="numeric"
+              aria-label="Ask about specific pages"
+            />
+            <button
+              className="btn"
+              type="submit"
+              disabled={parsePageRange(pageRange, d.pages.length).length === 0}
+            >
+              Ask
+            </button>
+          </form>
           <p className="viewer-discuss-hint">
             Or highlight any text in the page to ask about a passage.
           </p>

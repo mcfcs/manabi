@@ -1,5 +1,6 @@
 import { X } from "lucide-react";
 import { type ReactNode, useEffect } from "react";
+import { createPortal } from "react-dom";
 import "./modal.css";
 
 export function Modal({
@@ -21,7 +22,10 @@ export function Modal({
     return () => window.removeEventListener("keydown", onKey);
   }, [onClose]);
 
-  return (
+  // Portalled to <body> so the fixed overlay is viewport-relative — otherwise a
+  // transformed ancestor (the routed content area) becomes the containing block
+  // and the dialog centres on the content frame, off-screen until you scroll.
+  return createPortal(
     <div className="modal-overlay" onClick={onClose}>
       <div
         className={wide ? "modal modal-wide" : "modal"}
@@ -37,6 +41,7 @@ export function Modal({
         </header>
         {children}
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 }

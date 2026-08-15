@@ -486,6 +486,9 @@ class ChatThread(Base, TimestampMixin):
         BigInteger, ForeignKey("documents.id", ondelete="SET NULL")
     )
     source_page: Mapped[int | None] = mapped_column()
+    # Multi-page "Ask about pages 1-3, 5": the exact pages that ground this
+    # thread. NULL = single-page/passage (use source_page/source_quote).
+    source_pages: Mapped[list[int] | None] = mapped_column(ARRAY(BigInteger))
     source_quote: Mapped[str | None] = mapped_column(Text)
 
     __table_args__ = (
