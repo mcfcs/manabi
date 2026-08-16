@@ -176,11 +176,18 @@ async def load_chunks_by_ids(
 
 
 async def chunks_for_pages(
-    db: AsyncSession, document_id: int, pages: list[int], *, max_chunks: int = 40
+    db: AsyncSession,
+    document_id: int,
+    pages: list[int],
+    *,
+    max_chunks: int = 40,
+    max_tokens: int = 12000,
 ) -> list[ScopedChunk]:
     """Every AI-eligible chunk of one document whose page span intersects `pages`,
     in reading order. Deterministic grounding for a page-anchored discussion
-    ("Ask about pages 1-3, 5") — the exact pages, not embedding top-k."""
+    ("Ask about pages 1-3, 5") — the exact pages, not embedding top-k. Trimmed to
+    max_tokens so the context fits the model window (num_ctx) even for a whole
+    long document."""
     if not document_id or not pages:
         return []
     lo, hi = min(pages), max(pages)
@@ -205,9 +212,16 @@ async def chunks_for_pages(
         )
     ).all()
     want = set(pages)
-    chunks = [ScopedChunk(*row) for row in rows]
-    kept = [c for c in chunks if any(c.page_start <= p <= c.page_end for p in want)]
-    return kept[:max_chunks]
+    chunks = [c for c in (ScopedChunk(*row) for row in rows)
+              if any(c.page_start <= p <= c.page_end for p in want)]
+    kept: list[ScopedChunk] = []
+    tokens = 0
+    for c in chunks[:max_chunks]:
+        tokens += c.token_count
+        if kept and tokens > max_tokens:  # always keep at least one chunk
+            break
+        kept.append(c)
+    return kept
 
 
 # Query embeddings carry an asymmetric instruction prefix, so absolute cosine

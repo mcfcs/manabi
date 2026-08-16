@@ -1,15 +1,26 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { History, ListPlus, PenLine, Search, Trash2 } from "lucide-react";
-import { useState } from "react";
+import { Check, History, ListPlus, PenLine, Search, Trash2, X } from "lucide-react";
+import { type MouseEvent as ReactMouseEvent, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 
 import {
   api,
   ApiError,
   type ArtifactVersion,
+  type ChatThreadOut,
   type JobRef,
   type KeyTerm,
+  type SummaryHighlightOut,
   type SummaryOut,
 } from "../../lib/api";
+import { type AnnotationMark, highlightHtml } from "../../lib/highlight";
+import { ChatPanel } from "../chat/ChatPanel";
+import {
+  AnnotationEditor,
+  type PendingSelection,
+  SelectionPopover,
+  useSelectionPopover,
+} from "../viewer/annotations";
 import {
   AiOfflineBanner,
   CitationPill,
@@ -20,7 +31,55 @@ import {
 } from "./common";
 import "./summary.css";
 
-function SummaryBody({ s }: { s: SummaryOut }) {
+/** Persistent, artifact-anchored summary highlights (the summary analogue of
+ * useAnnotations). */
+function useSummaryHighlights(artifactId: number | undefined) {
+  const queryClient = useQueryClient();
+  const key = ["summary-highlights", artifactId];
+  const list = useQuery({
+    queryKey: key,
+    queryFn: () =>
+      api.get<SummaryHighlightOut[]>(`/api/artifacts/${artifactId}/highlights`),
+    enabled: artifactId != null,
+  });
+  const invalidate = () => queryClient.invalidateQueries({ queryKey: key });
+  const create = useMutation({
+    mutationFn: (body: { quote: string; note?: string; color?: string }) =>
+      api.post(`/api/artifacts/${artifactId}/highlights`, body),
+    onSuccess: invalidate,
+  });
+  const update = useMutation({
+    mutationFn: ({ id, ...body }: { id: number; note?: string; color?: string }) =>
+      api.patch(`/api/summary-highlights/${id}`, body),
+    onSuccess: invalidate,
+  });
+  const remove = useMutation({
+    mutationFn: (id: number) => api.delete(`/api/summary-highlights/${id}`),
+    onSuccess: invalidate,
+  });
+  return { list, create, update, remove };
+}
+
+const _ESC: Record<string, string> = {
+  "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;",
+};
+const escapeHtml = (s: string) => s.replace(/[&<>"']/g, (c) => _ESC[c]);
+
+function SummaryBody({
+  s,
+  editing,
+  edits,
+  onBlockChange,
+  onTitleChange,
+  marks,
+}: {
+  s: SummaryOut;
+  editing: boolean;
+  edits: { title: string; blocks: string[] }[];
+  onBlockChange: (si: number, bi: number, text: string) => void;
+  onTitleChange: (si: number, text: string) => void;
+  marks: AnnotationMark[];
+}) {
   // Sidebar jump-nav: Overview → per-section summaries → People → Key terms →
   // Acronyms. Only surface a section when it has content.
   const nav: { id: string; label: string }[] = [];
@@ -34,6 +93,12 @@ function SummaryBody({ s }: { s: SummaryOut }) {
 
   const jump = (id: string) =>
     document.getElementById(id)?.scrollIntoView({ behavior: "smooth", block: "start" });
+
+  // Plain prose → sanitized HTML with saved highlights baked in (reuses the
+  // document highlighter). Each highlight's quote is re-found in this text.
+  const marked = (textStr: string) => ({
+    __html: highlightHtml(escapeHtml(textStr), [], marks),
+  });
 
   return (
     <div className="summary-layout">
@@ -53,19 +118,40 @@ function SummaryBody({ s }: { s: SummaryOut }) {
         {s.overview && (
           <section id="sum-overview" className="summary-overview">
             <h2>Overview</h2>
-            <p>{s.overview}</p>
+            <p dangerouslySetInnerHTML={marked(s.overview)} />
           </section>
         )}
 
         {s.sections.map((section, si) => (
           <section id={`sum-sec-${si}`} key={si}>
-            <h2>
-              {si + 1}. {section.title}
-            </h2>
+            {editing ? (
+              <input
+                className="input summary-edit-title"
+                value={edits[si]?.title ?? section.title}
+                onChange={(e) => onTitleChange(si, e.target.value)}
+                aria-label={`Section ${si + 1} title`}
+              />
+            ) : (
+              <h2>
+                {si + 1}. {section.title}
+              </h2>
+            )}
             {section.blocks.map((block, bi) => (
               <div className="summary-block" key={bi}>
-                <p>{block.text}</p>
+                {editing ? (
+                  <textarea
+                    className="input summary-edit-block"
+                    value={edits[si]?.blocks[bi] ?? block.text}
+                    onChange={(e) => onBlockChange(si, bi, e.target.value)}
+                    rows={Math.max(2, Math.ceil((edits[si]?.blocks[bi] ?? block.text).length / 80))}
+                  />
+                ) : (
+                  <p dangerouslySetInnerHTML={marked(block.text)} />
+                )}
                 <span className="summary-cites">
+                  {block.edited && !editing && (
+                    <span className="badge stale">edited</span>
+                  )}
                   {(s.citations[`s${si}:b${bi}`] ?? []).map((c) => (
                     <CitationPill key={c.id} citation={c} />
                   ))}
@@ -305,9 +391,73 @@ export function SummaryTab({ moduleId }: { moduleId: string }) {
 
   const s = viewingVersion != null ? oldVersion.data : summary.data;
   const viewingOld = viewingVersion != null && s != null;
+  const live = summary.data; // the editable/highlightable latest summary
+
+  // ── Highlights + Ask (latest summary only) ──
+  const highlights = useSummaryHighlights(live?.artifact_id);
+  const containerRef = useRef<HTMLDivElement>(null);
+  const [selection, setSelection] = useState<PendingSelection | null>(null);
+  const [discuss, setDiscuss] = useState<ChatThreadOut | null>(null);
+  const [editingHl, setEditingHl] = useState<{
+    hl: SummaryHighlightOut;
+    x: number;
+    y: number;
+  } | null>(null);
+  useSelectionPopover({ containerRef, onSelect: setSelection });
+
+  const marks: AnnotationMark[] = (highlights.list.data ?? []).map((h) => ({
+    id: h.id,
+    quote: h.quote,
+    color: h.color,
+    hasNote: !!h.note,
+  }));
+
+  const startDiscussion = useMutation({
+    mutationFn: (quote: string) =>
+      api.post<ChatThreadOut>(`/api/modules/${moduleId}/summary/discuss`, { quote }),
+    onSuccess: (thread) => setDiscuss(thread),
+  });
+
+  // ── Edit mode (latest summary only) ──
+  const [editing, setEditing] = useState(false);
+  const [edits, setEdits] = useState<{ title: string; blocks: string[] }[]>([]);
+  function startEdit() {
+    if (!live) return;
+    setEdits(
+      live.sections.map((sec) => ({
+        title: sec.title,
+        blocks: sec.blocks.map((b) => b.text),
+      })),
+    );
+    setEditing(true);
+  }
+  const saveEdits = useMutation({
+    mutationFn: () =>
+      api.patch(`/api/artifacts/${live!.artifact_id}/sections`, {
+        sections: edits.map((sec) => ({
+          title: sec.title,
+          blocks: sec.blocks.map((text) => ({ text })),
+        })),
+      }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["summary", moduleId] });
+      setEditing(false);
+    },
+  });
+
+  // A highlight <mark> click (bubbled to the container) → open its editor.
+  const onContainerClick = (e: ReactMouseEvent) => {
+    const mark = (e.target as HTMLElement).closest("mark.annot");
+    const ids = (mark as HTMLElement | null)?.dataset.annotIds;
+    if (!ids) return;
+    const hl = (highlights.list.data ?? []).find(
+      (h) => h.id === Number(ids.split(",")[0]),
+    );
+    if (hl) setEditingHl({ hl, x: e.clientX, y: e.clientY });
+  };
 
   return (
-    <div className="summary-tab">
+    <div className="summary-tab" ref={containerRef} onClick={onContainerClick}>
       {summary.data && (
         <header className="gen-head">
           <StalenessBadge staleness={summary.data.staleness} />
@@ -320,34 +470,64 @@ export function SummaryTab({ moduleId }: { moduleId: string }) {
               passages
             </span>
           )}
+          {summary.data.edited_at && (
+            <span
+              className="badge stale"
+              title={`You edited this summary on ${new Date(summary.data.edited_at).toLocaleString()}`}
+            >
+              edited · {new Date(summary.data.edited_at).toLocaleDateString()}
+            </span>
+          )}
           <span className="gen-head-meta">
             generated {new Date(summary.data.generated_at).toLocaleString()} ·{" "}
             {summary.data.model_name}
           </span>
           <span className="gen-head-spacer" />
-          <button
-            className={`btn${managingTerms ? " active" : ""}`}
-            onClick={() => setManagingTerms((v) => !v)}
-          >
-            <ListPlus size={15} strokeWidth={1.75} /> Terms
-          </button>
-          <button
-            className={`btn${showHistory ? " active" : ""}`}
-            onClick={() => {
-              setShowHistory((v) => !v);
-              if (showHistory) setViewingVersion(null);
-            }}
-          >
-            <History size={15} strokeWidth={1.75} /> History
-          </button>
-          <button
-            className="btn btn-primary"
-            onClick={() => generate.mutate()}
-            disabled={gen.running || generate.isPending}
-            title="Your notes guide emphasis — they are never treated as source material"
-          >
-            <PenLine size={15} strokeWidth={1.75} /> Regenerate
-          </button>
+          {editing ? (
+            <>
+              <button className="btn" onClick={() => setEditing(false)}>
+                <X size={15} strokeWidth={1.75} /> Cancel
+              </button>
+              <button
+                className="btn btn-primary"
+                onClick={() => saveEdits.mutate()}
+                disabled={saveEdits.isPending}
+              >
+                <Check size={15} strokeWidth={1.75} /> Save edits
+              </button>
+            </>
+          ) : (
+            <>
+              {!viewingOld && (
+                <button className="btn" onClick={startEdit}>
+                  <PenLine size={15} strokeWidth={1.75} /> Edit
+                </button>
+              )}
+              <button
+                className={`btn${managingTerms ? " active" : ""}`}
+                onClick={() => setManagingTerms((v) => !v)}
+              >
+                <ListPlus size={15} strokeWidth={1.75} /> Terms
+              </button>
+              <button
+                className={`btn${showHistory ? " active" : ""}`}
+                onClick={() => {
+                  setShowHistory((v) => !v);
+                  if (showHistory) setViewingVersion(null);
+                }}
+              >
+                <History size={15} strokeWidth={1.75} /> History
+              </button>
+              <button
+                className="btn btn-primary"
+                onClick={() => generate.mutate()}
+                disabled={gen.running || generate.isPending}
+                title="Your notes guide emphasis — they are never treated as source material"
+              >
+                <PenLine size={15} strokeWidth={1.75} /> Regenerate
+              </button>
+            </>
+          )}
         </header>
       )}
 
@@ -424,7 +604,77 @@ export function SummaryTab({ moduleId }: { moduleId: string }) {
         </div>
       )}
 
-      {s && <SummaryBody s={s} />}
+      {s && (
+        <SummaryBody
+          s={s}
+          editing={editing && !viewingOld}
+          edits={edits}
+          onBlockChange={(si, bi, text) =>
+            setEdits((prev) =>
+              prev.map((sec, i) =>
+                i === si
+                  ? { ...sec, blocks: sec.blocks.map((b, j) => (j === bi ? text : b)) }
+                  : sec,
+              ),
+            )
+          }
+          onTitleChange={(si, text) =>
+            setEdits((prev) =>
+              prev.map((sec, i) => (i === si ? { ...sec, title: text } : sec)),
+            )
+          }
+          marks={viewingOld ? [] : marks}
+        />
+      )}
+
+      {selection && !editing && !viewingOld && (
+        <SelectionPopover
+          selection={selection}
+          onHighlight={(color, note) => {
+            highlights.create.mutate({ quote: selection.quote, color, note });
+            setSelection(null);
+            window.getSelection()?.removeAllRanges();
+          }}
+          onDismiss={() => setSelection(null)}
+          onAsk={() => {
+            startDiscussion.mutate(selection.quote);
+            setSelection(null);
+            window.getSelection()?.removeAllRanges();
+          }}
+        />
+      )}
+
+      {editingHl &&
+        createPortal(
+          <>
+            <div className="summary-hl-backdrop" onClick={() => setEditingHl(null)} />
+            <div
+              className="summary-hl-editor"
+              style={{
+                left: Math.max(8, Math.min(editingHl.x, window.innerWidth - 320)),
+                top: Math.min(editingHl.y + 8, window.innerHeight - 220),
+              }}
+            >
+              <AnnotationEditor
+                annotation={{ ...editingHl.hl, page_no: 0 }}
+                onSave={(note) => {
+                  highlights.update.mutate({ id: editingHl.hl.id, note });
+                  setEditingHl(null);
+                }}
+                onDelete={() => {
+                  highlights.remove.mutate(editingHl.hl.id);
+                  setEditingHl(null);
+                }}
+                onClose={() => setEditingHl(null)}
+              />
+            </div>
+          </>,
+          document.body,
+        )}
+
+      {discuss && (
+        <ChatPanel moduleId={moduleId} thread={discuss} onClose={() => setDiscuss(null)} />
+      )}
     </div>
   );
 }

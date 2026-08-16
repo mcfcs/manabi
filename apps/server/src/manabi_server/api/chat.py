@@ -399,6 +399,39 @@ async def discuss_document(
     return _thread_out(thread)
 
 
+class SummaryDiscussIn(BaseModel):
+    quote: str
+
+
+@router.post(
+    "/modules/{module_id}/summary/discuss", dependencies=[Depends(require_csrf)]
+)
+async def discuss_summary(
+    data: SummaryDiscussIn,
+    module: Module = Depends(get_owned_module),
+    user: User = Depends(get_default_user),
+    db: AsyncSession = Depends(get_db),
+) -> ThreadOut:
+    """Ask Steven about a highlighted summary passage. Same as discuss_document
+    but anchored to the module's materials (no single source document), so the
+    answer can draw on everything the summary was built from."""
+    quote = data.quote.strip()[:2000]
+    if not quote:
+        raise HTTPException(status_code=422, detail="Empty selection")
+    title = "Summary: " + (quote[:52] + "…" if len(quote) > 52 else quote)
+    thread = ChatThread(
+        user_id=user.id,
+        module_id=module.id,
+        title=title,
+        teacher_mode=True,
+        strict_grounding=False,
+        source_quote=quote,  # no source_document_id → all module materials
+    )
+    db.add(thread)
+    await db.commit()
+    return _thread_out(thread)
+
+
 @router.get("/chat/threads/{thread_id}/messages")
 async def list_messages(
     thread: ChatThread = Depends(_get_owned_thread), db: AsyncSession = Depends(get_db)

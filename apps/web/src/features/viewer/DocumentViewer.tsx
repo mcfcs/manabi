@@ -24,7 +24,7 @@ import {
   Type,
   X,
 } from "lucide-react";
-import { type RefObject, useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import {
   api,
@@ -50,6 +50,7 @@ import {
   type PendingSelection,
   SelectionPopover,
   useAnnotations,
+  useSelectionPopover,
 } from "./annotations";
 import "./viewer.css";
 
@@ -176,97 +177,6 @@ function parsePageRange(input: string, maxPage: number): number[] {
     }
   }
   return [...pages].filter((p) => p >= 1 && p <= maxPage).sort((x, y) => x - y);
-}
-
-/** Container-level text-selection → popover, working for both mouse and touch
- * (iOS never fires onMouseUp for a long-press selection). Tracks a valid,
- * in-container selection via `selectionchange` (debounced) and presents the
- * popover on pointerup/touchend, after the touch settles. */
-function useSelectionPopover({
-  containerRef,
-  mode,
-  visiblePage,
-  onSelect,
-}: {
-  containerRef: RefObject<HTMLElement | null>;
-  mode: ViewMode;
-  visiblePage: number;
-  onSelect: (sel: PendingSelection) => void;
-}) {
-  const pending = useRef<PendingSelection | null>(null);
-  useEffect(() => {
-    const container = containerRef.current;
-    if (!container) return;
-    let debounce: number | undefined;
-
-    const capture = () => {
-      const sel = window.getSelection();
-      if (!sel || sel.rangeCount === 0 || sel.isCollapsed) {
-        pending.current = null;
-        return;
-      }
-      const range = sel.getRangeAt(0);
-      if (!container.contains(range.commonAncestorContainer)) {
-        pending.current = null;
-        return;
-      }
-      const text = sel.toString().replace(/\s+/g, " ").trim();
-      if (text.length < 3) {
-        pending.current = null;
-        return;
-      }
-      let pageNo = visiblePage;
-      if (mode !== "read") {
-        const start = range.startContainer;
-        const el =
-          start.nodeType === Node.ELEMENT_NODE
-            ? (start as Element)
-            : start.parentElement;
-        const holder = el?.closest("[data-page-no]");
-        const pn = holder?.getAttribute("data-page-no");
-        if (pn) pageNo = Number(pn);
-      }
-      const rect = range.getBoundingClientRect();
-      const POP_W = 236;
-      // Centre the popover under the selection's midpoint (viewport coords —
-      // the popover is portalled to <body>, so `fixed` is viewport-relative and
-      // never inherits the sidebar-offset of a transformed ancestor).
-      const centerX = (rect.left + rect.right) / 2;
-      pending.current = {
-        quote: text.slice(0, 2000),
-        pageNo,
-        x: Math.max(8, Math.min(centerX - POP_W / 2, window.innerWidth - POP_W - 8)),
-        y:
-          rect.bottom + 8 + 52 > window.innerHeight
-            ? Math.max(8, rect.top - 52)
-            : rect.bottom + 8,
-      };
-    };
-
-    const onSelectionChange = () => {
-      window.clearTimeout(debounce);
-      debounce = window.setTimeout(capture, 150);
-    };
-    const finalize = () => {
-      window.clearTimeout(debounce);
-      // Defer so the browser finalizes the selection after the touch/click ends
-      // (on iOS the same touch would otherwise dismiss the just-shown popover).
-      window.setTimeout(() => {
-        capture();
-        if (pending.current) onSelect(pending.current);
-      }, 0);
-    };
-
-    document.addEventListener("selectionchange", onSelectionChange);
-    container.addEventListener("pointerup", finalize);
-    container.addEventListener("touchend", finalize);
-    return () => {
-      window.clearTimeout(debounce);
-      document.removeEventListener("selectionchange", onSelectionChange);
-      container.removeEventListener("pointerup", finalize);
-      container.removeEventListener("touchend", finalize);
-    };
-  }, [containerRef, mode, visiblePage, onSelect]);
 }
 
 /** The continuous merged-document text (Reader + scroll text column). Highlights
@@ -527,7 +437,6 @@ export function DocumentViewer() {
   // time); mouse and touch both, so highlighting works on iOS.
   useSelectionPopover({
     containerRef: viewerRef,
-    mode,
     visiblePage: mode === "scroll" ? visiblePage : page,
     onSelect: setSelection,
   });

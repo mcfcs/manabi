@@ -244,7 +244,10 @@ function ChatModeControls({
 export function ChatTab({ moduleId }: { moduleId: string }) {
   const queryClient = useQueryClient();
   const navigate = useNavigate();
-  const search = useSearch({ from: "/courses/$courseId/modules/$moduleId" });
+  // strict:false so this also works in a floating panel (rendered off its route,
+  // where a route-pinned useSearch would throw). The `ask` deep link only exists
+  // on the module route anyway.
+  const search = useSearch({ strict: false });
   const aiOnline = useAiOnline();
   const [activeThread, setActiveThread] = useState<number | null>(null);
   const [input, setInput] = useState("");

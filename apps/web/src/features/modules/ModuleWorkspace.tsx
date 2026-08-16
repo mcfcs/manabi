@@ -1,11 +1,15 @@
 import { useQuery } from "@tanstack/react-query";
 import { Link, useNavigate, useParams, useSearch } from "@tanstack/react-router";
-import { ChevronLeft } from "lucide-react";
+import { ChevronLeft, PanelRight } from "lucide-react";
 
 import { useEffect, useRef, useState } from "react";
 
 import { api, type ModuleDetail } from "../../lib/api";
 import { trackRecentModule } from "../../lib/recents";
+import {
+  type PanelKind,
+  useFloatingPanels,
+} from "../panels/FloatingPanels";
 import { useActiveJobs } from "../ai/common";
 import { FlashcardsTab } from "../ai/FlashcardsTab";
 import { GenerateAllModal } from "../ai/GenerateAllModal";
@@ -27,6 +31,14 @@ const TABS = [
   { key: "chat", label: "Chat" },
   { key: "notes", label: "Notes" },
 ] as const;
+
+// Tabs that can pop out into a floating panel.
+const PANELABLE: Partial<Record<(typeof TABS)[number]["key"], PanelKind>> = {
+  materials: "materials",
+  summary: "summary",
+  chat: "chat",
+  notes: "notes",
+};
 
 const JOB_LABELS: Record<string, string> = {
   teach_module: "Lecture",
@@ -206,6 +218,7 @@ export function ModuleWorkspace() {
     queryFn: () => api.get<ModuleDetail>(`/api/modules/${moduleId}`),
   });
   const module = detail.data;
+  const { open } = useFloatingPanels();
 
   useEffect(() => {
     if (module) {
@@ -245,17 +258,38 @@ export function ModuleWorkspace() {
       </header>
 
       <nav className="tab-bar" aria-label="Module sections" ref={tabBarRef}>
-        {TABS.map((t) => (
-          <Link
-            key={t.key}
-            to="/courses/$courseId/modules/$moduleId"
-            params={{ courseId, moduleId }}
-            search={{ tab: t.key }}
-            className={`tab${tab === t.key ? " active" : ""}`}
-          >
-            {t.label}
-          </Link>
-        ))}
+        {TABS.map((t) => {
+          const kind = PANELABLE[t.key];
+          return (
+            <span key={t.key} className="tab-wrap">
+              <Link
+                to="/courses/$courseId/modules/$moduleId"
+                params={{ courseId, moduleId }}
+                search={{ tab: t.key }}
+                className={`tab${tab === t.key ? " active" : ""}`}
+              >
+                {t.label}
+              </Link>
+              {kind && module && (
+                <button
+                  className="tab-popout"
+                  title={`Open ${t.label} in a floating panel`}
+                  aria-label={`Open ${t.label} in a floating panel`}
+                  onClick={() =>
+                    open({
+                      kind,
+                      moduleId,
+                      courseId,
+                      title: `${module.course_code} · ${module.title}`,
+                    })
+                  }
+                >
+                  <PanelRight size={12} strokeWidth={1.75} />
+                </button>
+              )}
+            </span>
+          );
+        })}
       </nav>
 
       {module && tab === "overview" && <Overview module={module} />}

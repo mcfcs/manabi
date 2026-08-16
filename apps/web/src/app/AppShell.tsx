@@ -14,6 +14,7 @@ import {
 } from "lucide-react";
 import { type ReactNode, useEffect, useState } from "react";
 
+import { FloatingPanelProvider } from "../features/panels/FloatingPanels";
 import { SearchPalette } from "../features/search/SearchPalette";
 import { SettingsDialog } from "../features/settings/SettingsDialog";
 import { api, type CourseOut, type HealthOut, type UserOut } from "../lib/api";
@@ -160,6 +161,7 @@ export function AppShell({
   }, []);
 
   return (
+    <FloatingPanelProvider>
     <div className="shell">
       <nav className="rail" aria-label="Main">
         <Link to="/" className="rail-mark">
@@ -371,5 +373,6 @@ export function AppShell({
         </>
       )}
     </div>
+    </FloatingPanelProvider>
   );
 }

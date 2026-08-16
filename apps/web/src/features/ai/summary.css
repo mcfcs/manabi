@@ -272,3 +272,39 @@
     flex-wrap: wrap;
   }
 }
+
+/* ── Editing + highlights ─────────────────────────────────────── */
+.summary-edit-title {
+  font-size: 18px;
+  font-weight: 650;
+  margin-bottom: var(--s-2);
+  width: 100%;
+}
+.summary-edit-block {
+  width: 100%;
+  font-family: var(--font-reading);
+  font-size: 15px;
+  line-height: 1.6;
+  resize: vertical;
+}
+/* Saved highlights baked into the summary prose (colours are global). */
+.summary-body mark.annot {
+  border-radius: 2px;
+  padding: 0 1px;
+  cursor: pointer;
+}
+.summary-body mark.annot.has-note {
+  text-decoration: underline dotted;
+  text-underline-offset: 2px;
+}
+/* Click-to-edit highlight popover (portalled, positioned at the click). */
+.summary-hl-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 64;
+}
+.summary-hl-editor {
+  position: fixed;
+  z-index: 65;
+  width: min(300px, 92vw);
+}

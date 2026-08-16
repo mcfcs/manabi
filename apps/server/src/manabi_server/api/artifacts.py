@@ -23,6 +23,7 @@ from manabi_core.models import (
     Module,
     QuizAttempt,
     QuizQuestion,
+    SummaryHighlight,
     User,
 )
 from manabi_core.retrieval import load_context_chunks, source_fingerprint
@@ -315,6 +316,7 @@ async def get_artifact_version(
         base["key_terms"] = artifact.content.get("key_terms", [])
         base["acronyms"] = artifact.content.get("acronyms", [])
         base["people"] = artifact.content.get("people", [])
+        base["edited_at"] = artifact.content.get("edited_at")
     elif artifact.artifact_type == ArtifactType.flashcard_deck:
         cards = (
             (
@@ -377,6 +379,168 @@ async def patch_terms(
     if data.acronyms is not None:
         content["acronyms"] = [a.model_dump() for a in data.acronyms]
     artifact.content = content
+    await db.commit()
+    return {"ok": True}
+
+
+class SectionBlockIn(BaseModel):
+    text: str
+
+
+class SectionIn(BaseModel):
+    title: str
+    blocks: list[SectionBlockIn]
+
+
+class SectionsPatch(BaseModel):
+    sections: list[SectionIn]
+
+
+@router.patch("/artifacts/{artifact_id}/sections", dependencies=[Depends(require_csrf)])
+async def patch_sections(
+    data: SectionsPatch,
+    artifact: Artifact = Depends(_get_owned_artifact),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """Manual editing of a summary's section prose. Marks each changed block
+    `edited` (sticky) and stamps a summary-level `edited_at`. Preserves each
+    block's chunk_ids so citations (keyed by s{si}:b{bi}) keep resolving; block
+    count/order is unchanged (text-only editing)."""
+    if artifact.artifact_type != ArtifactType.summary:
+        raise HTTPException(status_code=422, detail="Not a summary artifact")
+    content = dict(artifact.content)
+    old_sections = content.get("sections", [])
+    new_sections: list[dict] = []
+    changed = False
+    for si, sec in enumerate(data.sections):
+        old_sec = old_sections[si] if si < len(old_sections) else {}
+        old_blocks = old_sec.get("blocks", [])
+        blocks: list[dict] = []
+        for bi, blk in enumerate(sec.blocks):
+            old_blk = old_blocks[bi] if bi < len(old_blocks) else {}
+            text_changed = blk.text != (old_blk.get("text") or "")
+            changed = changed or text_changed
+            blocks.append(
+                {
+                    "text": blk.text,
+                    "chunk_ids": old_blk.get("chunk_ids", []),
+                    "edited": bool(old_blk.get("edited")) or text_changed,
+                }
+            )
+        changed = changed or sec.title != (old_sec.get("title") or "")
+        new_sections.append({"title": sec.title, "blocks": blocks})
+    content["sections"] = new_sections
+    if changed:
+        content["edited_at"] = datetime.now(UTC).isoformat()
+    artifact.content = content
+    await db.commit()
+    return {"ok": True}
+
+
+# ── Summary highlights (persistent, artifact-anchored) ────────────────────
+
+_HL_COLORS = ("yellow", "blue", "red", "green")
+
+
+class HighlightIn(BaseModel):
+    quote: str
+    note: str | None = None
+    color: str = "yellow"
+
+
+class HighlightPatch(BaseModel):
+    note: str | None = None
+    color: str | None = None
+
+
+class HighlightOut(BaseModel):
+    id: int
+    quote: str
+    note: str | None
+    color: str
+
+
+@router.get("/artifacts/{artifact_id}/highlights")
+async def list_highlights(
+    artifact: Artifact = Depends(_get_owned_artifact), db: AsyncSession = Depends(get_db)
+) -> list[HighlightOut]:
+    rows = (
+        (
+            await db.execute(
+                select(SummaryHighlight)
+                .where(SummaryHighlight.artifact_id == artifact.id)
+                .order_by(SummaryHighlight.id)
+            )
+        )
+        .scalars()
+        .all()
+    )
+    return [
+        HighlightOut(id=h.id, quote=h.quote, note=h.note, color=h.color) for h in rows
+    ]
+
+
+@router.post(
+    "/artifacts/{artifact_id}/highlights", dependencies=[Depends(require_csrf)]
+)
+async def create_highlight(
+    data: HighlightIn,
+    artifact: Artifact = Depends(_get_owned_artifact),
+    db: AsyncSession = Depends(get_db),
+) -> HighlightOut:
+    quote = data.quote.strip()
+    if not quote:
+        raise HTTPException(status_code=422, detail="Empty selection")
+    hl = SummaryHighlight(
+        artifact_id=artifact.id,
+        quote=quote[:2000],
+        note=data.note,
+        color=data.color if data.color in _HL_COLORS else "yellow",
+    )
+    db.add(hl)
+    await db.commit()
+    return HighlightOut(id=hl.id, quote=hl.quote, note=hl.note, color=hl.color)
+
+
+async def _get_owned_highlight(
+    highlight_id: int,
+    user: User = Depends(get_default_user),
+    db: AsyncSession = Depends(get_db),
+) -> SummaryHighlight:
+    hl = (
+        await db.execute(
+            select(SummaryHighlight)
+            .join(Artifact, Artifact.id == SummaryHighlight.artifact_id)
+            .join(Module, Module.id == Artifact.module_id)
+            .join(Course, Course.id == Module.course_id)
+            .where(SummaryHighlight.id == highlight_id, Course.user_id == user.id)
+        )
+    ).scalar_one_or_none()
+    if hl is None:
+        raise HTTPException(status_code=404, detail="Highlight not found")
+    return hl
+
+
+@router.patch("/summary-highlights/{highlight_id}", dependencies=[Depends(require_csrf)])
+async def update_highlight(
+    data: HighlightPatch,
+    hl: SummaryHighlight = Depends(_get_owned_highlight),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    if data.note is not None:
+        hl.note = data.note or None
+    if data.color in _HL_COLORS:
+        hl.color = data.color
+    await db.commit()
+    return {"ok": True}
+
+
+@router.delete("/summary-highlights/{highlight_id}", dependencies=[Depends(require_csrf)])
+async def delete_highlight(
+    hl: SummaryHighlight = Depends(_get_owned_highlight),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    await db.delete(hl)
     await db.commit()
     return {"ok": True}
 
@@ -529,6 +693,7 @@ class SummaryOut(BaseModel):
     acronyms: list[dict] = []
     people: list[dict] = []
     coverage: dict | None = None
+    edited_at: str | None = None
     citations: dict[str, list[CitationOut]]
 
 
@@ -551,6 +716,7 @@ async def get_summary(
         acronyms=artifact.content.get("acronyms", []),
         people=artifact.content.get("people", []),
         coverage=artifact.content.get("coverage"),
+        edited_at=artifact.content.get("edited_at"),
         citations=await _citations_by_ref(db, artifact.id),
     )
 

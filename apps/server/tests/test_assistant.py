@@ -432,3 +432,66 @@ async def test_discuss_without_pages_keeps_single_passage():
     assert thread.source_pages is None
     assert thread.source_page == 7
     assert thread.source_quote == "a quoted passage"
+
+
+async def test_discuss_summary_scopes_module_not_document():
+    from manabi_server.api import chat
+
+    module = types.SimpleNamespace(id=3)
+    db = _ScriptedDB([])
+    out = await chat.discuss_summary(
+        chat.SummaryDiscussIn(quote="everyday politics"),
+        module=module, user=_User(), db=db,
+    )
+    thread = db.added[0]
+    assert thread.module_id == 3
+    assert thread.source_document_id is None  # all module materials
+    assert thread.scope_document_ids is None
+    assert thread.source_quote == "everyday politics"
+    assert out.source_quote == "everyday politics"
+    assert out.title.startswith("Summary:")
+
+
+# ── Summary section editing ───────────────────────────────────────────────
+
+
+async def test_patch_sections_marks_changed_blocks_edited():
+    from manabi_core.models import ArtifactType
+    from manabi_server.api import artifacts as art
+
+    artifact = types.SimpleNamespace(
+        artifact_type=ArtifactType.summary,
+        content={
+            "sections": [
+                {
+                    "title": "Intro",
+                    "blocks": [
+                        {"text": "old text", "chunk_ids": [1]},
+                        {"text": "unchanged", "chunk_ids": [2]},
+                    ],
+                }
+            ]
+        },
+    )
+
+    class _DB:
+        async def commit(self):
+            pass
+
+    data = art.SectionsPatch(
+        sections=[
+            art.SectionIn(
+                title="Intro",
+                blocks=[
+                    art.SectionBlockIn(text="new text"),
+                    art.SectionBlockIn(text="unchanged"),
+                ],
+            )
+        ]
+    )
+    await art.patch_sections(data, artifact=artifact, db=_DB())
+    blocks = artifact.content["sections"][0]["blocks"]
+    assert blocks[0]["text"] == "new text" and blocks[0]["edited"] is True
+    assert blocks[0]["chunk_ids"] == [1]  # citations preserved
+    assert blocks[1]["edited"] is False  # untouched block not flagged
+    assert artifact.content.get("edited_at")  # summary-level stamp set

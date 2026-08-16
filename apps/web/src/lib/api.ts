@@ -385,6 +385,7 @@ export interface JobRef {
 export interface SummaryBlock {
   text: string;
   chunk_ids: number[];
+  edited?: boolean;
 }
 
 export interface SummarySection {
@@ -422,7 +423,15 @@ export interface SummaryOut {
   acronyms: Acronym[];
   people: Person[];
   coverage: { cited: number; total: number } | null;
+  edited_at: string | null;
   citations: Record<string, CitationOut[]>;
+}
+
+export interface SummaryHighlightOut {
+  id: number;
+  quote: string;
+  color: string;
+  note: string | null;
 }
 
 export interface ActiveJobOut {

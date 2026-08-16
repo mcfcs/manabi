@@ -1,9 +1,10 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Highlighter, NotebookPen, Sparkles, Trash2, X } from "lucide-react";
-import { useEffect, useState } from "react";
+import { type RefObject, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 
 import { api, type AnnotationOut } from "../../lib/api";
+import "./viewer.css"; // annot-popover / annot-editor / swatch / mark styles
 
 const COLORS = ["yellow", "blue", "green", "red"] as const;
 
@@ -43,6 +44,93 @@ export interface PendingSelection {
   pageNo: number;
   x: number;
   y: number;
+}
+
+/** Container-level text-selection → popover, mouse + touch (iOS never fires
+ * onMouseUp for a long-press selection). Tracks a valid in-container selection
+ * via `selectionchange` (debounced) and presents on pointerup/touchend after
+ * the touch settles. Shared by the document viewer and the summary: pageNo comes
+ * from the nearest [data-page-no] ancestor, falling back to `visiblePage` (0 for
+ * non-paged text like the summary). */
+export function useSelectionPopover({
+  containerRef,
+  onSelect,
+  visiblePage = 0,
+}: {
+  containerRef: RefObject<HTMLElement | null>;
+  onSelect: (sel: PendingSelection) => void;
+  visiblePage?: number;
+}) {
+  const pending = useRef<PendingSelection | null>(null);
+  useEffect(() => {
+    const container = containerRef.current;
+    if (!container) return;
+    let debounce: number | undefined;
+
+    const capture = () => {
+      const sel = window.getSelection();
+      if (!sel || sel.rangeCount === 0 || sel.isCollapsed) {
+        pending.current = null;
+        return;
+      }
+      const range = sel.getRangeAt(0);
+      if (!container.contains(range.commonAncestorContainer)) {
+        pending.current = null;
+        return;
+      }
+      const text = sel.toString().replace(/\s+/g, " ").trim();
+      if (text.length < 3) {
+        pending.current = null;
+        return;
+      }
+      let pageNo = visiblePage;
+      const start = range.startContainer;
+      const el =
+        start.nodeType === Node.ELEMENT_NODE
+          ? (start as Element)
+          : start.parentElement;
+      const pn = el?.closest("[data-page-no]")?.getAttribute("data-page-no");
+      if (pn) pageNo = Number(pn);
+
+      const rect = range.getBoundingClientRect();
+      const POP_W = 236;
+      // Centre under the selection midpoint (viewport coords; the popover is
+      // portalled to <body>, so `fixed` is viewport-relative).
+      const centerX = (rect.left + rect.right) / 2;
+      pending.current = {
+        quote: text.slice(0, 2000),
+        pageNo,
+        x: Math.max(8, Math.min(centerX - POP_W / 2, window.innerWidth - POP_W - 8)),
+        y:
+          rect.bottom + 8 + 52 > window.innerHeight
+            ? Math.max(8, rect.top - 52)
+            : rect.bottom + 8,
+      };
+    };
+
+    const onSelectionChange = () => {
+      window.clearTimeout(debounce);
+      debounce = window.setTimeout(capture, 150);
+    };
+    const finalize = () => {
+      window.clearTimeout(debounce);
+      // Defer so the browser finalizes the selection after the touch/click ends.
+      window.setTimeout(() => {
+        capture();
+        if (pending.current) onSelect(pending.current);
+      }, 0);
+    };
+
+    document.addEventListener("selectionchange", onSelectionChange);
+    container.addEventListener("pointerup", finalize);
+    container.addEventListener("touchend", finalize);
+    return () => {
+      window.clearTimeout(debounce);
+      document.removeEventListener("selectionchange", onSelectionChange);
+      container.removeEventListener("pointerup", finalize);
+      container.removeEventListener("touchend", finalize);
+    };
+  }, [containerRef, onSelect, visiblePage]);
 }
 
 /** Floating popover shown right after the user selects text. */

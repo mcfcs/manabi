@@ -17,6 +17,22 @@ GENERATION_TIMEOUT = 1800  # generous: cold model load + long context
 KEEP_ALIVE = "30m"  # survive the summary→cards→quiz job sequence
 PREVIEW_INTERVAL = 1.5  # seconds between preview flushes
 
+# Ollama defaults num_ctx to 4096 regardless of the model's trained window, so a
+# large prompt (e.g. "Ask about pages 1-10" = ~12k tokens) is silently truncated
+# and the model never sees the question/material. Size the context to the prompt.
+_CTX_TIERS = (4096, 8192, 16384)
+_RESPONSE_HEADROOM = 1024  # tokens reserved for the model's own answer
+
+
+def _num_ctx(system: str, user: str, cap: int) -> int:
+    """Smallest context tier that holds prompt + a response, clamped to `cap`.
+    Keeps ordinary chats at 4096 (fast) and only grows for big page-range asks."""
+    need = (len(system) + len(user)) // 4 + _RESPONSE_HEADROOM  # ~4 chars/token
+    for tier in _CTX_TIERS:
+        if tier >= need:
+            return min(tier, cap)
+    return min(_CTX_TIERS[-1], cap)
+
 # Connection-level failures that mean the primary node is DOWN/unreachable — the
 # signal to fail over to the local backup. Deliberately excludes ReadTimeout:
 # a slow (but reachable) generation should wait, not trigger failover.
@@ -123,6 +139,7 @@ async def _stream_once(
 ) -> str:
     accumulated: list[str] = []
     last_flush = 0.0
+    num_ctx = _num_ctx(system, user, get_settings().max_num_ctx)
     async with (
         httpx.AsyncClient(timeout=GENERATION_TIMEOUT) as client,
         client.stream(
@@ -137,7 +154,7 @@ async def _stream_once(
                 "stream": True,
                 "format": schema,
                 "keep_alive": KEEP_ALIVE,
-                "options": {"temperature": 0.3},
+                "options": {"temperature": 0.3, "num_ctx": num_ctx},
             },
         ) as response,
     ):

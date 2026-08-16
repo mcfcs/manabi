@@ -55,6 +55,39 @@
   opacity: 0.6;
 }
 
+/* Pop-out-to-floating-panel affordance next to a tab. */
+.tab-wrap {
+  display: inline-flex;
+  align-items: center;
+}
+.tab-popout {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  background: none;
+  color: var(--ink-faint);
+  cursor: pointer;
+  padding: 3px;
+  margin-left: -2px;
+  border-radius: var(--radius-sm);
+  opacity: 0;
+  transition: opacity var(--t-fast) var(--ease), color var(--t-fast) var(--ease);
+}
+.tab-wrap:hover .tab-popout,
+.tab-popout:focus-visible {
+  opacity: 1;
+}
+.tab-popout:hover {
+  color: var(--accent-blue);
+  background: var(--surface);
+}
+@media (max-width: 767px) {
+  .tab-popout {
+    opacity: 0.6;
+  } /* no hover on touch — keep it discoverable */
+}
+
 /* ── Overview ───────────────────────────────────────────────── */
 
 .module-overview {

@@ -447,6 +447,24 @@ class Annotation(Base, TimestampMixin):
     __table_args__ = (Index("ix_annotations_document_id", "document_id"),)
 
 
+class SummaryHighlight(Base, TimestampMixin):
+    """User highlight (+ optional note) on a summary artifact's prose. Anchored
+    by exact quote (re-found in the rendered blocks) — the summary analogue of
+    Annotation, which is document/page-anchored and so can't cover an artifact."""
+
+    __tablename__ = "summary_highlights"
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    artifact_id: Mapped[int] = mapped_column(
+        BigInteger, ForeignKey("artifacts.id", ondelete="CASCADE"), nullable=False
+    )
+    quote: Mapped[str] = mapped_column(Text, nullable=False)
+    note: Mapped[str | None] = mapped_column(Text)
+    color: Mapped[str] = mapped_column(String(16), nullable=False, default="yellow")
+
+    __table_args__ = (Index("ix_summary_highlights_artifact_id", "artifact_id"),)
+
+
 class ChatThread(Base, TimestampMixin):
     """Chat conversations. Per-module (module_id set) OR general/personal
     (module_id NULL — the "Manabi AI" assistant). Ownership is by user_id so

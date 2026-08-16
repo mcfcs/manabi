@@ -11,6 +11,17 @@ import pytest
 from manabi_ai import ollama_client as oc
 
 
+def test_num_ctx_grows_with_prompt_and_clamps():
+    # Small chat stays at the fast 4096 tier.
+    assert oc._num_ctx("sys", "a short question", cap=16384) == 4096
+    # ~5k-token prompt bumps to 8192.
+    assert oc._num_ctx("s" * 100, "u" * 20_000, cap=16384) == 8192
+    # A full 10-page ask (~12k tokens) needs 16384.
+    assert oc._num_ctx("s" * 100, "u" * 47_000, cap=16384) == 16384
+    # Never exceeds the cap, even for an enormous prompt.
+    assert oc._num_ctx("s", "u" * 500_000, cap=8192) == 8192
+
+
 def _settings(*, backup=False):
     return types.SimpleNamespace(
         ollama_url="http://phillmyeol:11434",
