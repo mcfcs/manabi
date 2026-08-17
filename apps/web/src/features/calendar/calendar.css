@@ -337,7 +337,9 @@
 }
 .week-gutter {
   position: relative;
-  margin-top: 58px; /* head (28) + all-day row (30) */
+  /* head (28) + all-day band (uniform, set per-render as --allday-h) so the
+     hour labels line up with every day's body regardless of all-day count. */
+  margin-top: calc(28px + var(--allday-h, 30px));
 }
 .week-day {
   display: flex;
@@ -360,11 +362,14 @@
   color: var(--accent-red);
 }
 .week-allday {
-  min-height: 30px;
+  /* Uniform height across all 7 days (tallest column) so the time grids below
+     start at the same y — set per-render from the max all-day count. */
+  height: var(--allday-h, 30px);
   display: flex;
   flex-direction: column;
   gap: 2px;
   padding: 2px;
+  overflow: hidden;
   min-width: 0; /* let the chips truncate instead of widening the column */
 }
 .week-allday .cal-chip {
@@ -382,8 +387,8 @@
 }
 .week-block {
   position: absolute;
-  left: 2px;
-  right: 2px;
+  /* left / width / right set inline per lane so overlapping items sit
+     side-by-side within the fixed-width day column. */
   border-left: 3px solid;
   border-radius: 3px;
   padding: 1px 4px;
@@ -393,6 +398,7 @@
   display: flex;
   align-items: flex-start;
   gap: 3px;
+  box-sizing: border-box;
 }
 .week-block.async {
   opacity: 0.45;

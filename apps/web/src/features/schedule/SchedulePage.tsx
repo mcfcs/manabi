@@ -31,19 +31,23 @@ function BlockChip({
   editing,
   onDelete,
   onEditCourse,
+  axisStart = AXIS_START,
+  axisSpan = AXIS_SPAN,
 }: {
   entry: ScheduleEntryOut;
   editing: boolean;
   onDelete: () => void;
   onEditCourse: () => void;
+  axisStart?: number;
+  axisSpan?: number;
 }) {
   const navigate = useNavigate();
   const accent = entry.accent_color ?? "var(--accent-blue)";
   const start = entry.start_minute!;
   const end = entry.end_minute!;
   const mins = end - start;
-  const top = ((start - AXIS_START) / AXIS_SPAN) * 100;
-  const height = ((end - start) / AXIS_SPAN) * 100;
+  const top = ((start - axisStart) / axisSpan) * 100;
+  const height = ((end - start) / axisSpan) * 100;
   return (
     <div
       className="sched-block"
@@ -162,12 +166,17 @@ function EntryDialog({
       if (tba || days.size === 0) {
         await api.post(`/api/schedule/${schedule.id}/entries`, base);
       } else {
+        const s = toMin(start);
+        let e = toMin(end);
+        // An end at/before the start means it runs to (or past) midnight —
+        // e.g. an internship 3 PM → 12 AM. Treat 00:00 as end-of-day (1440).
+        if (e <= s) e += 24 * 60;
         for (const dow of days) {
           await api.post(`/api/schedule/${schedule.id}/entries`, {
             ...base,
             day_of_week: dow,
-            start_minute: toMin(start),
-            end_minute: toMin(end),
+            start_minute: s,
+            end_minute: e,
           });
         }
       }
@@ -341,8 +350,14 @@ export function SchedulePage() {
   const timed = entries.filter((e) => e.day_of_week != null);
   const tba = entries.filter((e) => e.day_of_week == null);
 
+  // Axis fits the entries: default 07:30–20:30, but stretches to hold an early
+  // or late block (e.g. an internship running to midnight) instead of clipping.
+  const axisStart = Math.min(AXIS_START, ...timed.map((e) => e.start_minute ?? AXIS_START));
+  const axisEnd = Math.max(AXIS_END, ...timed.map((e) => e.end_minute ?? AXIS_END));
+  const axisSpan = axisEnd - axisStart;
+
   const hours: number[] = [];
-  for (let m = 480; m < AXIS_END; m += 60) hours.push(m);
+  for (let m = Math.ceil(axisStart / 60) * 60; m < axisEnd; m += 60) hours.push(m);
   const byDay = new Map<number, ScheduleEntryOut[]>();
   for (const b of timed) {
     byDay.set(b.day_of_week!, [...(byDay.get(b.day_of_week!) ?? []), b]);
@@ -434,7 +449,7 @@ export function SchedulePage() {
                 <span
                   key={m}
                   className="timegrid-hour mono"
-                  style={{ top: `${((m - AXIS_START) / AXIS_SPAN) * 100}%` }}
+                  style={{ top: `${((m - axisStart) / axisSpan) * 100}%` }}
                 >
                   {fmt(m)}
                 </span>
@@ -448,7 +463,7 @@ export function SchedulePage() {
                     <div
                       key={m}
                       className="timegrid-line"
-                      style={{ top: `${((m - AXIS_START) / AXIS_SPAN) * 100}%` }}
+                      style={{ top: `${((m - axisStart) / axisSpan) * 100}%` }}
                     />
                   ))}
                   {(byDay.get(dow) ?? []).map((b) => (
@@ -458,6 +473,8 @@ export function SchedulePage() {
                       editing={editing}
                       onDelete={() => removeEntry.mutate(b.id)}
                       onEditCourse={() => setEditCourseId(b.course_id)}
+                      axisStart={axisStart}
+                      axisSpan={axisSpan}
                     />
                   ))}
                 </div>

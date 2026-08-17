@@ -293,9 +293,49 @@ function MonthView({
   );
 }
 
-const WEEK_START_MIN = 420; // 07:00
+const WEEK_START_MIN = 420; // 07:00 (default window; stretches to fit content)
 const WEEK_END_MIN = 1320; // 22:00
-const WEEK_SPAN = WEEK_END_MIN - WEEK_START_MIN;
+
+/** Assign overlapping spans to side-by-side lanes (Google-Calendar style):
+ * transitively-overlapping items form a cluster; each gets the first free lane,
+ * and every item in the cluster is widened to 1/lanes so they sit beside each
+ * other in a fixed-width column. */
+function packLanes<T extends { start: number; end: number }>(
+  items: T[],
+): { item: T; lane: number; lanes: number }[] {
+  const laid = items
+    .map((item) => ({ item, lane: 0, lanes: 1 }))
+    .sort((a, b) => a.item.start - b.item.start || a.item.end - b.item.end);
+  let cluster: (typeof laid)[number][] = [];
+  let clusterEnd = -Infinity;
+  let colEnds: number[] = [];
+  const flush = () => {
+    const lanes = colEnds.length || 1;
+    for (const c of cluster) c.lanes = lanes;
+    cluster = [];
+    colEnds = [];
+  };
+  for (const s of laid) {
+    if (s.item.start >= clusterEnd) flush(); // no overlap with cluster → new one
+    let lane = colEnds.findIndex((e) => e <= s.item.start);
+    if (lane === -1) {
+      lane = colEnds.length;
+      colEnds.push(s.item.end);
+    } else {
+      colEnds[lane] = s.item.end;
+    }
+    s.lane = lane;
+    cluster.push(s);
+    clusterEnd = Math.max(clusterEnd, s.item.end);
+  }
+  flush();
+  return laid;
+}
+
+type WeekTimedItem =
+  | { start: number; end: number; kind: "meeting"; m: MeetingOut }
+  | { start: number; end: number; kind: "event"; e: CalendarEventOut }
+  | { start: number; end: number; kind: "gcal"; g: GcalEventOut };
 
 function WeekView({
   weekStart,
@@ -310,42 +350,89 @@ function WeekView({
 }) {
   const today = todayStr();
   const days = Array.from({ length: 7 }, (_, i) => addDays(weekStart, i));
+
+  // Per-day all-day items (top band) + timed items. The visible window
+  // stretches to fit anything outside 07:00–22:00 (e.g. an internship running
+  // to midnight) so nothing is clipped.
+  let winStart = WEEK_START_MIN;
+  let winEnd = WEEK_END_MIN;
+  const perDay = days.map((date) => {
+    const day = byDay.get(date) ?? EMPTY_DAY;
+    const allDay = [
+      ...day.tasks.map((t) => ({
+        title: `☐ ${t.title}`,
+        color: t.accent_color ?? "var(--ink-soft)",
+      })),
+      ...day.gcal
+        .filter((g) => g.start_minute == null)
+        .map((g) => ({ title: g.title, color: feedColor(g.calendar) })),
+      ...day.events
+        .filter((e) => e.start_minute == null)
+        .map((e) => ({ title: e.title, color: "var(--ink-soft)" })),
+    ];
+    const timed: WeekTimedItem[] = [
+      ...day.meetings.map((m) => ({
+        start: m.start_minute,
+        end: m.end_minute,
+        kind: "meeting" as const,
+        m,
+      })),
+      ...day.events
+        .filter((e) => e.start_minute != null)
+        .map((e) => ({
+          start: e.start_minute!,
+          end: e.end_minute ?? e.start_minute! + 60,
+          kind: "event" as const,
+          e,
+        })),
+      ...day.gcal
+        .filter((g) => g.start_minute != null)
+        .map((g) => ({
+          start: g.start_minute!,
+          end: g.end_minute ?? g.start_minute! + 60,
+          kind: "gcal" as const,
+          g,
+        })),
+    ];
+    for (const it of timed) {
+      winStart = Math.min(winStart, it.start);
+      winEnd = Math.max(winEnd, it.end);
+    }
+    return { date, day, allDay, timed };
+  });
+  winStart = Math.max(0, winStart);
+  winEnd = Math.min(24 * 60, winEnd);
+  const winSpan = winEnd - winStart || 1;
+
+  // Uniform all-day band height so every day's time grid starts at the same y
+  // (a day with 3 no-time tasks must not push its grid below its neighbours).
+  const maxAllDay = Math.max(0, ...perDay.map((d) => d.allDay.length));
+  const alldayH = maxAllDay > 0 ? maxAllDay * 20 + 4 : 24;
+
   const hours: number[] = [];
-  for (let m = 480; m < WEEK_END_MIN; m += 120) hours.push(m);
+  for (let m = Math.ceil(winStart / 120) * 120; m < winEnd; m += 120) hours.push(m);
 
   return (
     <div className="week-scroll">
-      <div className="week-grid">
+      <div className="week-grid" style={{ ["--allday-h" as string]: `${alldayH}px` }}>
       <div className="week-gutter">
         {hours.map((m) => (
           <span
             key={m}
             className="timegrid-hour mono"
-            style={{ top: `${((m - WEEK_START_MIN) / WEEK_SPAN) * 100}%` }}
+            style={{ top: `${((m - winStart) / winSpan) * 100}%` }}
           >
             {fmtMin(m)}
           </span>
         ))}
       </div>
-      {days.map((date) => {
-        const day = byDay.get(date) ?? EMPTY_DAY;
-        const allDay = [
-          ...day.tasks.map((t) => ({
-            title: `☐ ${t.title}`,
-            color: t.accent_color ?? "var(--ink-soft)",
-          })),
-          ...day.gcal
-            .filter((g) => g.start_minute == null)
-            .map((g) => ({ title: g.title, color: feedColor(g.calendar) })),
-          ...day.events
-            .filter((e) => e.start_minute == null)
-            .map((e) => ({ title: e.title, color: "var(--ink-soft)" })),
-        ];
+      {perDay.map(({ date, day, allDay, timed }) => {
         const wholeDayMark = day.marks.find((m) => m.course_id === null);
         const label = toDate(date).toLocaleDateString(undefined, {
           weekday: "short",
           day: "numeric",
         });
+        const laid = packLanes(timed);
         return (
           <div key={date} className="week-day">
             <button
@@ -380,66 +467,74 @@ function WeekView({
                 <div
                   key={m}
                   className="timegrid-line"
-                  style={{ top: `${((m - WEEK_START_MIN) / WEEK_SPAN) * 100}%` }}
+                  style={{ top: `${((m - winStart) / winSpan) * 100}%` }}
                 />
               ))}
-              {day.meetings.map((m, i) => {
-                const mode = meetingMode(m, day);
-                const accent = m.accent_color ?? "var(--accent-blue)";
+              {laid.map(({ item, lane, lanes }, i) => {
+                const top = Math.max(item.start, winStart);
+                const bot = Math.min(item.end, winEnd);
+                // Fixed-width time column; overlapping items share it in lanes.
+                const geo = {
+                  top: `${((top - winStart) / winSpan) * 100}%`,
+                  height: `${Math.max(1.5, ((bot - top) / winSpan) * 100)}%`,
+                  left: `calc(${(lane / lanes) * 100}% + 2px)`,
+                  width: `calc(${(1 / lanes) * 100}% - 3px)`,
+                  right: "auto" as const,
+                };
+                if (item.kind === "meeting") {
+                  const m = item.m;
+                  const mode = meetingMode(m, day);
+                  const accent = m.accent_color ?? "var(--accent-blue)";
+                  return (
+                    <div
+                      key={`m${i}`}
+                      className={`week-block${mode === "async" ? " async" : ""}`}
+                      role="button"
+                      tabIndex={0}
+                      onClick={() => onOpenDay(date)}
+                      style={{
+                        ...geo,
+                        borderLeftColor: accent,
+                        background: `color-mix(in srgb, ${accent} 13%, var(--surface-raised))`,
+                      }}
+                      title={`${m.code} ${fmtMin(m.start_minute)}–${fmtMin(m.end_minute)} · ${
+                        mode === "sync" ? "online" : mode === "async" ? "async" : (m.location ?? "onsite")
+                      }`}
+                    >
+                      <span style={{ color: accent }}>{m.code.replace(/\s/g, "")}</span>
+                      {mode === "sync" && m.meeting_url && (
+                        <a
+                          href={m.meeting_url}
+                          target="_blank"
+                          rel="noreferrer"
+                          onClick={(e) => e.stopPropagation()}
+                          className="sched-block-meet"
+                          aria-label="Join online meeting"
+                        >
+                          <Video size={11} strokeWidth={1.75} />
+                        </a>
+                      )}
+                    </div>
+                  );
+                }
+                if (item.kind === "event") {
+                  const e = item.e;
+                  return (
+                    <div
+                      key={`e${e.id}-${date}`}
+                      className="week-block event-block"
+                      role="button"
+                      tabIndex={0}
+                      onClick={() => onOpenDay(date)}
+                      style={geo}
+                      title={e.title}
+                    >
+                      <span>{e.title}</span>
+                    </div>
+                  );
+                }
+                const g = item.g;
                 return (
-                  <div
-                    key={`m${i}`}
-                    className={`week-block${mode === "async" ? " async" : ""}`}
-                    role="button"
-                    tabIndex={0}
-                    onClick={() => onOpenDay(date)}
-                    style={{
-                      top: `${((m.start_minute - WEEK_START_MIN) / WEEK_SPAN) * 100}%`,
-                      height: `${((m.end_minute - m.start_minute) / WEEK_SPAN) * 100}%`,
-                      borderLeftColor: accent,
-                      background: `color-mix(in srgb, ${accent} 13%, var(--surface-raised))`,
-                    }}
-                    title={`${m.code} ${fmtMin(m.start_minute)}–${fmtMin(m.end_minute)} · ${
-                      mode === "sync" ? "online" : mode === "async" ? "async" : (m.location ?? "onsite")
-                    }`}
-                  >
-                    <span style={{ color: accent }}>{m.code.replace(/\s/g, "")}</span>
-                    {mode === "sync" && m.meeting_url && (
-                      <a
-                        href={m.meeting_url}
-                        target="_blank"
-                        rel="noreferrer"
-                        onClick={(e) => e.stopPropagation()}
-                        className="sched-block-meet"
-                        aria-label="Join online meeting"
-                      >
-                        <Video size={11} strokeWidth={1.75} />
-                      </a>
-                    )}
-                  </div>
-                );
-              })}
-              {day.events
-                .filter((e) => e.start_minute != null)
-                .map((e) => (
-                  <div
-                    key={`e${e.id}-${e.date}`}
-                    className="week-block event-block"
-                    role="button"
-                    tabIndex={0}
-                    onClick={() => onOpenDay(date)}
-                    style={{
-                      top: `${((e.start_minute! - WEEK_START_MIN) / WEEK_SPAN) * 100}%`,
-                      height: `${(((e.end_minute ?? e.start_minute! + 60) - e.start_minute!) / WEEK_SPAN) * 100}%`,
-                    }}
-                    title={e.title}
-                  >
-                    <span>{e.title}</span>
-                  </div>
-                ))}
-              {day.gcal
-                .filter((g) => g.start_minute != null)
-                .map((g, i) => (
                   <div
                     key={`g${i}`}
                     className="week-block gcal-block"
@@ -447,8 +542,7 @@ function WeekView({
                     tabIndex={0}
                     onClick={() => onOpenDay(date)}
                     style={{
-                      top: `${((g.start_minute! - WEEK_START_MIN) / WEEK_SPAN) * 100}%`,
-                      height: `${(((g.end_minute ?? g.start_minute! + 60) - g.start_minute!) / WEEK_SPAN) * 100}%`,
+                      ...geo,
                       borderLeftColor: feedColor(g.calendar),
                       background: `color-mix(in srgb, ${feedColor(g.calendar)} 13%, var(--surface-raised))`,
                       color: feedColor(g.calendar),
@@ -457,7 +551,8 @@ function WeekView({
                   >
                     <span>{g.title}</span>
                   </div>
-                ))}
+                );
+              })}
             </div>
           </div>
         );
