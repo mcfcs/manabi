@@ -432,6 +432,40 @@ async def discuss_summary(
     return _thread_out(thread)
 
 
+class NoteDiscussIn(BaseModel):
+    quote: str
+    note_id: int | None = None  # the note the passage came from (provenance only)
+
+
+@router.post(
+    "/modules/{module_id}/notes/discuss", dependencies=[Depends(require_csrf)]
+)
+async def discuss_note(
+    data: NoteDiscussIn,
+    module: Module = Depends(get_owned_module),
+    user: User = Depends(get_default_user),
+    db: AsyncSession = Depends(get_db),
+) -> ThreadOut:
+    """Ask Steven about a highlighted passage in the student's own note. Same
+    shape as discuss_summary — a teacher-mode, reasoning thread grounded on the
+    module's materials (the note is the student's writing, not a source)."""
+    quote = data.quote.strip()[:2000]
+    if not quote:
+        raise HTTPException(status_code=422, detail="Empty selection")
+    title = "Note: " + (quote[:52] + "…" if len(quote) > 52 else quote)
+    thread = ChatThread(
+        user_id=user.id,
+        module_id=module.id,
+        title=title,
+        teacher_mode=True,
+        strict_grounding=False,
+        source_quote=quote,  # no source_document_id → all module materials
+    )
+    db.add(thread)
+    await db.commit()
+    return _thread_out(thread)
+
+
 @router.get("/chat/threads/{thread_id}/messages")
 async def list_messages(
     thread: ChatThread = Depends(_get_owned_thread), db: AsyncSession = Depends(get_db)

@@ -259,6 +259,14 @@
   border-radius: 3px;
 }
 
+/* Highlight marks (Tiptap Highlight, multicolor). The background color is set
+   inline from the swatch palette; here we just add shape + keep text legible. */
+.note-editor-content mark {
+  border-radius: 2px;
+  padding: 0 1px;
+  color: inherit;
+}
+
 .note-editor-content ul,
 .note-editor-content ol {
   padding-left: var(--s-5);

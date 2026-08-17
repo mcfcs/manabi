@@ -139,11 +139,15 @@ export function SelectionPopover({
   onHighlight,
   onDismiss,
   onAsk,
+  allowNote = true,
 }: {
   selection: PendingSelection;
   onHighlight: (color: string, note?: string) => void;
   onDismiss: () => void;
   onAsk?: () => void;
+  // Hide the note-form affordance (notes highlight is color-only — the note IS
+  // the user's own writing, so a per-highlight sticky note is redundant).
+  allowNote?: boolean;
 }) {
   const [noting, setNoting] = useState(false);
   const [note, setNote] = useState("");
@@ -200,17 +204,19 @@ export function SelectionPopover({
               aria-label={`Highlight ${c}`}
             />
           ))}
-          <button
-            className="icon-btn"
-            onPointerDown={(e) => {
-              e.preventDefault();
-              setNoting(true);
-            }}
-            aria-label="Highlight with note"
-            title="Highlight + note"
-          >
-            <NotebookPen size={15} strokeWidth={1.5} />
-          </button>
+          {allowNote && (
+            <button
+              className="icon-btn"
+              onPointerDown={(e) => {
+                e.preventDefault();
+                setNoting(true);
+              }}
+              aria-label="Highlight with note"
+              title="Highlight + note"
+            >
+              <NotebookPen size={15} strokeWidth={1.5} />
+            </button>
+          )}
           {onAsk && (
             <>
               <span className="annot-popover-sep" />

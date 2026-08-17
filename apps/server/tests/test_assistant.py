@@ -452,6 +452,38 @@ async def test_discuss_summary_scopes_module_not_document():
     assert out.title.startswith("Summary:")
 
 
+async def test_discuss_note_scopes_module_not_document():
+    from manabi_server.api import chat
+
+    module = types.SimpleNamespace(id=3)
+    db = _ScriptedDB([])
+    out = await chat.discuss_note(
+        chat.NoteDiscussIn(quote="my own recap of chapter 1", note_id=5),
+        module=module, user=_User(), db=db,
+    )
+    thread = db.added[0]
+    assert thread.module_id == 3
+    assert thread.source_document_id is None  # all module materials, like summary
+    assert thread.scope_document_ids is None
+    assert thread.teacher_mode is True
+    assert thread.strict_grounding is False
+    assert thread.source_quote == "my own recap of chapter 1"
+    assert out.title.startswith("Note:")
+
+
+async def test_discuss_note_rejects_empty_quote():
+    import pytest
+    from fastapi import HTTPException
+
+    from manabi_server.api import chat
+
+    with pytest.raises(HTTPException):
+        await chat.discuss_note(
+            chat.NoteDiscussIn(quote="   "),
+            module=types.SimpleNamespace(id=3), user=_User(), db=_ScriptedDB([]),
+        )
+
+
 # ── Summary section editing ───────────────────────────────────────────────
 
 

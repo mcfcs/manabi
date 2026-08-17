@@ -1,4 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { Highlight } from "@tiptap/extension-highlight";
 import { Image as TiptapImage } from "@tiptap/extension-image";
 import { Mathematics } from "@tiptap/extension-mathematics";
 import { Table } from "@tiptap/extension-table";
@@ -22,6 +23,7 @@ import {
   FilePlus2,
   Heading1,
   Heading2,
+  Highlighter,
   ImagePlus,
   Italic,
   List,
@@ -33,9 +35,15 @@ import {
   Trash2,
   Undo2,
 } from "lucide-react";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
-import { api, type NoteListItem, type NoteOut } from "../../lib/api";
+import { api, type ChatThreadOut, type NoteListItem, type NoteOut } from "../../lib/api";
+import { ChatPanel } from "../chat/ChatPanel";
+import {
+  SelectionPopover,
+  useSelectionPopover,
+  type PendingSelection,
+} from "../viewer/annotations";
 import "./notes.css";
 
 type SaveState = "saved" | "saving" | "error" | "idle";
@@ -48,6 +56,16 @@ const TINTS = [
   { name: "Mist", value: "#F1F5FA" },
   { name: "Mint", value: "#EFF6EF" },
 ];
+
+// Highlight palette — the same swatch colors as the document/summary marks
+// (viewer.css). Tiptap's multicolor Highlight applies the color inline, so
+// passing these hexes keeps note highlights visually consistent.
+const HL_COLORS: Record<string, string> = {
+  yellow: "#f8e8a0",
+  blue: "#c4d7f2",
+  green: "#c9e5c9",
+  red: "#f2c4bd",
+};
 
 async function uploadImage(noteId: number, file: File): Promise<string> {
   const form = new FormData();
@@ -270,12 +288,12 @@ export function NotesTab({
       {/* key remounts the editor per note: its pending autosave buffer and
           save closure are bound to one note id, so a flush can never write
           one note's content into another */}
-      <NoteEditor key={activeId} noteId={activeId} />
+      <NoteEditor key={activeId} noteId={activeId} moduleId={moduleId} />
     </div>
   );
 }
 
-function NoteEditor({ noteId }: { noteId: number }) {
+function NoteEditor({ noteId, moduleId }: { noteId: number; moduleId: string }) {
   const [saveState, setSaveState] = useState<SaveState>("idle");
   const [tint, setTint] = useState(
     () => localStorage.getItem("manabi-note-tint") ?? TINTS[0].value,
@@ -300,6 +318,14 @@ function NoteEditor({ noteId }: { noteId: number }) {
   const pendingRef = useRef<Record<string, unknown> | null>(null);
   const toolbarRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  // Highlight + Ask Steven on a text selection inside the note. Use a callback
+  // ref (state) so the selection hook re-attaches once the sheet mounts — the
+  // editor is behind a loading early-return, so a plain useRef is null when the
+  // hook's effect first runs and would never wire up.
+  const [wrapEl, setWrapEl] = useState<HTMLDivElement | null>(null);
+  const editorWrapRef = useMemo(() => ({ current: wrapEl }), [wrapEl]);
+  const [selection, setSelection] = useState<PendingSelection | null>(null);
+  const [discuss, setDiscuss] = useState<ChatThreadOut | null>(null);
 
   const note = useQuery({
     queryKey: ["note", noteId],
@@ -332,6 +358,17 @@ function NoteEditor({ noteId }: { noteId: number }) {
     [noteId, queryClient],
   );
 
+  // "Ask Steven" about a highlighted passage → a teacher-mode thread grounded
+  // on the module's materials (mirrors the summary/document discuss flow).
+  const startDiscussion = useMutation({
+    mutationFn: (quote: string) =>
+      api.post<ChatThreadOut>(`/api/modules/${moduleId}/notes/discuss`, {
+        quote,
+        note_id: noteId,
+      }),
+    onSuccess: (thread) => setDiscuss(thread),
+  });
+
   const editor = useEditor(
     {
       extensions: [
@@ -344,6 +381,7 @@ function NoteEditor({ noteId }: { noteId: number }) {
         TaskItem.configure({ nested: true }),
         Mathematics,
         TiptapImage,
+        Highlight.configure({ multicolor: true }),
       ],
       content: note.data?.pm_json ?? "",
       editorProps: {
@@ -418,6 +456,8 @@ function NoteEditor({ noteId }: { noteId: number }) {
     };
   }, [editor]);
 
+  useSelectionPopover({ containerRef: editorWrapRef, onSelect: setSelection });
+
   if (note.isLoading || !editor) {
     return <div className="viewer-splash">Loading notes…</div>;
   }
@@ -447,6 +487,16 @@ function NoteEditor({ noteId }: { noteId: number }) {
           aria-label="Strikethrough"
         >
           <Strikethrough size={16} strokeWidth={1.75} />
+        </button>
+        <button
+          className={btn(editor.isActive("highlight"))}
+          onClick={() =>
+            editor.chain().focus().toggleHighlight({ color: HL_COLORS.yellow }).run()
+          }
+          aria-label="Highlight"
+          title="Highlight — or select text for colors + Ask Steven"
+        >
+          <Highlighter size={16} strokeWidth={1.75} />
         </button>
         <span className="toolbar-sep" />
         <button
@@ -587,10 +637,35 @@ function NoteEditor({ noteId }: { noteId: number }) {
 
       <div
         className="note-sheet"
+        ref={setWrapEl}
         style={{ background: tint, ["--note-font-size" as string]: `${fontSize}px` }}
       >
         <EditorContent editor={editor} className="note-editor" />
       </div>
+
+      {selection && (
+        <SelectionPopover
+          selection={selection}
+          allowNote={false}
+          onHighlight={(color) => {
+            editor.chain().focus().setHighlight({ color: HL_COLORS[color] ?? color }).run();
+            setSelection(null);
+          }}
+          onAsk={() => {
+            startDiscussion.mutate(selection.quote);
+            setSelection(null);
+            window.getSelection()?.removeAllRanges();
+          }}
+          onDismiss={() => setSelection(null)}
+        />
+      )}
+      {discuss && (
+        <ChatPanel
+          moduleId={moduleId}
+          thread={discuss}
+          onClose={() => setDiscuss(null)}
+        />
+      )}
     </div>
   );
 }
