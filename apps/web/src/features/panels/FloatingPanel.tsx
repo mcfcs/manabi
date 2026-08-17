@@ -5,25 +5,43 @@ import { SummaryTab } from "../ai/SummaryTab";
 import { ChatTab } from "../chat/ChatTab";
 import { MaterialsTab } from "../materials/MaterialsTab";
 import { NotesTab } from "../notes/NotesTab";
-import type { Panel } from "./FloatingPanels";
+import { DocumentViewer } from "../viewer/DocumentViewer";
+import { useFloatingPanels, type Panel } from "./FloatingPanels";
 
 const KIND_LABEL: Record<Panel["kind"], string> = {
   materials: "Materials",
   summary: "Summary",
   chat: "Chat",
   notes: "Notes",
+  document: "Material",
 };
 
 function PanelContent({ panel }: { panel: Panel }) {
+  const { open } = useFloatingPanels();
   switch (panel.kind) {
     case "materials":
-      return <MaterialsTab moduleId={panel.moduleId} />;
+      return (
+        <MaterialsTab
+          moduleId={panel.moduleId}
+          onOpenDocument={(doc) =>
+            open({
+              kind: "document",
+              moduleId: panel.moduleId,
+              courseId: panel.courseId,
+              documentId: String(doc.id),
+              title: doc.filename,
+            })
+          }
+        />
+      );
     case "summary":
       return <SummaryTab moduleId={panel.moduleId} />;
     case "chat":
       return <ChatTab moduleId={panel.moduleId} />;
     case "notes":
       return <NotesTab moduleId={panel.moduleId} />;
+    case "document":
+      return <DocumentViewer documentId={panel.documentId} />;
   }
 }
 

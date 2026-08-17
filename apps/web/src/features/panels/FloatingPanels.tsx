@@ -11,13 +11,14 @@ import { createPortal } from "react-dom";
 import { FloatingPanel } from "./FloatingPanel";
 import "./floating-panels.css";
 
-export type PanelKind = "materials" | "summary" | "chat" | "notes";
+export type PanelKind = "materials" | "summary" | "chat" | "notes" | "document";
 
 export interface Panel {
-  id: string; // `${kind}:${moduleId}` — one per (kind, module)
+  id: string; // `${kind}:${moduleId}` (or `document:${documentId}`) — one each
   kind: PanelKind;
   moduleId: string;
   courseId: string;
+  documentId?: string; // set only for kind === "document"
   title: string; // course/module label shown in the panel header
   x: number;
   y: number;
@@ -29,7 +30,7 @@ export interface Panel {
 export type PanelOpen = Pick<
   Panel,
   "kind" | "moduleId" | "courseId" | "title"
->;
+> & { documentId?: string };
 
 interface Ctx {
   panels: Panel[];
@@ -72,7 +73,8 @@ export function FloatingPanelProvider({ children }: { children: ReactNode }) {
   }, [panels]);
 
   const open = useCallback((p: PanelOpen) => {
-    const id = `${p.kind}:${p.moduleId}`;
+    const id =
+      p.kind === "document" ? `document:${p.documentId}` : `${p.kind}:${p.moduleId}`;
     setPanels((prev) => {
       const existing = prev.find((x) => x.id === id);
       const z = prev.reduce((m, x) => Math.max(m, x.z), BASE_Z) + 1;

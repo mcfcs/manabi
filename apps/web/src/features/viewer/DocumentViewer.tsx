@@ -233,12 +233,26 @@ function PageFallback({ page, isSlides }: { page: PageOut; isSlides: boolean }) 
   );
 }
 
-export function DocumentViewer() {
-  const { documentId } = useParams({ from: "/documents/$documentId" });
-  const { page, highlight, citation } = useSearch({
-    from: "/documents/$documentId",
-  });
+export function DocumentViewer({
+  documentId: documentIdProp,
+}: { documentId?: string } = {}) {
+  // Panel mode: rendered inside a floating panel with a documentId prop instead
+  // of the route. Page state stays local (no URL writes); route deep-links
+  // (highlight/citation) don't apply. Route hooks use strict:false so they
+  // don't throw off the /documents route.
+  const inPanel = documentIdProp != null;
+  const routeParams = useParams({ strict: false }) as { documentId?: string };
+  const documentId = documentIdProp ?? routeParams.documentId ?? "";
+  const routeSearch = useSearch({ strict: false }) as {
+    page?: number;
+    highlight?: number;
+    citation?: number;
+  };
   const navigate = useNavigate();
+  const [localPage, setLocalPage] = useState(routeSearch.page ?? 1);
+  const page = inPanel ? localPage : routeSearch.page ?? 1;
+  const highlight = inPanel ? undefined : routeSearch.highlight;
+  const citation = inPanel ? undefined : routeSearch.citation;
   const queryClient = useQueryClient();
   const isMobile = useIsMobile();
   const [mode, setModeState] = useState<ViewMode>(loadMode);
@@ -382,6 +396,10 @@ export function DocumentViewer() {
 
   function goTo(n: number) {
     if (n < 1 || n > total) return;
+    if (inPanel) {
+      setLocalPage(n);
+      return;
+    }
     navigate({
       to: "/documents/$documentId",
       params: { documentId },
@@ -454,6 +472,7 @@ export function DocumentViewer() {
       style={{ ["--reader-size" as string]: `${textSize}px` }}
     >
       <header className="viewer-head">
+        {!inPanel && (
         <Link
           to="/courses/$courseId/modules/$moduleId"
           params={{
@@ -465,6 +484,7 @@ export function DocumentViewer() {
         >
           <ChevronLeft size={16} strokeWidth={1.5} /> Back
         </Link>
+        )}
         <span className="viewer-title" title={d.filename}>
           {d.filename}
         </span>

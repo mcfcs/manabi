@@ -55,36 +55,41 @@
   opacity: 0.6;
 }
 
-/* Pop-out-to-floating-panel affordance next to a tab. */
+/* Pop-out-to-floating-panel affordance next to a tab. Always visible (faint)
+   so it's discoverable, brightening to accent on hover/focus. */
 .tab-wrap {
   display: inline-flex;
   align-items: center;
+  gap: 1px;
 }
 .tab-popout {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  border: none;
+  border: 1px solid transparent;
   background: none;
   color: var(--ink-faint);
   cursor: pointer;
-  padding: 3px;
-  margin-left: -2px;
+  padding: 4px;
+  margin-right: 2px;
   border-radius: var(--radius-sm);
-  opacity: 0;
-  transition: opacity var(--t-fast) var(--ease), color var(--t-fast) var(--ease);
+  opacity: 0.55;
+  transition: opacity var(--t-fast) var(--ease), color var(--t-fast) var(--ease),
+    background var(--t-fast) var(--ease), border-color var(--t-fast) var(--ease);
 }
-.tab-wrap:hover .tab-popout,
-.tab-popout:focus-visible {
+.tab-wrap:hover .tab-popout {
   opacity: 1;
 }
-.tab-popout:hover {
+.tab-popout:hover,
+.tab-popout:focus-visible {
+  opacity: 1;
   color: var(--accent-blue);
   background: var(--surface);
+  border-color: var(--rule);
 }
 @media (max-width: 767px) {
   .tab-popout {
-    opacity: 0.6;
+    opacity: 0.7;
   } /* no hover on touch — keep it discoverable */
 }
 

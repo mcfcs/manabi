@@ -61,6 +61,17 @@
   padding: var(--s-3);
 }
 
+/* A material (DocumentViewer) rendered inside a panel: fill the panel body
+   instead of sizing to the viewport, and let the toolbar wrap when narrow. */
+.fp-body .viewer {
+  height: 100%;
+  max-width: none;
+  margin: 0;
+}
+.fp-body .viewer-head {
+  flex-wrap: wrap;
+}
+
 /* Mobile: one panel at a time, as a bottom sheet + backdrop. */
 .fp-backdrop {
   position: fixed;

@@ -64,7 +64,15 @@ function StatusChip({ doc }: { doc: DocumentOut }) {
   }
 }
 
-export function MaterialsTab({ moduleId }: { moduleId: string }) {
+export function MaterialsTab({
+  moduleId,
+  onOpenDocument,
+}: {
+  moduleId: string;
+  // When set (in a floating panel), a material opens IN the panel instead of
+  // navigating the main window via the /documents route.
+  onOpenDocument?: (doc: DocumentOut) => void;
+}) {
   const queryClient = useQueryClient();
   const fileInput = useRef<HTMLInputElement>(null);
   const [uploadError, setUploadError] = useState<string | null>(null);
@@ -187,15 +195,26 @@ export function MaterialsTab({ moduleId }: { moduleId: string }) {
               )}
             </span>
             {doc.extract_status === "ready" ? (
-              <Link
-                to="/documents/$documentId"
-                params={{ documentId: String(doc.id) }}
-                search={{ page: 1 }}
-                className="doc-link"
-              >
-                <span className="doc-name">{doc.filename}</span>
-                <span className="doc-meta">{formatBytes(doc.byte_size)}</span>
-              </Link>
+              onOpenDocument ? (
+                <button
+                  type="button"
+                  className="doc-link doc-link-btn"
+                  onClick={() => onOpenDocument(doc)}
+                >
+                  <span className="doc-name">{doc.filename}</span>
+                  <span className="doc-meta">{formatBytes(doc.byte_size)}</span>
+                </button>
+              ) : (
+                <Link
+                  to="/documents/$documentId"
+                  params={{ documentId: String(doc.id) }}
+                  search={{ page: 1 }}
+                  className="doc-link"
+                >
+                  <span className="doc-name">{doc.filename}</span>
+                  <span className="doc-meta">{formatBytes(doc.byte_size)}</span>
+                </Link>
+              )
             ) : (
               <div className="doc-link">
                 <span className="doc-name">{doc.filename}</span>
