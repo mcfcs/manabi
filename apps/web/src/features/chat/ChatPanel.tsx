@@ -2,6 +2,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import { Loader2, SendHorizontal, Volume2, VolumeX, X } from "lucide-react";
 import { type FormEvent, useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 
 import { Markdown } from "../../components/Markdown";
 import { api, type ChatMessageOut, type ChatThreadOut } from "../../lib/api";
@@ -121,7 +122,11 @@ export function ChatPanel({
     send.mutate(content);
   }
 
-  return (
+  // Portal to <body>: rendered inside a routed page (summary/notes tab), the
+  // `.content > *` route animation makes a transformed ancestor, against which
+  // `position: fixed` resolves — so the panel landed at the bottom of the full
+  // page instead of the viewport, forcing a scroll to reach it.
+  return createPortal(
     <>
       <div className="chat-panel-backdrop" onClick={onClose} />
       <aside className="chat-panel" role="dialog" aria-label="Discussion">
@@ -286,6 +291,7 @@ export function ChatPanel({
           </button>
         </form>
       </aside>
-    </>
+    </>,
+    document.body,
   );
 }

@@ -24,7 +24,7 @@ import {
   Type,
   X,
 } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 import {
   api,
@@ -293,7 +293,13 @@ export function DocumentViewer({
   });
   const touchStartX = useRef<number | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
-  const viewerRef = useRef<HTMLDivElement>(null);
+  // Callback ref (not useRef): the `.viewer` container renders behind a loading
+  // gate, so the selection-popover hook's effect must re-run once it actually
+  // mounts — a plain ref is still null when the effect first fires and the
+  // popover would only ever attach after an unrelated re-render (e.g. a scroll
+  // page change), so text-view highlighting silently failed in single/reader.
+  const [viewerEl, setViewerEl] = useState<HTMLDivElement | null>(null);
+  const viewerRef = useMemo(() => ({ current: viewerEl }), [viewerEl]);
 
   // Annotations
   const annots = useAnnotations(documentId);
@@ -468,7 +474,7 @@ export function DocumentViewer({
   return (
     <div
       className="viewer"
-      ref={viewerRef}
+      ref={setViewerEl}
       style={{ ["--reader-size" as string]: `${textSize}px` }}
     >
       <header className="viewer-head">
