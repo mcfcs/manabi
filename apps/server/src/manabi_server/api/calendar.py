@@ -15,6 +15,7 @@ from manabi_core.models import (
     Course,
     DayMark,
     GcalEvent,
+    Schedule,
     ScheduleBlock,
     StudyTask,
     User,
@@ -36,6 +37,9 @@ router = APIRouter(prefix="/api/calendar", tags=["calendar"])
 class MeetingOut(BaseModel):
     date: Date
     course_id: int | None
+    block_id: int  # source schedule block (used for RTO/WFH marks on labeled blocks)
+    schedule_id: int  # which schedule group (Class schedule / Internship / …)
+    schedule_title: str
     code: str
     accent_color: str | None
     start_minute: int
@@ -71,6 +75,7 @@ class GcalOut(BaseModel):
 class MarkOut(BaseModel):
     date: Date
     course_id: int | None
+    block_id: int | None
     mode: str
     note: str | None
 
@@ -123,7 +128,8 @@ class EventPatch(BaseModel):
 class MarkIn(BaseModel):
     date: Date
     course_id: int | None = None
-    mode: str | None = None  # "sync" | "async" | None = delete
+    block_id: int | None = None  # set for a labeled block's RTO/WFH mark
+    mode: str | None = None  # sync|async (classes) · rto|wfh (block) · None = delete
     note: str | None = None
 
 
@@ -169,6 +175,10 @@ async def _range_data(
     blocks = (
         (await db.execute(select(ScheduleBlock))).scalars().all()
     )
+    schedule_titles = {
+        s.id: s.title
+        for s in (await db.execute(select(Schedule))).scalars().all()
+    }
 
     # Classes + labeled entries: expand timed blocks over the range ∩ semester
     meetings: list[MeetingOut] = []
@@ -183,6 +193,9 @@ async def _range_data(
                 MeetingOut(
                     date=day,
                     course_id=c.id if c else None,
+                    block_id=b.id,
+                    schedule_id=b.schedule_id,
+                    schedule_title=schedule_titles.get(b.schedule_id, "Schedule"),
                     code=c.code if c else (b.label or "—"),
                     accent_color=(c.accent_color if c else None) or b.color,
                     start_minute=b.start_minute,
@@ -271,7 +284,13 @@ async def _range_data(
             for g in gcal_rows
         ],
         marks=[
-            MarkOut(date=m.date, course_id=m.course_id, mode=m.mode, note=m.note)
+            MarkOut(
+                date=m.date,
+                course_id=m.course_id,
+                block_id=m.block_id,
+                mode=m.mode,
+                note=m.note,
+            )
             for m in marks
         ],
         tasks=[
@@ -364,6 +383,8 @@ async def delete_event(
 
 @router.put("/marks", dependencies=[Depends(require_csrf)])
 async def put_mark(data: MarkIn, db: AsyncSession = Depends(get_db)) -> dict:
+    # A mark targets a labeled block (RTO/WFH) or a class scope (sync/async).
+    allowed = ("rto", "wfh") if data.block_id is not None else ("sync", "async")
     existing = (
         await db.execute(
             select(DayMark).where(
@@ -371,21 +392,30 @@ async def put_mark(data: MarkIn, db: AsyncSession = Depends(get_db)) -> dict:
                 DayMark.course_id.is_(None)
                 if data.course_id is None
                 else DayMark.course_id == data.course_id,
+                DayMark.block_id.is_(None)
+                if data.block_id is None
+                else DayMark.block_id == data.block_id,
             )
         )
     ).scalar_one_or_none()
     if data.mode is None:
         if existing is not None:
             await db.delete(existing)
-    elif data.mode not in ("sync", "async"):
-        raise HTTPException(status_code=422, detail="mode must be sync or async")
+    elif data.mode not in allowed:
+        raise HTTPException(
+            status_code=422, detail=f"mode must be one of {allowed}"
+        )
     elif existing is not None:
         existing.mode = data.mode
         existing.note = data.note
     else:
         db.add(
             DayMark(
-                date=data.date, course_id=data.course_id, mode=data.mode, note=data.note
+                date=data.date,
+                course_id=data.course_id,
+                block_id=data.block_id,
+                mode=data.mode,
+                note=data.note,
             )
         )
     await db.commit()

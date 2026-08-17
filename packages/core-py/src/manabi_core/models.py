@@ -703,7 +703,9 @@ class CalendarEvent(Base, TimestampMixin):
 
 
 class DayMark(Base):
-    """Sync/async declaration for a date — whole day (course_id NULL) or one course."""
+    """Per-date location declaration. For classes: whole day (course_id NULL) or
+    one course, mode sync|async. For a labeled schedule block (block_id set,
+    e.g. an internship): mode rto|wfh."""
 
     __tablename__ = "day_marks"
 
@@ -712,12 +714,17 @@ class DayMark(Base):
     course_id: Mapped[int | None] = mapped_column(
         BigInteger, ForeignKey("courses.id", ondelete="CASCADE")
     )
-    mode: Mapped[str] = mapped_column(String(8), nullable=False)  # sync | async
+    # Set instead of course_id when the mark targets a non-course schedule block
+    # (internship / org duty) — its RTO/WFH state for that date.
+    block_id: Mapped[int | None] = mapped_column(
+        BigInteger, ForeignKey("schedule_blocks.id", ondelete="CASCADE")
+    )
+    mode: Mapped[str] = mapped_column(String(8), nullable=False)  # sync|async|rto|wfh
     note: Mapped[str | None] = mapped_column(String(255))
 
     __table_args__ = (
         UniqueConstraint(
-            "date", "course_id", name="uq_day_marks_date_course",
+            "date", "course_id", "block_id", name="uq_day_marks_date_course",
             postgresql_nulls_not_distinct=True,
         ),
     )

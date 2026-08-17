@@ -4,7 +4,7 @@ import { useState } from "react";
 
 import { api, type CalendarEventOut, type CourseOut } from "../../lib/api";
 import { CourseDialog } from "../courses/CourseDialog";
-import { type DayData, feedColor, fmtMin, meetingMode } from "./CalendarPage";
+import { type DayData, feedColor, fmtMin, meetingMode, modeLabel } from "./CalendarPage";
 
 /** The interactive day content — classes (mode toggles, join links, course
  * edit), tasks (check-off), events (edit), Google events (expandable
@@ -33,7 +33,8 @@ export function DayDetails({
   const putMark = useMutation({
     mutationFn: (body: {
       date: string;
-      course_id: number | null;
+      course_id?: number | null;
+      block_id?: number | null;
       mode: string | null;
     }) => api.put("/api/calendar/marks", body),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ["calendar"] }),
@@ -48,7 +49,9 @@ export function DayDetails({
     },
   });
 
-  const wholeDay = data.marks.find((m) => m.course_id === null);
+  const wholeDay = data.marks.find(
+    (m) => m.course_id === null && m.block_id == null,
+  );
 
   function cycleMode(current: string | undefined): string | null {
     // onsite (none) → async → sync (online) → onsite
@@ -106,13 +109,24 @@ export function DayDetails({
                   </span>
                   <span className="day-row-meta">
                     {" · "}
-                    {mode === "sync"
-                      ? "online"
-                      : mode === "async"
-                        ? "async — no meeting"
-                        : (m.location ?? "onsite")}
+                    {modeLabel(mode, m.location)}
                   </span>
                 </span>
+                {m.course_id == null && (
+                  <button
+                    className={`mark-toggle small ${mode}`}
+                    onClick={() =>
+                      putMark.mutate({
+                        date,
+                        block_id: m.block_id,
+                        mode: mode === "rto" ? "wfh" : "rto",
+                      })
+                    }
+                    title="This day: RTO (onsite) ⇄ WFH (remote)"
+                  >
+                    {mode === "rto" ? "RTO" : "WFH"}
+                  </button>
+                )}
                 {mode === "sync" &&
                   (m.meeting_url ? (
                     <a

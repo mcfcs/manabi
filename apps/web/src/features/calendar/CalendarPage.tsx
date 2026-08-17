@@ -150,17 +150,38 @@ function groupByDay(data: CalendarMonthOut | undefined): Map<string, DayData> {
   return byDay;
 }
 
-/** Mode of one class meeting. Day marks apply ONLY to classes: no mark =
- * onsite, sync = online (Join link), async = no meeting. */
-export function meetingMode(
-  m: MeetingOut,
-  day: DayData,
-): "sync" | "async" | "onsite" {
+export type MeetingMode = "sync" | "async" | "onsite" | "rto" | "wfh";
+
+/** Mode of one schedule meeting. For a class: no mark = onsite, sync = online
+ * (Join link), async = no meeting (a per-class mark overrides the whole-day
+ * one). For a labeled block (internship / org duty, course_id null): its own
+ * RTO/WFH mark, independent of the class marks — defaults to WFH. */
+export function meetingMode(m: MeetingOut, day: DayData): MeetingMode {
+  if (m.course_id == null) {
+    const bm = day.marks.find((mk) => mk.block_id === m.block_id);
+    return (bm?.mode as MeetingMode) ?? "wfh";
+  }
   const specific = day.marks.find(
     (mk) => mk.course_id != null && mk.course_id === m.course_id,
   );
-  const whole = day.marks.find((mk) => mk.course_id === null);
-  return (specific?.mode ?? whole?.mode ?? "onsite") as "sync" | "async" | "onsite";
+  const whole = day.marks.find((mk) => mk.course_id === null && mk.block_id == null);
+  return (specific?.mode ?? whole?.mode ?? "onsite") as MeetingMode;
+}
+
+/** Human label for a meeting mode, used in chips/tooltips/rows. */
+export function modeLabel(mode: MeetingMode, location: string | null): string {
+  switch (mode) {
+    case "sync":
+      return "online";
+    case "async":
+      return "async — no meeting";
+    case "rto":
+      return "RTO — onsite";
+    case "wfh":
+      return "WFH — remote";
+    default:
+      return location ?? "onsite";
+  }
 }
 
 // ── Filters (persisted) ──────────────────────────────────────────────────
@@ -177,7 +198,8 @@ function loadHidden(): Set<string> {
 
 function filterDay(day: DayData, hidden: Set<string>): DayData {
   return {
-    meetings: hidden.has("classes") ? [] : day.meetings,
+    // Each schedule group (Class schedule / Internship / …) toggles on its own.
+    meetings: day.meetings.filter((m) => !hidden.has(`sched:${m.schedule_id}`)),
     events: hidden.has("events") ? [] : day.events,
     tasks: hidden.has("tasks") ? [] : day.tasks,
     gcal: day.gcal.filter((g) => !hidden.has(`gcal:${g.calendar ?? "Google"}`)),
@@ -209,9 +231,7 @@ function MeetingChip({ m, day }: { m: MeetingOut; day: DayData }) {
         background: `color-mix(in srgb, ${m.accent_color ?? "var(--accent-blue)"} 16%, transparent)`,
         color: m.accent_color ?? "var(--accent-blue)",
       }}
-      title={`${m.code} · ${fmtMin(m.start_minute)}–${fmtMin(m.end_minute)} · ${
-        mode === "sync" ? "online" : mode === "async" ? "async (no meeting)" : (m.location ?? "onsite")
-      }`}
+      title={`${m.code} · ${fmtMin(m.start_minute)}–${fmtMin(m.end_minute)} · ${modeLabel(mode, m.location)}`}
     >
       {m.code.replace(/\s/g, "")}
       <span className="cal-chip-time"> {fmtMin(m.start_minute)}</span>
@@ -242,7 +262,9 @@ function MonthView({
       {gridDates(ym).map((date, i) => {
         if (!date) return <div key={`x${i}`} className="cal-cell empty" />;
         const day = byDay.get(date) ?? EMPTY_DAY;
-        const wholeDayMark = day.marks.find((m) => m.course_id === null);
+        const wholeDayMark = day.marks.find(
+          (m) => m.course_id === null && m.block_id == null,
+        );
         return (
           <button
             key={date}
@@ -427,7 +449,9 @@ function WeekView({
         ))}
       </div>
       {perDay.map(({ date, day, allDay, timed }) => {
-        const wholeDayMark = day.marks.find((m) => m.course_id === null);
+        const wholeDayMark = day.marks.find(
+          (m) => m.course_id === null && m.block_id == null,
+        );
         const label = toDate(date).toLocaleDateString(undefined, {
           weekday: "short",
           day: "numeric",
@@ -497,11 +521,14 @@ function WeekView({
                         borderLeftColor: accent,
                         background: `color-mix(in srgb, ${accent} 13%, var(--surface-raised))`,
                       }}
-                      title={`${m.code} ${fmtMin(m.start_minute)}–${fmtMin(m.end_minute)} · ${
-                        mode === "sync" ? "online" : mode === "async" ? "async" : (m.location ?? "onsite")
-                      }`}
+                      title={`${m.code} ${fmtMin(m.start_minute)}–${fmtMin(m.end_minute)} · ${modeLabel(mode, m.location)}`}
                     >
                       <span style={{ color: accent }}>{m.code.replace(/\s/g, "")}</span>
+                      {m.course_id == null && (mode === "rto" || mode === "wfh") && (
+                        <span className={`week-block-tag ${mode}`}>
+                          {mode === "rto" ? "RTO" : "WFH"}
+                        </span>
+                      )}
                       {mode === "sync" && m.meeting_url && (
                         <a
                           href={m.meeting_url}
@@ -627,6 +654,13 @@ export function CalendarPage() {
   const feedNames = [
     ...new Set((data?.gcal ?? []).map((g) => g.calendar ?? "Google")),
   ].sort();
+  // Schedule groups present in the range (Class schedule, Internship, …) — each
+  // filters independently instead of one blanket "Classes" toggle.
+  const scheduleGroups = [
+    ...new Map(
+      (data?.meetings ?? []).map((m) => [m.schedule_id, m.schedule_title]),
+    ),
+  ].sort((a, b) => a[0] - b[0]);
 
   const toggleFilter = (key: string) =>
     setHidden((prev) => {
@@ -669,7 +703,10 @@ export function CalendarPage() {
   }
 
   const filters: { key: string; label: string; color?: string }[] = [
-    { key: "classes", label: "Classes" },
+    ...scheduleGroups.map(([id, title]) => ({
+      key: `sched:${id}`,
+      label: title,
+    })),
     { key: "events", label: "Events" },
     { key: "tasks", label: "Tasks" },
     ...feedNames.map((n) => ({

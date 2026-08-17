@@ -130,6 +130,9 @@ export interface ScheduleOut {
 export interface MeetingOut {
   date: string;
   course_id: number | null;
+  block_id: number; // source schedule block (keys RTO/WFH marks on labeled blocks)
+  schedule_id: number; // schedule group (Class schedule / Internship / …)
+  schedule_title: string;
   code: string;
   accent_color: string | null;
   start_minute: number;
@@ -183,7 +186,8 @@ export interface AnnouncementOut {
 export interface DayMarkOut {
   date: string;
   course_id: number | null;
-  mode: "sync" | "async";
+  block_id: number | null; // set for a labeled block's RTO/WFH mark
+  mode: "sync" | "async" | "rto" | "wfh";
   note: string | null;
 }
 

@@ -241,6 +241,21 @@
   color: var(--accent-blue);
   border-color: var(--accent-blue);
 }
+/* Labeled-block (internship) location marks — filled pills so RTO vs WFH read
+   at a glance and stay distinct from the class sync/async outlines. */
+.mark-toggle.rto,
+.mark-toggle.wfh {
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  border-color: transparent;
+  color: #fff;
+}
+.mark-toggle.rto {
+  background: var(--accent-red, #a8552e);
+}
+.mark-toggle.wfh {
+  background: var(--accent-blue);
+}
 
 .day-panel-add {
   margin-top: auto;
@@ -412,6 +427,26 @@
 }
 .week-block.gcal-block {
   font-weight: 600;
+}
+/* RTO/WFH indicator on a labeled block (internship) in the week grid — a small
+   filled pill pinned top-right so the day's location reads at a glance. */
+.week-block .week-block-tag {
+  position: absolute;
+  top: 2px;
+  right: 3px;
+  font-size: 8.5px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  line-height: 1.45;
+  padding: 0 3px;
+  border-radius: 3px;
+  color: #fff;
+}
+.week-block .week-block-tag.rto {
+  background: var(--accent-red, #a8552e);
+}
+.week-block .week-block-tag.wfh {
+  background: var(--accent-blue);
 }
 
 /* Wrapper: transparent on desktop, a horizontal scroll container on mobile. */
