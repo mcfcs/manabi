@@ -124,6 +124,11 @@
   opacity: 0.5;
   text-decoration: line-through;
 }
+/* Internship "No work" day: muted + struck so it reads as off in the month grid. */
+.cal-chip.meeting.nowork {
+  opacity: 0.6;
+  text-decoration: line-through;
+}
 .cal-chip.event {
   border: 1px solid var(--ink-soft);
   color: var(--ink);
@@ -244,7 +249,8 @@
 /* Labeled-block (internship) location marks — filled pills so RTO vs WFH read
    at a glance and stay distinct from the class sync/async outlines. */
 .mark-toggle.rto,
-.mark-toggle.wfh {
+.mark-toggle.wfh,
+.mark-toggle.nowork {
   font-weight: 700;
   letter-spacing: 0.02em;
   border-color: transparent;
@@ -255,6 +261,9 @@
 }
 .mark-toggle.wfh {
   background: var(--accent-blue);
+}
+.mark-toggle.nowork {
+  background: var(--ink-faint);
 }
 
 .day-panel-add {
@@ -444,6 +453,9 @@
 }
 .week-block .week-block-tag.rto {
   background: var(--accent-red, #a8552e);
+}
+.week-block .week-block-tag.nowork {
+  background: var(--ink-faint);
 }
 .week-block .week-block-tag.wfh {
   background: var(--accent-blue);

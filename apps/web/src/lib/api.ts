@@ -187,7 +187,7 @@ export interface DayMarkOut {
   date: string;
   course_id: number | null;
   block_id: number | null; // set for a labeled block's RTO/WFH mark
-  mode: "sync" | "async" | "rto" | "wfh";
+  mode: "sync" | "async" | "rto" | "wfh" | "nowork";
   note: string | null;
 }
 

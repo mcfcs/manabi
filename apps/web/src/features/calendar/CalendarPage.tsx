@@ -150,7 +150,7 @@ function groupByDay(data: CalendarMonthOut | undefined): Map<string, DayData> {
   return byDay;
 }
 
-export type MeetingMode = "sync" | "async" | "onsite" | "rto" | "wfh";
+export type MeetingMode = "sync" | "async" | "onsite" | "rto" | "wfh" | "nowork";
 
 /** Mode of one schedule meeting. For a class: no mark = onsite, sync = online
  * (Join link), async = no meeting (a per-class mark overrides the whole-day
@@ -179,9 +179,24 @@ export function modeLabel(mode: MeetingMode, location: string | null): string {
       return "RTO — onsite";
     case "wfh":
       return "WFH — remote";
+    case "nowork":
+      return "No work";
     default:
       return location ?? "onsite";
   }
+}
+
+/** Accent for a labeled-block (internship) mode — drives the month-view chip
+ * highlight and the week-view badge: RTO red, WFH blue, No work muted grey. */
+export function blockModeColor(mode: MeetingMode): string {
+  if (mode === "rto") return "var(--accent-red, #a8552e)";
+  if (mode === "nowork") return "var(--ink-faint)";
+  return "var(--accent-blue)"; // wfh (default)
+}
+
+/** Short tag shown on labeled-block chips/badges. */
+export function blockModeTag(mode: MeetingMode): string {
+  return mode === "rto" ? "RTO" : mode === "nowork" ? "OFF" : "WFH";
 }
 
 // ── Filters (persisted) ──────────────────────────────────────────────────
@@ -224,17 +239,26 @@ function TaskChip({ t }: { t: CalTaskOut }) {
 
 function MeetingChip({ m, day }: { m: MeetingOut; day: DayData }) {
   const mode = meetingMode(m, day);
+  // A labeled block (internship / org duty) is color-highlighted by its RTO /
+  // WFH / No-work state instead of its schedule accent, so the month grid shows
+  // the day's work mode at a glance.
+  const labeled = m.course_id == null;
+  const tint = labeled ? blockModeColor(mode) : (m.accent_color ?? "var(--accent-blue)");
   return (
     <span
       className={`cal-chip meeting ${mode}`}
       style={{
-        background: `color-mix(in srgb, ${m.accent_color ?? "var(--accent-blue)"} 16%, transparent)`,
-        color: m.accent_color ?? "var(--accent-blue)",
+        background: `color-mix(in srgb, ${tint} 16%, transparent)`,
+        color: tint,
       }}
       title={`${m.code} · ${fmtMin(m.start_minute)}–${fmtMin(m.end_minute)} · ${modeLabel(mode, m.location)}`}
     >
       {m.code.replace(/\s/g, "")}
-      <span className="cal-chip-time"> {fmtMin(m.start_minute)}</span>
+      {labeled ? (
+        <span className="cal-chip-time"> {blockModeTag(mode)}</span>
+      ) : (
+        <span className="cal-chip-time"> {fmtMin(m.start_minute)}</span>
+      )}
       {mode === "sync" && <Video size={9} strokeWidth={2} className="cal-chip-video" />}
     </span>
   );
@@ -512,7 +536,7 @@ function WeekView({
                   return (
                     <div
                       key={`m${i}`}
-                      className={`week-block${mode === "async" ? " async" : ""}`}
+                      className={`week-block${mode === "async" || mode === "nowork" ? " async" : ""}`}
                       role="button"
                       tabIndex={0}
                       onClick={() => onOpenDay(date)}
@@ -524,9 +548,9 @@ function WeekView({
                       title={`${m.code} ${fmtMin(m.start_minute)}–${fmtMin(m.end_minute)} · ${modeLabel(mode, m.location)}`}
                     >
                       <span style={{ color: accent }}>{m.code.replace(/\s/g, "")}</span>
-                      {m.course_id == null && (mode === "rto" || mode === "wfh") && (
+                      {m.course_id == null && (
                         <span className={`week-block-tag ${mode}`}>
-                          {mode === "rto" ? "RTO" : "WFH"}
+                          {blockModeTag(mode)}
                         </span>
                       )}
                       {mode === "sync" && m.meeting_url && (

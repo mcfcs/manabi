@@ -383,8 +383,11 @@ async def delete_event(
 
 @router.put("/marks", dependencies=[Depends(require_csrf)])
 async def put_mark(data: MarkIn, db: AsyncSession = Depends(get_db)) -> dict:
-    # A mark targets a labeled block (RTO/WFH) or a class scope (sync/async).
-    allowed = ("rto", "wfh") if data.block_id is not None else ("sync", "async")
+    # A mark targets a labeled block (RTO/WFH/No-work) or a class scope
+    # (sync/async).
+    allowed = (
+        ("rto", "wfh", "nowork") if data.block_id is not None else ("sync", "async")
+    )
     existing = (
         await db.execute(
             select(DayMark).where(

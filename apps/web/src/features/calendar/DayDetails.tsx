@@ -119,12 +119,14 @@ export function DayDetails({
                       putMark.mutate({
                         date,
                         block_id: m.block_id,
-                        mode: mode === "rto" ? "wfh" : "rto",
+                        // cycle WFH → RTO → No work → WFH
+                        mode:
+                          mode === "wfh" ? "rto" : mode === "rto" ? "nowork" : "wfh",
                       })
                     }
-                    title="This day: RTO (onsite) ⇄ WFH (remote)"
+                    title="This day: WFH (remote) → RTO (onsite) → No work"
                   >
-                    {mode === "rto" ? "RTO" : "WFH"}
+                    {mode === "rto" ? "RTO" : mode === "nowork" ? "No work" : "WFH"}
                   </button>
                 )}
                 {mode === "sync" &&
