@@ -211,11 +211,25 @@ function loadHidden(): Set<string> {
   }
 }
 
+/** Event tint: its course/schedule color, else the schedule-group default
+ * (so an internship-tagged event matches the internship block), else grey. */
+export function eventColor(e: CalendarEventOut): string {
+  return (
+    e.accent_color ??
+    (e.schedule_id != null ? "var(--accent-blue)" : "var(--ink-soft)")
+  );
+}
+
 function filterDay(day: DayData, hidden: Set<string>): DayData {
   return {
-    // Each schedule group (Class schedule / Internship / …) toggles on its own.
+    // Each schedule group (Class schedule / Internship / …) toggles on its own;
+    // a schedule-tagged event follows that schedule's filter, else "Events".
     meetings: day.meetings.filter((m) => !hidden.has(`sched:${m.schedule_id}`)),
-    events: hidden.has("events") ? [] : day.events,
+    events: day.events.filter((e) =>
+      e.schedule_id != null
+        ? !hidden.has(`sched:${e.schedule_id}`)
+        : !hidden.has("events"),
+    ),
     tasks: hidden.has("tasks") ? [] : day.tasks,
     gcal: day.gcal.filter((g) => !hidden.has(`gcal:${g.calendar ?? "Google"}`)),
     marks: day.marks,
@@ -314,7 +328,19 @@ function MonthView({
                 <TaskChip key={`t${t.id}`} t={t} />
               ))}
               {day.events.map((e) => (
-                <span key={`e${e.id}-${e.date}`} className="cal-chip event">
+                <span
+                  key={`e${e.id}-${e.date}`}
+                  className="cal-chip event"
+                  style={
+                    e.accent_color || e.schedule_id != null
+                      ? {
+                          borderColor: eventColor(e),
+                          color: eventColor(e),
+                          background: `color-mix(in srgb, ${eventColor(e)} 12%, transparent)`,
+                        }
+                      : undefined
+                  }
+                >
                   {e.title}
                 </span>
               ))}
@@ -345,30 +371,44 @@ const WEEK_END_MIN = 1320; // 22:00
 /** Assign overlapping spans to side-by-side lanes (Google-Calendar style):
  * transitively-overlapping items form a cluster; each gets the first free lane,
  * and every item in the cluster is widened to 1/lanes so they sit beside each
- * other in a fixed-width column. */
+ * other in a fixed-width column.
+ *
+ * `opts.laneKey` tags each item's lane; `opts.reuse` items (a schedule-tagged
+ * event) join the lane of a same-key item (its schedule's block) even while it
+ * overlaps — so an internship event renders INSIDE the internship column. */
 function packLanes<T extends { start: number; end: number }>(
   items: T[],
+  opts?: { laneKey?: (it: T) => string | null; reuse?: (it: T) => boolean },
 ): { item: T; lane: number; lanes: number }[] {
   const laid = items
     .map((item) => ({ item, lane: 0, lanes: 1 }))
-    .sort((a, b) => a.item.start - b.item.start || a.item.end - b.item.end);
+    // Containers (longer spans) first at a tie so a reusing event finds them.
+    .sort((a, b) => a.item.start - b.item.start || b.item.end - a.item.end);
   let cluster: (typeof laid)[number][] = [];
   let clusterEnd = -Infinity;
   let colEnds: number[] = [];
+  let colKeys: (string | null)[] = [];
   const flush = () => {
     const lanes = colEnds.length || 1;
     for (const c of cluster) c.lanes = lanes;
     cluster = [];
     colEnds = [];
+    colKeys = [];
   };
   for (const s of laid) {
     if (s.item.start >= clusterEnd) flush(); // no overlap with cluster → new one
-    let lane = colEnds.findIndex((e) => e <= s.item.start);
+    const key = opts?.laneKey?.(s.item) ?? null;
+    let lane = -1;
+    if (key != null && opts?.reuse?.(s.item))
+      lane = colKeys.findIndex((k) => k === key); // ride a same-schedule lane
+    if (lane === -1) lane = colEnds.findIndex((e) => e <= s.item.start);
     if (lane === -1) {
       lane = colEnds.length;
       colEnds.push(s.item.end);
+      colKeys.push(key);
     } else {
-      colEnds[lane] = s.item.end;
+      colEnds[lane] = Math.max(colEnds[lane], s.item.end);
+      if (key != null) colKeys[lane] = key;
     }
     s.lane = lane;
     cluster.push(s);
@@ -414,7 +454,7 @@ function WeekView({
         .map((g) => ({ title: g.title, color: feedColor(g.calendar) })),
       ...day.events
         .filter((e) => e.start_minute == null)
-        .map((e) => ({ title: e.title, color: "var(--ink-soft)" })),
+        .map((e) => ({ title: e.title, color: eventColor(e) })),
     ];
     const timed: WeekTimedItem[] = [
       ...day.meetings.map((m) => ({
@@ -480,7 +520,20 @@ function WeekView({
           weekday: "short",
           day: "numeric",
         });
-        const laid = packLanes(timed);
+        const laid = packLanes(timed, {
+          laneKey: (it) => {
+            const sid =
+              it.kind === "meeting"
+                ? it.m.schedule_id
+                : it.kind === "event"
+                  ? it.e.schedule_id
+                  : null;
+            return sid != null ? `s${sid}` : null;
+          },
+          // A schedule-tagged event rides its schedule block's lane (renders in
+          // the same column, e.g. an internship event inside the internship).
+          reuse: (it) => it.kind === "event" && it.e.schedule_id != null,
+        });
         return (
           <div key={date} className="week-day">
             <button
@@ -570,6 +623,8 @@ function WeekView({
                 }
                 if (item.kind === "event") {
                   const e = item.e;
+                  const tinted = e.accent_color != null || e.schedule_id != null;
+                  const tint = eventColor(e);
                   return (
                     <div
                       key={`e${e.id}-${date}`}
@@ -577,7 +632,17 @@ function WeekView({
                       role="button"
                       tabIndex={0}
                       onClick={() => onOpenDay(date)}
-                      style={geo}
+                      style={
+                        tinted
+                          ? {
+                              ...geo,
+                              borderColor: tint,
+                              borderLeftColor: tint,
+                              background: `color-mix(in srgb, ${tint} 16%, var(--surface-raised))`,
+                              color: tint,
+                            }
+                          : geo
+                      }
                       title={e.title}
                     >
                       <span>{e.title}</span>

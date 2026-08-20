@@ -2,21 +2,19 @@
 token never reaches the browser) and imported files enter the exact same
 validation + ingestion path as manual uploads."""
 
-import hashlib
-
 import httpx
 from fastapi import APIRouter, Depends, HTTPException
-from manabi_core.models import Course, Document, DocumentKind, Module, User
+from manabi_core.models import Course, Module, User
 from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from manabi_server.api.documents import MAGIC, MAX_UPLOAD_BYTES, _enqueue_processing
+from manabi_server.api.documents import _doc_out, ingest_bytes
 from manabi_server.api.modules import get_owned_module
 from manabi_server.config import get_settings
 from manabi_server.db import get_db
 from manabi_server.security import get_default_user, require_csrf
-from manabi_server.storage import files
+from manabi_server.services.canvas_ingest import import_html_as_document
 
 router = APIRouter(prefix="/api/canvas", tags=["canvas"])
 
@@ -201,6 +199,26 @@ async def canvas_files(canvas_course_id: int) -> list[CanvasFile]:
     return out
 
 
+async def _download_canvas_file(file_id: int) -> tuple[str, str, bytes]:
+    """Fetch a Canvas file's metadata + bytes via its authenticated URL.
+    Returns (filename, ext, content). Raises 502 / 422."""
+    meta = await _canvas_get(f"/files/{file_id}")
+    if not isinstance(meta, dict) or "url" not in meta:
+        raise HTTPException(status_code=502, detail="Canvas file metadata unavailable")
+    filename = meta.get("display_name") or meta.get("filename") or f"canvas-{file_id}"
+    ext = filename.rsplit(".", 1)[-1].lower()
+    if ext not in ("pdf", "pptx"):
+        raise HTTPException(status_code=422, detail="Only PDF and PPTX can be imported")
+    _, token = _canvas_config()
+    async with httpx.AsyncClient(timeout=120, follow_redirects=True) as client:
+        r = await client.get(meta["url"], headers={"Authorization": f"Bearer {token}"})
+    if r.status_code >= 400:
+        raise HTTPException(
+            status_code=502, detail=f"Canvas download failed ({r.status_code})"
+        )
+    return filename, ext, r.content
+
+
 @router.post(
     "/modules/{module_id}/import", dependencies=[Depends(require_csrf)]
 )
@@ -210,66 +228,297 @@ async def canvas_import(
     user: User = Depends(get_default_user),
     db: AsyncSession = Depends(get_db),
 ):
-    from manabi_server.api.documents import _doc_out
+    filename, ext, content = await _download_canvas_file(data.file_id)
+    doc, job = await ingest_bytes(
+        db,
+        user,
+        module,
+        filename=filename,
+        ext=ext,
+        content=content,
+        ai_included=data.ai_included and data.extract_text,
+        processing_mode="full" if data.extract_text else "render_only",
+        source_url=f"canvas:file:{data.file_id}",
+    )
+    await db.commit()
+    return _doc_out(doc, job.id)
 
-    # File metadata (incl. the authenticated download URL)
-    meta = await _canvas_get(f"/files/{data.file_id}")
-    if not isinstance(meta, dict) or "url" not in meta:
-        raise HTTPException(status_code=502, detail="Canvas file metadata unavailable")
-    filename = meta.get("display_name") or meta.get("filename") or f"canvas-{data.file_id}"
-    ext = filename.rsplit(".", 1)[-1].lower()
-    if ext not in ("pdf", "pptx"):
-        raise HTTPException(status_code=422, detail="Only PDF and PPTX can be imported")
 
-    _, token = _canvas_config()
-    async with httpx.AsyncClient(timeout=120, follow_redirects=True) as client:
-        r = await client.get(
-            meta["url"], headers={"Authorization": f"Bearer {token}"}
-        )
-    if r.status_code >= 400:
-        raise HTTPException(
-            status_code=502, detail=f"Canvas download failed ({r.status_code})"
-        )
-    content = r.content
+# ── Deeper sync: modules ("topics"), pages, discussions, links, syllabus ──
 
-    # Same validation + ingestion as manual uploads
-    kind = DocumentKind(ext)
-    if len(content) > MAX_UPLOAD_BYTES:
-        raise HTTPException(status_code=413, detail="File exceeds the 100 MB limit")
-    if not content.startswith(MAGIC[kind]):
-        raise HTTPException(
-            status_code=422, detail=f"Downloaded file does not look like a {ext.upper()}"
-        )
-    content_hash = hashlib.sha256(content).hexdigest()
-    existing = (
+
+async def _canvas_get_all(path: str, params: dict | None = None) -> list:
+    """Follow Canvas pagination (Link: rel=next) and concatenate every page."""
+    base, token = _canvas_config()
+    results: list = []
+    url: str | None = f"{base}/api/v1{path}"
+    p: dict | None = {"per_page": 100, **(params or {})}
+    async with httpx.AsyncClient(timeout=30) as client:
+        for _ in range(50):  # hard cap — never loop forever
+            r = await client.get(
+                url, params=p, headers={"Authorization": f"Bearer {token}"}
+            )
+            if r.status_code == 401:
+                raise HTTPException(
+                    status_code=502, detail="Canvas rejected the token — it may have expired"
+                )
+            if r.status_code >= 400:
+                raise HTTPException(
+                    status_code=502, detail=f"Canvas error {r.status_code}: {r.text[:150]}"
+                )
+            body = r.json()
+            if not isinstance(body, list):
+                return [body]
+            results.extend(body)
+            nxt = r.links.get("next", {}).get("url")
+            if not nxt:
+                break
+            url, p = nxt, None  # the next URL already carries its params
+    return results
+
+
+async def _owned_course(course_id: int, user: User, db: AsyncSession) -> Course:
+    course = (
         await db.execute(
-            select(Document).where(
-                Document.module_id == module.id,
-                Document.content_hash == content_hash,
-                Document.deleted_at.is_(None),
+            select(Course).where(Course.id == course_id, Course.user_id == user.id)
+        )
+    ).scalar_one_or_none()
+    if course is None:
+        raise HTTPException(status_code=404, detail="Course not found")
+    return course
+
+
+async def _general_module(db: AsyncSession, course_id: int) -> Module:
+    """Find-or-create the hidden 'Course files' container (is_general)."""
+    general = (
+        await db.execute(
+            select(Module).where(
+                Module.course_id == course_id, Module.is_general.is_(True)
             )
         )
     ).scalar_one_or_none()
-    if existing is not None:
-        raise HTTPException(
-            status_code=409,
-            detail={"message": "This file is already in the module", "document_id": existing.id},
+    if general is None:
+        general = Module(
+            course_id=course_id, title="Course files", position=9999, is_general=True
         )
+        db.add(general)
+        await db.flush()
+    return general
 
-    rel_path = files.new_original_path(ext)
-    files.write_atomic(rel_path, content)
-    doc = Document(
-        module_id=module.id,
-        kind=kind,
-        filename=filename,
-        storage_path=rel_path,
-        content_hash=content_hash,
-        byte_size=len(content),
-        ai_included=data.ai_included and data.extract_text,
-        processing_mode="full" if data.extract_text else "render_only",
+
+class CanvasItemOut(BaseModel):
+    canvas_item_id: int
+    type: str  # File | Page | Discussion | ExternalUrl | Assignment | Quiz | SubHeader…
+    title: str
+    content_id: int | None = None  # file id / discussion topic id
+    page_url: str | None = None
+    external_url: str | None = None
+    html_url: str | None = None
+
+
+class CanvasModuleOut(BaseModel):
+    canvas_id: int
+    name: str
+    position: int
+    items: list[CanvasItemOut]
+
+
+class CanvasStructureOut(BaseModel):
+    modules: list[CanvasModuleOut]
+    pages: list[dict]  # standalone [{url, title}]
+    discussions: list[dict]  # [{id, title}]
+    has_syllabus: bool
+
+
+async def _safe_get_all(path: str, params: dict | None = None) -> list:
+    """Like _canvas_get_all but returns [] instead of raising — some courses
+    restrict individual tabs (Modules/Pages/Discussions 403), and one locked
+    section must not fail the whole sync."""
+    try:
+        return await _canvas_get_all(path, params)
+    except HTTPException:
+        return []
+
+
+@router.get("/courses/{canvas_course_id}/structure")
+async def canvas_structure(canvas_course_id: int) -> CanvasStructureOut:
+    """The course's Canvas tree — modules→items + standalone pages/discussions +
+    a syllabus flag — for the sync picker. Resilient: a locked section is simply
+    empty rather than failing the request."""
+    raw = await _safe_get_all(
+        f"/courses/{canvas_course_id}/modules", {"include[]": "items"}
     )
-    db.add(doc)
-    await db.flush()
-    job = await _enqueue_processing(db, user.id, doc)
+    modules = [
+        CanvasModuleOut(
+            canvas_id=m["id"],
+            name=m.get("name") or "Module",
+            position=m.get("position") or 0,
+            items=[
+                CanvasItemOut(
+                    canvas_item_id=it.get("id"),
+                    type=it.get("type") or "",
+                    title=it.get("title") or "(untitled)",
+                    content_id=it.get("content_id"),
+                    page_url=it.get("page_url"),
+                    external_url=it.get("external_url"),
+                    html_url=it.get("html_url"),
+                )
+                for it in (m.get("items") or [])
+                if isinstance(it, dict) and it.get("id")
+            ],
+        )
+        for m in raw
+        if isinstance(m, dict) and m.get("id")
+    ]
+    pages = [
+        {"url": p.get("url"), "title": p.get("title") or p.get("url")}
+        for p in await _safe_get_all(f"/courses/{canvas_course_id}/pages")
+        if isinstance(p, dict) and p.get("url")
+    ]
+    discussions = [
+        {"id": d.get("id"), "title": d.get("title") or "(untitled)"}
+        for d in await _safe_get_all(f"/courses/{canvas_course_id}/discussion_topics")
+        if isinstance(d, dict) and d.get("id")
+    ]
+    try:
+        course = await _canvas_get(
+            f"/courses/{canvas_course_id}", {"include[]": "syllabus_body"}
+        )
+        has_syllabus = bool(
+            isinstance(course, dict) and (course.get("syllabus_body") or "").strip()
+        )
+    except HTTPException:
+        has_syllabus = False
+    return CanvasStructureOut(
+        modules=modules, pages=pages, discussions=discussions, has_syllabus=has_syllabus
+    )
+
+
+class SyncModulesIn(BaseModel):
+    course_id: int  # Manabi course id
+    modules: list[dict]  # [{canvas_id, name, position}]
+
+
+@router.post("/sync-modules", dependencies=[Depends(require_csrf)])
+async def sync_modules(
+    data: SyncModulesIn,
+    user: User = Depends(get_default_user),
+    db: AsyncSession = Depends(get_db),
+) -> list[dict]:
+    """Find-or-create a Manabi module per selected Canvas module (dedup by
+    canvas_module_id). Returns the canvas→manabi id mapping."""
+    course = await _owned_course(data.course_id, user, db)
+    out: list[dict] = []
+    for m in data.modules:
+        cid = int(m["canvas_id"])
+        module = (
+            await db.execute(
+                select(Module).where(
+                    Module.course_id == course.id, Module.canvas_module_id == cid
+                )
+            )
+        ).scalar_one_or_none()
+        if module is None:
+            module = Module(
+                course_id=course.id,
+                title=(m.get("name") or "Module")[:255],
+                canvas_module_id=cid,
+                position=m.get("position") or 0,
+            )
+            db.add(module)
+            await db.flush()
+        out.append({"canvas_id": cid, "module_id": module.id, "title": module.title})
+    await db.commit()
+    return out
+
+
+class ImportPageIn(BaseModel):
+    canvas_course_id: int
+    page_url: str
+
+
+@router.post("/modules/{module_id}/import-page", dependencies=[Depends(require_csrf)])
+async def canvas_import_page(
+    data: ImportPageIn,
+    module: Module = Depends(get_owned_module),
+    user: User = Depends(get_default_user),
+    db: AsyncSession = Depends(get_db),
+):
+    page = await _canvas_get(
+        f"/courses/{data.canvas_course_id}/pages/{data.page_url}"
+    )
+    if not isinstance(page, dict):
+        raise HTTPException(status_code=502, detail="Canvas page unavailable")
+    doc, job = await import_html_as_document(
+        db,
+        user,
+        module,
+        title=page.get("title") or data.page_url,
+        html=page.get("body") or "",
+        source_url=page.get("html_url") or f"canvas:page:{data.page_url}",
+    )
+    await db.commit()
+    return _doc_out(doc, job.id)
+
+
+class ImportDiscussionIn(BaseModel):
+    canvas_course_id: int
+    topic_id: int
+
+
+@router.post(
+    "/modules/{module_id}/import-discussion", dependencies=[Depends(require_csrf)]
+)
+async def canvas_import_discussion(
+    data: ImportDiscussionIn,
+    module: Module = Depends(get_owned_module),
+    user: User = Depends(get_default_user),
+    db: AsyncSession = Depends(get_db),
+):
+    topic = await _canvas_get(
+        f"/courses/{data.canvas_course_id}/discussion_topics/{data.topic_id}"
+    )
+    if not isinstance(topic, dict):
+        raise HTTPException(status_code=502, detail="Canvas discussion unavailable")
+    doc, job = await import_html_as_document(
+        db,
+        user,
+        module,
+        title=topic.get("title") or f"Discussion {data.topic_id}",
+        html=topic.get("message") or "",
+        source_url=topic.get("html_url") or f"canvas:discussion:{data.topic_id}",
+    )
+    await db.commit()
+    return _doc_out(doc, job.id)
+
+
+class ImportSyllabusIn(BaseModel):
+    canvas_course_id: int
+
+
+@router.post("/courses/{course_id}/import-syllabus", dependencies=[Depends(require_csrf)])
+async def canvas_import_syllabus(
+    course_id: int,
+    data: ImportSyllabusIn,
+    user: User = Depends(get_default_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Render the course syllabus into the hidden 'Course files' module."""
+    course = await _owned_course(course_id, user, db)
+    detail = await _canvas_get(
+        f"/courses/{data.canvas_course_id}", {"include[]": "syllabus_body"}
+    )
+    body = (detail.get("syllabus_body") if isinstance(detail, dict) else None) or ""
+    if not body.strip():
+        raise HTTPException(status_code=404, detail="This course has no syllabus")
+    module = await _general_module(db, course.id)
+    doc, job = await import_html_as_document(
+        db,
+        user,
+        module,
+        title=f"{course.code} — Syllabus",
+        html=body,
+        source_url=f"canvas:syllabus:{data.canvas_course_id}",
+    )
     await db.commit()
     return _doc_out(doc, job.id)

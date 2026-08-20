@@ -22,7 +22,13 @@ from manabi_core.models import (
     SpeechClip,
     User,
 )
-from manabi_core.retrieval import chunks_for_pages, retrieve, retrieve_relevant
+from manabi_core.retrieval import (
+    chunks_for_pages,
+    dedup_diversify,
+    load_context_chunks,
+    retrieve,
+    retrieve_relevant,
+)
 from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -508,6 +514,38 @@ async def _answer_in_flight(db: AsyncSession, thread_id: int) -> Job | None:
     ).scalar_one_or_none()
 
 
+_WHOLE_DOC_MAX_CHUNKS = 24  # single-doc scope: load the whole doc up to this many
+
+
+async def _retrieval_query(
+    db: AsyncSession, thread: ChatThread, content: str, max_prev: int = 2
+) -> str:
+    """Retrieval query = the new message + the last couple of user turns (deduped,
+    current first), so a bare follow-up ('explain that more') still retrieves the
+    right material instead of embedding a contextless fragment."""
+    rows = (
+        (
+            await db.execute(
+                select(ChatMessage.content)
+                .where(
+                    ChatMessage.thread_id == thread.id,
+                    ChatMessage.role == ChatRole.user,
+                )
+                .order_by(ChatMessage.id.desc())
+                .limit(max_prev + 1)
+            )
+        )
+        .scalars()
+        .all()
+    )
+    parts: list[str] = []
+    for p in [content, *rows]:
+        p = (p or "").strip()
+        if p and p not in parts:
+            parts.append(p)
+    return "\n".join(parts)[:2000]
+
+
 async def _dispatch_answer(
     db: AsyncSession, user: User, thread: ChatThread, content: str
 ) -> int:
@@ -519,11 +557,20 @@ async def _dispatch_answer(
     personal_context: str | None = None
     model: str | None = None
 
+    # Retrieval query = the new message + the last couple of user turns, so bare
+    # follow-ups ("explain that more") still retrieve the right material instead
+    # of embedding a contextless fragment.
+    query_text = await _retrieval_query(db, thread, content)
+
     async def _embed() -> list[float]:
-        return (await asyncio.to_thread(embed_texts, [content], is_query=True))[0]
+        return (await asyncio.to_thread(embed_texts, [query_text], is_query=True))[0]
+
+    # Retrieve a wider candidate pool, then diversify down to this many chunks
+    # (drops near-duplicate / same-page pile-ups). num_ctx grows to hold it.
+    _POOL, _FINAL = 12, 8
 
     if thread.module_id is not None:
-        # ── Module thread (behavior unchanged) ──
+        # ── Module thread ──
         if thread.source_pages and thread.source_document_id:
             # Page-anchored "Ask about pages 1-3, 5": ground on the exact text of
             # those pages, deterministically, not embedding top-k.
@@ -533,12 +580,27 @@ async def _dispatch_answer(
             chunk_ids = [c.id for c in pg_chunks]
         elif thread.scope_document_ids == []:
             chunk_ids: list[int] = []  # documents excluded from scope
+        elif thread.scope_document_ids and len(thread.scope_document_ids) == 1:
+            # Scoped to a single document → prefer the WHOLE doc (in reading
+            # order) when it's small enough, so "what does X cover" sees all of
+            # it; fall back to diversified top-k for a large doc.
+            whole = await load_context_chunks(
+                db, [thread.module_id], document_ids=thread.scope_document_ids
+            )
+            if 0 < len(whole) <= _WHOLE_DOC_MAX_CHUNKS:
+                chunk_ids = [c.id for c in whole]
+            else:
+                hits = await retrieve(
+                    db, [thread.module_id], await _embed(), query_text, k=_POOL,
+                    document_ids=thread.scope_document_ids,
+                )
+                chunk_ids = [h.id for h in dedup_diversify(hits, _FINAL)]
         else:
             hits = await retrieve(
-                db, [thread.module_id], await _embed(), content, k=5,
+                db, [thread.module_id], await _embed(), query_text, k=_POOL,
                 document_ids=thread.scope_document_ids,
             )
-            chunk_ids = [h.id for h in hits]
+            chunk_ids = [h.id for h in dedup_diversify(hits, _FINAL)]
     else:
         # ── General assistant thread ──
         from manabi_server.api.settings import get_app_settings
@@ -548,13 +610,15 @@ async def _dispatch_answer(
         # Per-chat override wins; else the global default; else the node default.
         model = thread.model_override or (await get_app_settings(db)).general_chat_model
         if thread.scope_module_ids:  # manual cross-module scope wins (no gate)
-            hits = await retrieve(db, list(thread.scope_module_ids), await _embed(), content, k=6)
-            chunk_ids = [h.id for h in hits]
+            hits = await retrieve(
+                db, list(thread.scope_module_ids), await _embed(), query_text, k=_POOL
+            )
+            chunk_ids = [h.id for h in dedup_diversify(hits, _FINAL)]
         elif thread.auto_materials:  # auto-scan, gated by relevance
             hits, ok = await retrieve_relevant(
-                db, await _all_user_module_ids(db, user), await _embed(), content
+                db, await _all_user_module_ids(db, user), await _embed(), query_text
             )
-            chunk_ids = [h.id for h in hits] if ok else []
+            chunk_ids = [h.id for h in dedup_diversify(hits, _FINAL)] if ok else []
         else:  # default: personal + general knowledge, no material scan
             chunk_ids = []
 

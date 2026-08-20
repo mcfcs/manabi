@@ -146,6 +146,31 @@ async def retrieve(
     return [ScopedChunk(*row) for row in rows]
 
 
+def dedup_diversify(
+    hits: list[ScopedChunk], limit: int, *, per_page: int = 2
+) -> list[ScopedChunk]:
+    """Trim a ranked hit list to `limit`, dropping near-duplicate text and
+    capping chunks per (document, page) so the context spans more of the
+    material rather than piling several near-identical passages from one page.
+    Pure function — retrieve a wider candidate pool, then diversify to k."""
+    seen: set[str] = set()
+    per: dict[tuple[int, int], int] = {}
+    out: list[ScopedChunk] = []
+    for h in hits:
+        key = " ".join((h.text or "").split())[:200].lower()
+        if key and key in seen:
+            continue
+        pk = (h.document_id, h.page_start)
+        if per.get(pk, 0) >= per_page:
+            continue
+        seen.add(key)
+        per[pk] = per.get(pk, 0) + 1
+        out.append(h)
+        if len(out) >= limit:
+            break
+    return out
+
+
 async def load_chunks_by_ids(
     db: AsyncSession, chunk_ids: list[int]
 ) -> list[ScopedChunk]:

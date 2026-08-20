@@ -125,6 +125,66 @@ async def _enqueue_processing(db: AsyncSession, user_id: int, doc: Document) -> 
     return job
 
 
+async def ingest_bytes(
+    db: AsyncSession,
+    user: User,
+    module: Module,
+    *,
+    filename: str,
+    ext: str,
+    content: bytes,
+    ai_included: bool = True,
+    processing_mode: str = "full",
+    source_url: str | None = None,
+) -> tuple[Document, Job]:
+    """Validate → sha256-dedup → store → Document → enqueue the extraction job.
+    Shared by the manual upload, Canvas file import, and Canvas HTML→PDF
+    ingestion. Does NOT commit (the caller owns the transaction). Raises
+    HTTPException 409 (duplicate) / 413 (too big) / 422 (bad content)."""
+    kind = DocumentKind(ext)
+    if len(content) > MAX_UPLOAD_BYTES:
+        raise HTTPException(status_code=413, detail="File exceeds the 100 MB limit")
+    if not content.startswith(MAGIC[kind]):
+        raise HTTPException(
+            status_code=422, detail=f"Content does not look like a {ext.upper()}"
+        )
+    content_hash = hashlib.sha256(content).hexdigest()
+    existing = (
+        await db.execute(
+            select(Document).where(
+                Document.module_id == module.id,
+                Document.content_hash == content_hash,
+                Document.deleted_at.is_(None),
+            )
+        )
+    ).scalar_one_or_none()
+    if existing is not None:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "message": "This file is already in the module",
+                "document_id": existing.id,
+            },
+        )
+    rel_path = files.new_original_path(ext)
+    files.write_atomic(rel_path, content)
+    doc = Document(
+        module_id=module.id,
+        kind=kind,
+        filename=filename,
+        storage_path=rel_path,
+        content_hash=content_hash,
+        byte_size=len(content),
+        processing_mode=processing_mode,
+        ai_included=ai_included,
+        source_url=source_url,
+    )
+    db.add(doc)
+    await db.flush()
+    job = await _enqueue_processing(db, user.id, doc)
+    return doc, job
+
+
 @router.get("/modules/{module_id}/documents")
 async def list_documents(
     module: Module = Depends(get_owned_module), db: AsyncSession = Depends(get_db)
@@ -196,49 +256,19 @@ async def upload_document(
     ext = (file.filename or "").rsplit(".", 1)[-1].lower()
     if ext not in ("pdf", "pptx"):
         raise HTTPException(status_code=422, detail="Only PDF and PPTX files are supported")
-    kind = DocumentKind(ext)
 
     data = await file.read()
-    if len(data) > MAX_UPLOAD_BYTES:
-        raise HTTPException(status_code=413, detail="File exceeds the 100 MB limit")
-    if not data.startswith(MAGIC[kind]):
-        raise HTTPException(
-            status_code=422, detail=f"File content does not look like a {ext.upper()}"
-        )
-
-    content_hash = hashlib.sha256(data).hexdigest()
-    existing = (
-        await db.execute(
-            select(Document).where(
-                Document.module_id == module.id,
-                Document.content_hash == content_hash,
-                Document.deleted_at.is_(None),
-            )
-        )
-    ).scalar_one_or_none()
-    if existing is not None:
-        raise HTTPException(
-            status_code=409,
-            detail={"message": "This file is already in the module", "document_id": existing.id},
-        )
-
-    rel_path = files.new_original_path(ext)
-    files.write_atomic(rel_path, data)
-
-    doc = Document(
-        module_id=module.id,
-        kind=kind,
+    doc, job = await ingest_bytes(
+        db,
+        user,
+        module,
         filename=file.filename or f"upload.{ext}",
-        storage_path=rel_path,
-        content_hash=content_hash,
-        byte_size=len(data),
-        processing_mode=processing_mode,
+        ext=ext,
+        content=data,
         # render-only files (syllabi) are view-only: never fed to AI generation.
         ai_included=processing_mode == "full",
+        processing_mode=processing_mode,
     )
-    db.add(doc)
-    await db.flush()
-    job = await _enqueue_processing(db, user.id, doc)
     await db.commit()
     return _doc_out(doc, job.id)
 

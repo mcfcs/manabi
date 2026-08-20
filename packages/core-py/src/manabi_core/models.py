@@ -105,10 +105,48 @@ class Module(Base, TimestampMixin):
     # Hidden "Course files" container (syllabus, COA, …) — excluded from
     # module lists; its documents default to no extraction / no AI.
     is_general: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    # Source Canvas module id when this module was cloned from Canvas — dedup key
+    # so re-syncing updates in place instead of duplicating.
+    canvas_module_id: Mapped[int | None] = mapped_column(BigInteger)
 
     course: Mapped[Course] = relationship(back_populates="modules")
 
-    __table_args__ = (Index("ix_modules_course_id", "course_id"),)
+    __table_args__ = (
+        Index("ix_modules_course_id", "course_id"),
+        Index("ix_modules_canvas_module_id", "canvas_module_id"),
+    )
+
+
+class CourseLink(Base, TimestampMixin):
+    """An external resource link (Canvas ExternalUrl module-item, or a manually
+    added URL). Links can't be AI-chunked — they're an openable reference list
+    on the course / module."""
+
+    __tablename__ = "course_links"
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    course_id: Mapped[int] = mapped_column(
+        BigInteger, ForeignKey("courses.id", ondelete="CASCADE"), nullable=False
+    )
+    module_id: Mapped[int | None] = mapped_column(
+        BigInteger, ForeignKey("modules.id", ondelete="CASCADE")
+    )
+    # Canvas module-item id — dedup key so re-sync upserts instead of duplicating.
+    canvas_item_id: Mapped[int | None] = mapped_column(BigInteger)
+    title: Mapped[str] = mapped_column(String(512), nullable=False)
+    url: Mapped[str] = mapped_column(String(2048), nullable=False)
+    position: Mapped[int] = mapped_column(nullable=False, default=0)
+
+    __table_args__ = (
+        Index("ix_course_links_course_id", "course_id"),
+        Index(
+            "uq_course_links_canvas_item",
+            "course_id",
+            "canvas_item_id",
+            unique=True,
+            postgresql_where=text("canvas_item_id IS NOT NULL"),
+        ),
+    )
 
 
 class DocumentKind(enum.StrEnum):
@@ -156,6 +194,9 @@ class Document(Base, TimestampMixin):
     page_layout: Mapped[str] = mapped_column(String(8), nullable=False, default="auto")
     # What auto-detection concluded on the last extract: 'single' | 'spread' | None.
     detected_layout: Mapped[str | None] = mapped_column(String(8))
+    # Origin URL when ingested from external content (a Canvas Page / discussion
+    # / syllabus rendered to PDF) — lets re-sync update in place.
+    source_url: Mapped[str | None] = mapped_column(String(1024))
     deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
     pages: Mapped[list["DocumentPage"]] = relationship(
@@ -692,6 +733,11 @@ class CalendarEvent(Base, TimestampMixin):
     notes: Mapped[str | None] = mapped_column(Text)
     course_id: Mapped[int | None] = mapped_column(
         BigInteger, ForeignKey("courses.id", ondelete="SET NULL")
+    )
+    # Categorize under a schedule group (e.g. Internship) instead of a course —
+    # the event then takes that schedule's color and filter.
+    schedule_id: Mapped[int | None] = mapped_column(
+        BigInteger, ForeignKey("schedules.id", ondelete="SET NULL")
     )
     date: Mapped[date] = mapped_column(Date, nullable=False)
     start_minute: Mapped[int | None] = mapped_column()  # both NULL = all-day

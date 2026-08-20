@@ -783,3 +783,46 @@
   align-self: flex-start;
   margin-top: var(--s-2);
 }
+
+/* ── Full-page Day view polish (kept scoped so the side DayPanel stays compact) */
+.dayview .day-details {
+  max-width: 760px;
+  gap: var(--s-4);
+}
+.dayview .day-details > section {
+  background: var(--surface-raised);
+  border: 1px solid var(--rule);
+  border-radius: var(--radius);
+  padding: var(--s-3) var(--s-4) var(--s-2);
+  box-shadow: 0 1px 2px rgba(28, 36, 52, 0.04);
+}
+.dayview .day-details > section h3 {
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--ink-soft);
+  margin: 0 0 var(--s-2);
+  padding-bottom: var(--s-1);
+  border-bottom: 1px solid var(--rule);
+}
+.dayview .day-row {
+  padding: var(--s-2) var(--s-2);
+  border-bottom: 1px solid var(--rule);
+  border-radius: var(--radius-sm);
+  transition: background var(--t-fast) var(--ease);
+}
+.dayview .day-row:last-child {
+  border-bottom: none;
+}
+.dayview .day-row.clickable:hover {
+  background: var(--surface);
+}
+.dayview .day-row-title {
+  font-size: 14px;
+}
+.dayview .day-details > section h3,
+.dayview .day-panel-marks {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+}

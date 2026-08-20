@@ -18,7 +18,9 @@ import { type FormEvent, useState } from "react";
 import { Modal } from "../../components/Modal";
 import { Announcements } from "./Announcements";
 import { CanvasFilesModal } from "./CanvasFilesModal";
+import { CanvasSyncModal } from "./CanvasSyncModal";
 import { CourseFiles } from "./CourseFiles";
+import { CourseLinks } from "./CourseLinks";
 import {
   api,
   ApiError,
@@ -180,6 +182,7 @@ export function CoursePage() {
   const [confirmingCourse, setConfirmingCourse] =
     useState<DeleteConsequences | null>(null);
   const [canvasFilesOpen, setCanvasFilesOpen] = useState(false);
+  const [canvasSyncOpen, setCanvasSyncOpen] = useState(false);
 
   const courses = useQuery({
     queryKey: ["courses"],
@@ -286,6 +289,13 @@ export function CoursePage() {
             >
               <CloudDownload size={15} strokeWidth={1.75} /> Canvas files
             </button>
+            <button
+              className="btn course-canvas-files"
+              onClick={() => setCanvasSyncOpen(true)}
+              title="Mirror Canvas modules, pages, links & syllabus"
+            >
+              <CloudDownload size={15} strokeWidth={1.75} /> Sync course
+            </button>
           </>
         )}
         <button
@@ -298,6 +308,8 @@ export function CoursePage() {
       </header>
 
       <Announcements courseId={Number(courseId)} />
+
+      <CourseLinks courseId={courseId} />
 
       <CourseFiles courseId={courseId} />
 
@@ -349,6 +361,10 @@ export function CoursePage() {
 
       {canvasFilesOpen && course && (
         <CanvasFilesModal course={course} onClose={() => setCanvasFilesOpen(false)} />
+      )}
+
+      {canvasSyncOpen && course && (
+        <CanvasSyncModal course={course} onClose={() => setCanvasSyncOpen(false)} />
       )}
 
       {confirmingCourse && (

@@ -25,6 +25,7 @@ from manabi_server.api import (
     documents,
     health,
     jobs,
+    links,
     modules,
     notes,
     push,
@@ -93,6 +94,7 @@ app.include_router(chat.router)
 app.include_router(assistant.router)
 app.include_router(ai.router)
 app.include_router(canvas.router)
+app.include_router(links.router)
 app.include_router(schedule.router)
 app.include_router(calendar.router)
 app.include_router(tasks.router)

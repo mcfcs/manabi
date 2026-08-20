@@ -2,7 +2,13 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 
 import { Modal } from "../../components/Modal";
-import { api, ApiError, type CalendarEventOut, type CourseOut } from "../../lib/api";
+import {
+  api,
+  ApiError,
+  type CalendarEventOut,
+  type CourseOut,
+  type ScheduleOut,
+} from "../../lib/api";
 
 function minuteToInput(minute: number | null): string {
   if (minute == null) return "";
@@ -31,7 +37,14 @@ export function EventDialog({
   const [date, setDate] = useState(
     editing?.date ?? (initial && "date" in initial ? initial.date : `${ym}-01`),
   );
-  const [courseId, setCourseId] = useState<number | "">(editing?.course_id ?? "");
+  // Category: "" · "course:<id>" · "sched:<id>" (schedule group, e.g. Internship)
+  const [category, setCategory] = useState<string>(
+    editing?.schedule_id
+      ? `sched:${editing.schedule_id}`
+      : editing?.course_id
+        ? `course:${editing.course_id}`
+        : "",
+  );
   const [start, setStart] = useState(minuteToInput(editing?.start_minute ?? null));
   const [end, setEnd] = useState(minuteToInput(editing?.end_minute ?? null));
   const [weekly, setWeekly] = useState(editing?.repeat_weekly ?? false);
@@ -44,16 +57,25 @@ export function EventDialog({
     queryFn: () => api.get<CourseOut[]>("/api/courses"),
     staleTime: 60_000,
   });
+  const schedule = useQuery({
+    queryKey: ["schedule"],
+    queryFn: () => api.get<ScheduleOut>("/api/schedule"),
+    staleTime: 60_000,
+  });
 
   const invalidate = () =>
     queryClient.invalidateQueries({ queryKey: ["calendar"] });
 
   const save = useMutation({
     mutationFn: () => {
+      const isSched = category.startsWith("sched:");
+      const isCourse = category.startsWith("course:");
+      const id = category.includes(":") ? Number(category.split(":")[1]) : null;
       const body = {
         title: title.trim(),
         notes: notes.trim() || null,
-        course_id: courseId === "" ? null : courseId,
+        course_id: isCourse ? id : null,
+        schedule_id: isSched ? id : null,
         date,
         start_minute: inputToMinute(start),
         end_minute: inputToMinute(end),
@@ -102,20 +124,27 @@ export function EventDialog({
             />
           </label>
           <label className="field-label">
-            Course
+            Category
             <select
               className="input"
-              value={courseId}
-              onChange={(e) =>
-                setCourseId(e.target.value ? Number(e.target.value) : "")
-              }
+              value={category}
+              onChange={(e) => setCategory(e.target.value)}
             >
               <option value="">—</option>
-              {(courses.data ?? []).map((c) => (
-                <option key={c.id} value={c.id}>
-                  {c.code}
-                </option>
-              ))}
+              <optgroup label="Courses">
+                {(courses.data ?? []).map((c) => (
+                  <option key={`c${c.id}`} value={`course:${c.id}`}>
+                    {c.code}
+                  </option>
+                ))}
+              </optgroup>
+              <optgroup label="Schedules">
+                {(schedule.data?.schedules ?? []).map((g) => (
+                  <option key={`s${g.id}`} value={`sched:${g.id}`}>
+                    {g.title}
+                  </option>
+                ))}
+              </optgroup>
             </select>
           </label>
         </div>

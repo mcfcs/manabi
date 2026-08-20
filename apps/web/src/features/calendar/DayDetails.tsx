@@ -2,9 +2,34 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Pencil, Plus, Video } from "lucide-react";
 import { useState } from "react";
 
-import { api, type CalendarEventOut, type CourseOut } from "../../lib/api";
+import {
+  api,
+  type CalendarEventOut,
+  type CourseOut,
+  type MeetingOut,
+} from "../../lib/api";
 import { CourseDialog } from "../courses/CourseDialog";
-import { type DayData, feedColor, fmtMin, meetingMode, modeLabel } from "./CalendarPage";
+import {
+  type DayData,
+  eventColor,
+  feedColor,
+  fmtMin,
+  meetingMode,
+  modeLabel,
+} from "./CalendarPage";
+
+/** Group the day's meetings by their schedule ("Class schedule", "Internship",
+ * …) so each renders under its own heading instead of lumping the internship
+ * under "Classes". */
+function groupBySchedule(meetings: MeetingOut[]): [string, MeetingOut[]][] {
+  const map = new Map<string, MeetingOut[]>();
+  for (const m of meetings) {
+    const key = m.schedule_title || "Schedule";
+    if (!map.has(key)) map.set(key, []);
+    map.get(key)!.push(m);
+  }
+  return [...map.entries()];
+}
 
 /** The interactive day content — classes (mode toggles, join links, course
  * edit), tasks (check-off), events (edit), Google events (expandable
@@ -71,31 +96,35 @@ export function DayDetails({
   return (
     <div className="day-details">
       {empty && <p className="dayview-empty">Nothing on this day.</p>}
-      {data.meetings.length > 0 && (
-        <section>
-          <h3>Classes</h3>
-          <div className="day-panel-marks">
-            <button
-              className={`mark-toggle${wholeDay ? ` ${wholeDay.mode}` : ""}`}
-              onClick={() =>
-                putMark.mutate({
-                  date,
-                  course_id: null,
-                  mode: cycleMode(wholeDay?.mode),
-                })
-              }
-              title="Applies to classes only — cycle: onsite → async → sync (online)"
-            >
-              All classes: {wholeDay?.mode ?? "onsite"}
-            </button>
-          </div>
-          {data.meetings.map((m, i) => {
-            const specific = data.marks.find(
-              (mk) => mk.course_id != null && mk.course_id === m.course_id,
-            );
-            const mode = meetingMode(m, data);
-            const inherited = !specific && !!wholeDay;
-            return (
+      {groupBySchedule(data.meetings).map(([title, mtgs]) => {
+        const hasClasses = mtgs.some((m) => m.course_id != null);
+        return (
+          <section key={title}>
+            <h3>{title}</h3>
+            {hasClasses && (
+              <div className="day-panel-marks">
+                <button
+                  className={`mark-toggle${wholeDay ? ` ${wholeDay.mode}` : ""}`}
+                  onClick={() =>
+                    putMark.mutate({
+                      date,
+                      course_id: null,
+                      mode: cycleMode(wholeDay?.mode),
+                    })
+                  }
+                  title="Applies to classes only — cycle: onsite → async → sync (online)"
+                >
+                  All classes: {wholeDay?.mode ?? "onsite"}
+                </button>
+              </div>
+            )}
+            {mtgs.map((m, i) => {
+              const specific = data.marks.find(
+                (mk) => mk.course_id != null && mk.course_id === m.course_id,
+              );
+              const mode = meetingMode(m, data);
+              const inherited = !specific && !!wholeDay;
+              return (
               <div key={i} className="day-row">
                 <span
                   className="day-row-dot"
@@ -180,10 +209,11 @@ export function DayDetails({
                   </>
                 )}
               </div>
-            );
-          })}
-        </section>
-      )}
+              );
+            })}
+          </section>
+        );
+      })}
 
       {data.tasks.length > 0 && (
         <section>
@@ -227,10 +257,20 @@ export function DayDetails({
               className="day-row clickable"
               onClick={() => onEditEvent(e)}
             >
+              {(e.accent_color || e.schedule_id != null) && (
+                <span
+                  className="day-row-dot"
+                  style={{ background: eventColor(e) }}
+                />
+              )}
               <span className="day-row-title">
                 {e.title}
                 {e.start_minute != null && (
-                  <span className="day-row-meta mono"> {fmtMin(e.start_minute)}</span>
+                  <span className="day-row-meta mono">
+                    {" "}
+                    {fmtMin(e.start_minute)}
+                    {e.end_minute != null ? `–${fmtMin(e.end_minute)}` : ""}
+                  </span>
                 )}
                 {e.repeat_weekly && <span className="day-row-meta"> · weekly</span>}
                 {e.notes && <span className="day-row-meta"> · {e.notes}</span>}

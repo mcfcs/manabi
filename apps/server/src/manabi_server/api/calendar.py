@@ -53,6 +53,8 @@ class EventOut(BaseModel):
     title: str
     notes: str | None
     course_id: int | None
+    schedule_id: int | None
+    accent_color: str | None  # course accent or schedule-group color
     date: Date  # occurrence date (repeating events expand per occurrence)
     start_minute: int | None
     end_minute: int | None
@@ -107,6 +109,7 @@ class EventIn(BaseModel):
     title: str
     notes: str | None = None
     course_id: int | None = None
+    schedule_id: int | None = None
     date: Date
     start_minute: int | None = None
     end_minute: int | None = None
@@ -118,6 +121,7 @@ class EventPatch(BaseModel):
     title: str | None = None
     notes: str | None = None
     course_id: int | None = None
+    schedule_id: int | None = None
     date: Date | None = None
     start_minute: int | None = None
     end_minute: int | None = None
@@ -143,12 +147,18 @@ def _parse_ym(ym: str) -> tuple[Date, Date]:
     return first, last
 
 
-def _event_out(ev: CalendarEvent, occurrence: Date | None = None) -> EventOut:
+def _event_out(
+    ev: CalendarEvent,
+    occurrence: Date | None = None,
+    accent_color: str | None = None,
+) -> EventOut:
     return EventOut(
         id=ev.id,
         title=ev.title,
         notes=ev.notes,
         course_id=ev.course_id,
+        schedule_id=ev.schedule_id,
+        accent_color=accent_color,
         date=occurrence or ev.date,
         start_minute=ev.start_minute,
         end_minute=ev.end_minute,
@@ -179,6 +189,21 @@ async def _range_data(
         s.id: s.title
         for s in (await db.execute(select(Schedule))).scalars().all()
     }
+    # A schedule group's color = the first of its blocks that carries one (e.g.
+    # the internship). None → the frontend uses its default accent (matching how
+    # a color-less internship block renders), so events tagged to that schedule
+    # match the schedule's blocks.
+    schedule_colors: dict[int, str] = {}
+    for b in blocks:
+        if b.color and b.schedule_id not in schedule_colors:
+            schedule_colors[b.schedule_id] = b.color
+
+    def _event_accent(ev: CalendarEvent) -> str | None:
+        if ev.course_id and ev.course_id in courses:
+            return courses[ev.course_id].accent_color
+        if ev.schedule_id:
+            return schedule_colors.get(ev.schedule_id)
+        return None
 
     # Classes + labeled entries: expand timed blocks over the range ∩ semester
     meetings: list[MeetingOut] = []
@@ -218,15 +243,16 @@ async def _range_data(
     )
     events: list[EventOut] = []
     for ev in all_events:
+        accent = _event_accent(ev)
         if not ev.repeat_weekly:
             if first <= ev.date <= last:
-                events.append(_event_out(ev))
+                events.append(_event_out(ev, accent_color=accent))
         else:
             until = ev.repeat_until or last
             occ = ev.date
             while occ <= min(until, last):
                 if occ >= first:
-                    events.append(_event_out(ev, occurrence=occ))
+                    events.append(_event_out(ev, occurrence=occ, accent_color=accent))
                 occ += timedelta(days=7)
 
     gcal_rows = (

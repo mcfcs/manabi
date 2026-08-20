@@ -42,9 +42,20 @@ def test_thread_out_flags_general():
 # ── post_message isolation + general plumbing (mocked) ────────────────────
 
 
+class _Scalars:
+    def __init__(self, rows=()):
+        self._rows = list(rows)
+
+    def all(self):
+        return self._rows
+
+
 class _Result:
     def scalar_one_or_none(self):
         return None  # no in-flight job
+
+    def scalars(self):
+        return _Scalars()  # no prior messages (retrieval query = current only)
 
 
 class _FakeDB:

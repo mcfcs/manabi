@@ -146,6 +146,8 @@ export interface CalendarEventOut {
   title: string;
   notes: string | null;
   course_id: number | null;
+  schedule_id: number | null; // categorized under a schedule group (e.g. Internship)
+  accent_color: string | null; // course accent or schedule-group color
   date: string;
   start_minute: number | null;
   end_minute: number | null;
