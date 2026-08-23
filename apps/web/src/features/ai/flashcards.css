@@ -10,6 +10,91 @@
   gap: var(--s-2);
 }
 
+/* ── Deck list ──────────────────────────────────────────────── */
+
+.deck-list {
+  display: flex;
+  flex-direction: column;
+}
+
+.deck-item {
+  display: flex;
+  align-items: center;
+  gap: var(--s-3);
+  padding: var(--s-2) var(--s-2);
+  border-bottom: 1px solid var(--rule);
+}
+.deck-item:first-child {
+  border-top: 1px solid var(--rule);
+}
+
+.deck-item-main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  background: none;
+  border: none;
+  padding: var(--s-1) 0;
+  text-align: left;
+  cursor: pointer;
+}
+
+.deck-item-title {
+  font-weight: 600;
+}
+
+.deck-item-meta {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--s-1);
+  color: var(--ink-faint);
+  font-size: 12.5px;
+}
+
+.deck-pill {
+  margin-left: var(--s-1);
+}
+
+.deck-item .icon-btn.active {
+  color: var(--accent-blue-deep);
+}
+.badge.deck-pill.review {
+  color: var(--accent-blue-deep);
+  border-color: var(--accent-blue);
+}
+
+.deck-config .quiz-count {
+  width: 130px;
+}
+
+.deck-config .deck-instructions {
+  min-height: 0;
+  resize: vertical;
+  font-family: var(--font-reading);
+  width: 100%;
+  max-width: 480px;
+}
+
+.mode-toggle {
+  display: flex;
+  gap: var(--s-2);
+  flex-wrap: wrap;
+}
+
+.deck-detail-title {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 40ch;
+}
+
+.deck-focus-line {
+  margin: 0;
+}
+
 /* ── Card list ──────────────────────────────────────────────── */
 
 .card-list {
@@ -41,11 +126,13 @@
 
 .card-front {
   font-weight: 600;
+  white-space: pre-line;
 }
 
 .card-back {
   color: var(--ink-soft);
   font-family: var(--font-reading);
+  white-space: pre-line;
 }
 
 .card-cites {
@@ -109,6 +196,7 @@
   display: grid;
   place-content: center;
   padding: var(--s-5);
+  white-space: pre-line;
   backface-visibility: hidden;
   background: var(--surface-raised);
   border: 1px solid var(--rule);
@@ -185,5 +273,16 @@
   }
   .count-picker {
     flex-wrap: wrap;
+  }
+  .deck-item {
+    flex-wrap: wrap;
+  }
+  .deck-detail-title {
+    max-width: 100%;
+    white-space: normal;
+  }
+  .cards-tab .gen-head {
+    flex-wrap: wrap;
+    row-gap: var(--s-2);
   }
 }

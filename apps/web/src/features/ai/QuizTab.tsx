@@ -5,12 +5,14 @@ import { useEffect, useRef, useState } from "react";
 
 import {
   api,
+  type GenerationMode,
   type JobRef,
   type ModuleOut,
   type QuestionOut,
   type QuizListItem,
   type QuizOut,
 } from "../../lib/api";
+import { Markdown } from "../../components/Markdown";
 import {
   AiOfflineBanner,
   CitationPill,
@@ -18,6 +20,7 @@ import {
   useAiOnline,
   useGenerationJob,
 } from "./common";
+import { SourcesPicker } from "./SourcesPicker";
 import "./quiz.css";
 
 const TYPE_LABELS: Record<string, string> = {
@@ -144,7 +147,7 @@ function QuizPlayer({
         </button>
       </div>
 
-      <p className="quiz-question">{question.prompt}</p>
+      <Markdown className="quiz-question">{question.prompt}</Markdown>
 
       {question.qtype === "mcq" && question.options && (
         <div className="quiz-options">
@@ -227,12 +230,21 @@ function QuizPlayer({
             </p>
           )}
           {question.explanation && (
-            <p className="quiz-explanation">{question.explanation}</p>
+            <Markdown className="quiz-explanation">{question.explanation}</Markdown>
           )}
           <div className="quiz-sources">
             {question.citations.map((c) => (
               <CitationPill key={c.id} citation={c} />
             ))}
+            {quiz.generation_mode === "exercise" &&
+              question.citations.length === 0 && (
+                <span
+                  className="badge stale"
+                  title="AI-synthesized practice question — not cited from your materials"
+                >
+                  synthesized
+                </span>
+              )}
           </div>
           {question.qtype === "short" ? (
             <div className="quiz-self-grade">
@@ -274,6 +286,17 @@ export function QuizTab({
   const [count, setCount] = useState(10);
   const [scopeIds, setScopeIds] = useState<number[]>([Number(moduleId)]);
   const [playing, setPlaying] = useState<number | null>(null);
+  const [docIds, setDocIds] = useState<number[] | null>(null);
+  const [noteIds, setNoteIds] = useState<number[] | null>(null);
+  const [instructions, setInstructions] = useState("");
+  const [mode, setMode] = useState<GenerationMode>("sources");
+  // Document/note narrowing only applies to a single-module quiz. An empty
+  // document scope blocks generation, except practice mode with a focus
+  // topic (synthesizes from nothing).
+  const singleModule = scopeIds.length === 1;
+  const noSources = singleModule && docIds !== null && docIds.length === 0;
+  const topicOnly = mode === "exercise" && instructions.trim().length > 0;
+  const blocked = noSources && !topicOnly;
 
   const quizzes = useQuery({
     queryKey: ["quizzes", moduleId],
@@ -299,7 +322,15 @@ export function QuizTab({
 
   const create = useMutation({
     mutationFn: () =>
-      api.post<JobRef>("/api/quizzes", { module_ids: scopeIds, types, count }),
+      api.post<JobRef>("/api/quizzes", {
+        module_ids: scopeIds,
+        types,
+        count,
+        document_ids: singleModule ? docIds : null,
+        note_ids: singleModule ? noteIds : null,
+        instructions: instructions.trim() || null,
+        mode,
+      }),
     onSuccess: (ref) => gen.start(ref.job_id),
   });
 
@@ -314,13 +345,19 @@ export function QuizTab({
   }
 
   function toggleScope(id: number) {
-    setScopeIds((prev) =>
-      prev.includes(id)
+    setScopeIds((prev) => {
+      const next = prev.includes(id)
         ? prev.length > 1
           ? prev.filter((x) => x !== id)
           : prev
-        : [...prev, id],
-    );
+        : [...prev, id];
+      // Material narrowing is per-module; reset it when the module set changes.
+      if (next.length !== 1 || next[0] !== prev[0]) {
+        setDocIds(null);
+        setNoteIds(null);
+      }
+      return next;
+    });
   }
 
   if (playing != null && activeQuiz.data) {
@@ -404,6 +441,55 @@ export function QuizTab({
             </div>
           </div>
           <div className="quiz-config-row">
+            <span className="field-label">Materials</span>
+            {singleModule ? (
+              <SourcesPicker
+                moduleId={String(scopeIds[0])}
+                documentIds={docIds}
+                noteIds={noteIds}
+                onChange={(d, n) => {
+                  setDocIds(d);
+                  setNoteIds(n);
+                }}
+              />
+            ) : (
+              <span className="gen-hint quiz-scope-hint">
+                Pick a single module to narrow sources.
+              </span>
+            )}
+          </div>
+          <div className="quiz-config-row">
+            <span className="field-label">Style</span>
+            <div className="mode-toggle">
+              <button
+                type="button"
+                className={`btn${mode === "sources" ? " active" : ""}`}
+                onClick={() => setMode("sources")}
+                title="Questions cite the exact passages they come from"
+              >
+                From sources (cited)
+              </button>
+              <button
+                type="button"
+                className={`btn${mode === "exercise" ? " active" : ""}`}
+                onClick={() => setMode("exercise")}
+                title="Original practice exercises on the materials' topics — answers are AI-derived, not cited"
+              >
+                Practice exercises
+              </button>
+            </div>
+          </div>
+          <div className="quiz-config-row">
+            <span className="field-label">Focus</span>
+            <textarea
+              className="input quiz-instructions"
+              value={instructions}
+              onChange={(e) => setInstructions(e.target.value)}
+              rows={2}
+              placeholder="Optional — e.g. a quiz on C increment/decrement operators"
+            />
+          </div>
+          <div className="quiz-config-row">
             <span className="field-label">Questions</span>
             <select
               className="input quiz-count"
@@ -417,10 +503,17 @@ export function QuizTab({
               ))}
             </select>
           </div>
+          {blocked && (
+            <p className="gen-hint">
+              {mode === "exercise"
+                ? "Add a focus topic to generate practice questions without source documents."
+                : "Select at least one document — or switch to Practice exercises with a focus topic to generate without sources."}
+            </p>
+          )}
           <button
             className="btn btn-primary"
             onClick={() => create.mutate()}
-            disabled={create.isPending}
+            disabled={create.isPending || blocked}
           >
             <ListChecks size={15} strokeWidth={1.75} /> Generate quiz
           </button>
@@ -439,7 +532,12 @@ export function QuizTab({
       <div className="quiz-list">
         {(quizzes.data ?? []).map((q) => (
           <button key={q.artifact_id} className="quiz-item" onClick={() => setPlaying(q.artifact_id)}>
-            <span className="quiz-item-title">{q.title}</span>
+            <span className="quiz-item-title">
+              {q.title}
+              {q.generation_mode === "exercise" && (
+                <span className="badge deck-pill">practice</span>
+              )}
+            </span>
             <span className="quiz-item-meta">
               {q.question_count} questions
               {q.attempt_count > 0 && ` · best ${q.best_score ?? 0}%`}

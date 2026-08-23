@@ -549,12 +549,40 @@ export interface CardOut {
   citations: CitationOut[];
 }
 
+export type GenerationMode = "sources" | "exercise";
+
+export interface GenerateScopeIn {
+  // null = all module materials of that kind; [] = none of that kind
+  document_ids: number[] | null;
+  note_ids: number[] | null;
+  instructions: string | null;
+  mode: GenerationMode;
+}
+
 export interface DeckOut {
   artifact_id: number;
+  title: string;
   model_name: string;
   generated_at: string;
   staleness: Staleness;
+  review_enabled: boolean | null;
+  generation_mode: GenerationMode | null;
+  instructions: string | null;
   cards: CardOut[];
+}
+
+export interface DeckListItem {
+  artifact_id: number;
+  artifact_type: string;
+  title: string;
+  model_name: string;
+  generated_at: string;
+  item_count: number;
+  review_enabled: boolean | null;
+  generation_mode: GenerationMode | null;
+  instructions: string | null;
+  scope_document_ids: number[] | null;
+  scope_note_ids: number[] | null;
 }
 
 export interface QuestionOut {
@@ -577,6 +605,8 @@ export interface QuizOut {
   model_name: string;
   generated_at: string;
   scope_module_ids: number[];
+  generation_mode: GenerationMode | null;
+  instructions: string | null;
   questions: QuestionOut[];
 }
 
@@ -587,4 +617,5 @@ export interface QuizListItem {
   question_count: number;
   attempt_count: number;
   best_score: number | null;
+  generation_mode: GenerationMode | null;
 }

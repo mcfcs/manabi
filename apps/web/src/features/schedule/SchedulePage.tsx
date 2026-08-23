@@ -12,6 +12,7 @@ import {
   type ScheduleGroupOut,
   type ScheduleOut,
 } from "../../lib/api";
+import { packLanes } from "../../lib/lanes";
 import { CourseDialog } from "../courses/CourseDialog";
 import "./schedule.css";
 
@@ -33,6 +34,8 @@ function BlockChip({
   onEditCourse,
   axisStart = AXIS_START,
   axisSpan = AXIS_SPAN,
+  lane = 0,
+  lanes = 1,
 }: {
   entry: ScheduleEntryOut;
   editing: boolean;
@@ -40,6 +43,8 @@ function BlockChip({
   onEditCourse: () => void;
   axisStart?: number;
   axisSpan?: number;
+  lane?: number;
+  lanes?: number;
 }) {
   const navigate = useNavigate();
   const accent = entry.accent_color ?? "var(--accent-blue)";
@@ -48,6 +53,16 @@ function BlockChip({
   const mins = end - start;
   const top = ((start - axisStart) / axisSpan) * 100;
   const height = ((end - start) / axisSpan) * 100;
+  // Conflicting entries share a day column in side-by-side lanes (like the
+  // calendar week view). A lone block keeps the CSS full-width inset.
+  const laneStyle =
+    lanes > 1
+      ? {
+          left: `calc(${(lane / lanes) * 100}% + 2px)`,
+          width: `calc(${(1 / lanes) * 100}% - 3px)`,
+          right: "auto" as const,
+        }
+      : {};
   return (
     <div
       className="sched-block"
@@ -56,6 +71,7 @@ function BlockChip({
         height: `${height}%`,
         borderLeftColor: accent,
         background: `color-mix(in srgb, ${accent} 13%, var(--surface-raised))`,
+        ...laneStyle,
       }}
       role="button"
       tabIndex={0}
@@ -466,13 +482,21 @@ export function SchedulePage() {
                       style={{ top: `${((m - axisStart) / axisSpan) * 100}%` }}
                     />
                   ))}
-                  {(byDay.get(dow) ?? []).map((b) => (
+                  {packLanes(
+                    (byDay.get(dow) ?? []).map((b) => ({
+                      start: b.start_minute!,
+                      end: b.end_minute!,
+                      entry: b,
+                    })),
+                  ).map(({ item, lane, lanes }) => (
                     <BlockChip
-                      key={b.id}
-                      entry={b}
+                      key={item.entry.id}
+                      entry={item.entry}
+                      lane={lane}
+                      lanes={lanes}
                       editing={editing}
-                      onDelete={() => removeEntry.mutate(b.id)}
-                      onEditCourse={() => setEditCourseId(b.course_id)}
+                      onDelete={() => removeEntry.mutate(item.entry.id)}
+                      onEditCourse={() => setEditCourseId(item.entry.course_id)}
                       axisStart={axisStart}
                       axisSpan={axisSpan}
                     />

@@ -44,6 +44,26 @@
   width: 90px;
 }
 
+.quiz-instructions {
+  min-height: 0;
+  resize: vertical;
+  font-family: var(--font-reading);
+  width: min(480px, 100%);
+}
+
+.quiz-scope-hint {
+  margin: 0;
+  font-size: 12.5px;
+  color: var(--ink-faint);
+}
+
+.quiz-config {
+  width: 100%;
+}
+.quiz-config .quiz-config-row {
+  width: 100%;
+}
+
 /* ── List ───────────────────────────────────────────────────── */
 
 .quiz-list {

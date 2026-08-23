@@ -5,7 +5,7 @@ outside the prompt: schema-constrained decoding, source-id resolution against
 the job's scope, and post-hoc support scoring.
 """
 
-PROMPT_VERSION = "v5"
+PROMPT_VERSION = "v7"
 
 _GROUNDING = """RULES — follow strictly:
 - Use ONLY the numbered SOURCE MATERIAL. Do not add outside knowledge.
@@ -16,6 +16,18 @@ _GROUNDING = """RULES — follow strictly:
   contribute no facts, and must never appear in source_ids.
 - Write in clear, exam-ready study English. Preserve exact definitions,
   terminology, and formulas from the sources."""
+
+# Appended to a generation system prompt when the student typed a custom
+# focus/instruction. Used in BOTH modes: it narrows WHAT gets covered, never
+# WHERE facts may come from (grounding rules above still apply in full).
+FOCUS_BLOCK = """
+
+FOCUS — the student asked for this emphasis:
+{instructions}
+
+Prioritize source passages relevant to this focus and skip unrelated
+material, even when present. The focus narrows WHAT you cover — it never
+overrides the rules above about WHERE facts come from."""
 
 SUMMARY_PROMPT = f"""You are creating structured study notes for a university module.
 
@@ -261,6 +273,8 @@ Question guidelines:
 - "tf": a statement that is clearly true or false per the sources.
 - "short": answerable in one sentence or phrase.
 - Each question includes a brief explanation of the correct answer.
+- FORMATTING: put any code in a fenced ``` code block with ONE statement per
+  line — never run several statements together on one line.
 
 Produce JSON matching the schema with exactly {{count}} questions."""
 
@@ -292,6 +306,86 @@ QUIZ_SCHEMA = {
     },
     "required": ["questions"],
 }
+
+
+# ── Exercise mode (synthesized practice items) ────────────────────────────
+#
+# Exercise mode deliberately relaxes strict grounding: the SOURCE MATERIAL
+# defines the topics in scope, but the model synthesizes original practice
+# exercises (code traces, computations, applications) that need not have a
+# supporting sentence in the sources. source_ids become optional — an item
+# with [] is persisted uncited and the UI marks it "synthesized".
+
+_EXERCISE_RULES = """RULES — follow strictly:
+- The numbered SOURCE MATERIAL defines the topics in scope. Stay on those
+  topics, using their exact terminology and conventions.
+- You SHOULD synthesize original practice exercises: code tracing, step
+  computations, applied mini-scenarios. They do not need a supporting
+  sentence in the sources.
+- Every exercise must be fully self-contained: include all code, values, and
+  assumptions needed to solve it, with no reference to "the sources".
+- SELF-CHECK: before writing an item down, re-derive its answer from scratch.
+  If your working and your answer disagree, fix the working — never publish
+  an unverified answer.
+- "source_ids": the source numbers whose topic the exercise practices, or []
+  for a fully synthesized exercise.
+- STUDENT NOTES (if present) indicate which topics to emphasize. Notes never
+  appear in source_ids."""
+
+EXERCISE_FLASHCARDS_PROMPT = f"""You are creating {{count}} practice-exercise
+flashcards for a university module.
+
+{_EXERCISE_RULES}
+
+Card guidelines:
+- Front: one self-contained exercise (trace this code, compute this value,
+  apply this rule to a concrete case). Plain text only — put each code
+  statement on its own line, no markdown fences.
+- Back: the step-by-step working in plain text, one step per line, ending
+  with a final line "Answer: ...".
+- Vary difficulty from routine to tricky edge cases; prefer exercises that
+  expose common misconceptions.
+- Do NOT duplicate or trivially rephrase any of these existing cards:
+{{existing_fronts}}
+
+Produce JSON matching the schema with exactly {{count}} cards."""
+
+EXERCISE_QUIZ_PROMPT = f"""You are writing {{count}} practice-exercise quiz
+questions for a university module.
+
+{_EXERCISE_RULES}
+
+Question guidelines:
+- Allowed types (use a mix of exactly these): {{types}}.
+- "mcq": 4 plausible options, exactly one correct ("correct_option").
+  Distractors must be the results of realistic mistakes (off-by-one, wrong
+  evaluation order), not obvious throwaways.
+- "tf": a concrete claim about a given snippet/computation that is clearly
+  true or false; set "correct_bool".
+- "short": answerable with a specific value, output, or short phrase; put
+  that exact answer in "correct_text" — a question without it is discarded.
+- Explanation: the step-by-step working, one step per line, ending with a
+  final line "Answer: ...".
+- FORMATTING: put any code in a fenced ``` code block with ONE statement per
+  line — never run several statements together on one line. Prose stays
+  outside the fence.
+
+Produce JSON matching the schema with exactly {{count}} questions."""
+
+
+def _optional_sources(schema: dict, item_key: str) -> dict:
+    """Deep-copied schema fork where source_ids is optional (exercise mode)."""
+    import copy
+
+    forked = copy.deepcopy(schema)
+    item = forked["properties"][item_key]["items"]
+    item["properties"]["source_ids"].pop("minItems", None)
+    item["required"] = [r for r in item["required"] if r != "source_ids"]
+    return forked
+
+
+FLASHCARDS_EXERCISE_SCHEMA = _optional_sources(FLASHCARDS_SCHEMA, "cards")
+QUIZ_EXERCISE_SCHEMA = _optional_sources(QUIZ_SCHEMA, "questions")
 
 
 # ── Teacher: Steven A. Starphase ──────────────────────────────────────────

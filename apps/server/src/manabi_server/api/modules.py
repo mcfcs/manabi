@@ -117,22 +117,40 @@ async def _study_kit_stats(db: AsyncSession, module_ids: list[int]) -> dict[int,
             "current" if gen_version >= versions.get(module_id, 0) else "outdated"
         )
 
-    latest_decks = (
+    # Card count = the module's review-rotation decks; fall back to the latest
+    # deck when none is review-enabled so the tile isn't misleadingly zero.
+    deck_ids_by_module: dict[int, list[int]] = {}
+    review_decks = (
         await db.execute(
-            select(Artifact.module_id, Artifact.id)
-            .where(
+            select(Artifact.module_id, Artifact.id).where(
                 Artifact.module_id.in_(module_ids),
                 Artifact.artifact_type == ArtifactType.flashcard_deck,
+                Artifact.review_enabled.is_(True),
             )
-            .order_by(Artifact.module_id, Artifact.id.desc())
-            .distinct(Artifact.module_id)
         )
     ).all()
-    for module_id, artifact_id in latest_decks:
+    for module_id, artifact_id in review_decks:
+        deck_ids_by_module.setdefault(module_id, []).append(artifact_id)
+    missing = [m for m in module_ids if m not in deck_ids_by_module]
+    if missing:
+        latest_decks = (
+            await db.execute(
+                select(Artifact.module_id, Artifact.id)
+                .where(
+                    Artifact.module_id.in_(missing),
+                    Artifact.artifact_type == ArtifactType.flashcard_deck,
+                )
+                .order_by(Artifact.module_id, Artifact.id.desc())
+                .distinct(Artifact.module_id)
+            )
+        ).all()
+        for module_id, artifact_id in latest_decks:
+            deck_ids_by_module[module_id] = [artifact_id]
+    for module_id, deck_ids in deck_ids_by_module.items():
         n = (
             await db.execute(
                 select(func.count(Flashcard.id)).where(
-                    Flashcard.artifact_id == artifact_id,
+                    Flashcard.artifact_id.in_(deck_ids),
                     Flashcard.status == FlashcardStatus.active,
                 )
             )

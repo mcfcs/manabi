@@ -32,6 +32,7 @@ import {
 } from "../../lib/api";
 import {
   AiOfflineBanner,
+  StreamingAnswer,
   useAiOnline,
   useCancelJob,
   useChatVoice,
@@ -597,20 +598,7 @@ export function AssistantPage() {
             <div className="chat-msg assistant">
               <img className="chat-avatar" src="/steven.jpg" alt="Steven" />
               <div className="chat-bubble chat-typing">
-                {answering.job?.preview ? (
-                  <p className="chat-preview">{answering.job.preview}</p>
-                ) : (
-                  <p className="chat-thinking">
-                    {answering.job?.status === "queued"
-                      ? "waiting for the AI node"
-                      : "Steven is typing"}
-                    <span className="typing-dots" aria-hidden>
-                      <span />
-                      <span />
-                      <span />
-                    </span>
-                  </p>
-                )}
+                <StreamingAnswer job={answering.job} thinkingLabel="Steven is typing" />
                 {answering.job && (
                   <button
                     className="link-btn job-cancel chat-stop"

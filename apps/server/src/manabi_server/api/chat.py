@@ -255,8 +255,8 @@ async def update_thread(
     if data.auto_materials is not None:
         thread.auto_materials = data.auto_materials
     if "model_override" in data.model_fields_set:
-        # Only general threads carry a per-chat model; empty string clears it.
-        thread.model_override = (data.model_override or None) if thread.module_id is None else None
+        # Per-chat model override — module AND general threads (empty clears it).
+        thread.model_override = data.model_override or None
     if "scope_module_ids" in data.model_fields_set:
         if data.scope_module_ids:
             valid_mods = set(await _all_user_module_ids(db, user))
@@ -631,12 +631,15 @@ async def _dispatch_answer(
     )
     db.add(job)
     await db.flush()
-    # Extra kwargs only for general threads → module chat is provably unaffected.
-    extra = (
-        {}
-        if thread.module_id is not None
-        else {"personal_context": personal_context, "model": model}
-    )
+    # General threads carry personal_context + resolved model. Module threads
+    # pass a model ONLY when the user picked a per-chat override (else the worker
+    # uses effective_chat_model) — so a plain module chat's defer is unchanged.
+    if thread.module_id is None:
+        extra = {"personal_context": personal_context, "model": model}
+    elif thread.model_override:
+        extra = {"model": thread.model_override}
+    else:
+        extra = {}
     job.procrastinate_job_id = await defer_task(
         CHAT_ANSWER_TASK,
         "gpu",

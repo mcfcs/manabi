@@ -6,7 +6,12 @@ import { createPortal } from "react-dom";
 
 import { Markdown } from "../../components/Markdown";
 import { api, type ChatMessageOut, type ChatThreadOut } from "../../lib/api";
-import { useCancelJob, useChatVoice, useGenerationJob } from "../ai/common";
+import {
+  StreamingAnswer,
+  useCancelJob,
+  useChatVoice,
+  useGenerationJob,
+} from "../ai/common";
 import "./chat.css";
 
 /** [1,2,3,5] → "1-3, 5" — compress consecutive runs for the panel header. */
@@ -241,15 +246,7 @@ export function ChatPanel({
           {answering.running && (
             <div className="chat-msg assistant">
               <div className="chat-bubble chat-typing">
-                {answering.job?.preview ? (
-                  <p className="chat-preview">{answering.job.preview}</p>
-                ) : (
-                  <p className="chat-thinking">
-                    {answering.job?.status === "queued"
-                      ? "waiting for the AI node…"
-                      : "thinking…"}
-                  </p>
-                )}
+                <StreamingAnswer job={answering.job} thinkingLabel="thinking" />
                 {answering.job && (
                   <button
                     className="link-btn job-cancel chat-stop"

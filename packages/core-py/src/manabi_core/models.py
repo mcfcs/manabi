@@ -335,6 +335,14 @@ class Artifact(Base, TimestampMixin):
     job_id: Mapped[int | None] = mapped_column(
         BigInteger, ForeignKey("jobs.id", ondelete="SET NULL")
     )
+    # Scoped/custom generation provenance. None scope arrays = whole module;
+    # generation_mode None (legacy rows) reads as "sources".
+    scope_document_ids: Mapped[list[int] | None] = mapped_column(ARRAY(BigInteger))
+    scope_note_ids: Mapped[list[int] | None] = mapped_column(ARRAY(BigInteger))
+    instructions: Mapped[str | None] = mapped_column(Text)
+    generation_mode: Mapped[str | None] = mapped_column(String(16))  # sources|exercise
+    # Flashcard decks only: whether this deck's cards feed the SRS review queue.
+    review_enabled: Mapped[bool | None] = mapped_column()
 
     __table_args__ = (Index("ix_artifacts_module_type", "module_id", "artifact_type"),)
 

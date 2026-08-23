@@ -18,20 +18,22 @@ def _chunk(cid, doc, page, text):
     )
 
 
-def test_dedup_diversify_caps_per_page_and_drops_dupes():
+def test_dedup_diversify_prefers_diversity_then_fills():
     from manabi_core.retrieval import dedup_diversify
 
     hits = [
         _chunk(1, 10, 1, "alpha beta"),
-        _chunk(2, 10, 1, "alpha beta"),  # exact dup text → dropped
+        _chunk(2, 10, 1, "alpha beta"),  # exact dup text → always dropped
         _chunk(3, 10, 1, "gamma"),
-        _chunk(4, 10, 1, "delta"),       # 3rd on (10,1) → capped (per_page=2)
+        _chunk(4, 10, 1, "delta"),       # 3rd on (10,1) → deferred by page cap
         _chunk(5, 10, 2, "epsilon"),     # different page → kept
         _chunk(6, 11, 1, "zeta"),        # different doc → kept
     ]
-    out = dedup_diversify(hits, limit=8, per_page=2)
-    ids = [c.id for c in out]
-    assert ids == [1, 3, 5, 6]  # dup(2) dropped, page-cap drops 4
+    # Small limit: diversity wins; the page-capped 4 stays out, dup 2 dropped.
+    assert [c.id for c in dedup_diversify(hits, limit=4, per_page=2)] == [1, 3, 5, 6]
+    # Larger limit: never under-fill — backfill the page-capped 4 after the
+    # diversified set (dup 2 is still excluded).
+    assert [c.id for c in dedup_diversify(hits, limit=8, per_page=2)] == [1, 3, 5, 6, 4]
 
 
 def test_dedup_diversify_respects_limit():

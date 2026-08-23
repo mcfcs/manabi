@@ -19,9 +19,12 @@ class WorkerSettings(CoreSettings):
     ollama_backup_url: str = ""  # e.g. http://127.0.0.1:11434
     ollama_backup_model: str = ""  # e.g. qwen2.5:7b-instruct (~4.7 GB Q4_K_M)
     # Upper bound on the per-request Ollama context window. Grown from 4096 only
-    # as a prompt needs it; 16384 fits a full 10-page ask and stays VRAM-safe on
-    # the 8 GB backup node. Raise if phillmyeol should use more for huge asks.
-    max_num_ctx: int = 16384
+    # as a prompt needs it. 24576 holds whole-doc / big page-range asks without
+    # truncation; it stays VRAM-safe on phillmyeol ONLY with KV-cache
+    # quantization enabled (OLLAMA_FLASH_ATTENTION=1 + OLLAMA_KV_CACHE_TYPE=q8_0),
+    # which ~halves the cache. The 8 GB backup falls back to the low tiers via
+    # its own smaller model, so this cap is effectively the phillmyeol ceiling.
+    max_num_ctx: int = 24576
     worker_name: str = "phillmyeol"
     heartbeat_interval_seconds: int = 15
     # Teacher voice (GPT-SoVITS api_v2 or compatible). Empty tts_url = voice

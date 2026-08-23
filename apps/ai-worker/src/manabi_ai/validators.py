@@ -25,20 +25,41 @@ def resolve_items(
     items: list[dict],
     index_map: dict[int, ScopedChunk],
     allowed_module_ids: set[int],
+    *,
+    require_sources: bool = True,
 ) -> tuple[list[ResolvedItem], int]:
-    """Returns (kept items with resolved chunks, dropped count)."""
+    """Returns (kept items with resolved chunks, dropped count).
+
+    require_sources=False (exercise mode): synthesized items are legitimate —
+    an item is kept even with zero resolvable citations; unresolvable ids are
+    stripped rather than sinking the item. Module isolation still holds: an
+    out-of-scope chunk is never attached either way.
+    """
     kept: list[ResolvedItem] = []
     dropped = 0
     for item in items:
         chunks: list[ScopedChunk] = []
         valid = True
         for sid in item.get("source_ids", []):
-            chunk = index_map.get(int(sid)) if isinstance(sid, int | str) else None
+            # The grammar constrains source_ids to integers, but never crash the
+            # whole answer on a malformed id (schema bypass / re-ask garbage) —
+            # treat it as unresolvable.
+            try:
+                idx = int(sid)
+            except (TypeError, ValueError):
+                valid = False
+                continue
+            chunk = index_map.get(idx)
             if chunk is None or chunk.module_id not in allowed_module_ids:
                 valid = False
-                break
+                continue
             chunks.append(chunk)
-        if valid and chunks:
+        if not require_sources:
+            if not valid:
+                log.info("exercise item kept, invalid citations stripped: %.80s",
+                         str(item.get("front") or item.get("prompt") or item.get("text")))
+            kept.append(ResolvedItem(item=item, chunks=chunks))
+        elif valid and chunks:
             kept.append(ResolvedItem(item=item, chunks=chunks))
         else:
             dropped += 1

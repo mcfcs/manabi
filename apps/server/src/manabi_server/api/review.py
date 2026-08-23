@@ -1,4 +1,9 @@
-"""Spaced-repetition review queue over the latest flashcard decks."""
+"""Spaced-repetition review queue over the review-enabled flashcard decks.
+
+A module can hold several named decks; only those with review_enabled feed
+the daily queue. Whole-module regeneration moves the flag to the new deck;
+scoped/practice decks stay out unless the user toggles them in.
+"""
 
 from fastapi import APIRouter, Depends, HTTPException
 from manabi_core.models import (
@@ -39,20 +44,15 @@ class QueueOut(BaseModel):
     due_count: int
 
 
-def _latest_deck_cards():
-    latest_decks = (
-        select(func.max(Artifact.id))
-        .where(Artifact.artifact_type == ArtifactType.flashcard_deck)
-        .group_by(Artifact.module_id)
-        .scalar_subquery()
-    )
+def _review_deck_cards():
     return (
         select(Flashcard, Module, Course)
         .join(Artifact, Artifact.id == Flashcard.artifact_id)
         .join(Module, Module.id == Artifact.module_id)
         .join(Course, Course.id == Module.course_id)
         .where(
-            Artifact.id.in_(latest_decks),
+            Artifact.artifact_type == ArtifactType.flashcard_deck,
+            Artifact.review_enabled.is_(True),
             Flashcard.status == FlashcardStatus.active,
         )
     )
@@ -67,7 +67,7 @@ async def review_queue(
     today = today_manila()
     rows = (
         await db.execute(
-            _latest_deck_cards()
+            _review_deck_cards()
             .join(CardReview, CardReview.flashcard_id == Flashcard.id, isouter=True)
             .where(
                 Course.user_id == user.id,
@@ -98,7 +98,7 @@ async def review_due_count(
 ) -> dict:
     today = today_manila()
     subq = (
-        _latest_deck_cards()
+        _review_deck_cards()
         .join(CardReview, CardReview.flashcard_id == Flashcard.id, isouter=True)
         .where(
             Course.user_id == user.id,
@@ -127,7 +127,7 @@ async def rate_card(
         raise HTTPException(status_code=422, detail=f"rating must be one of {RATINGS}")
     owned = (
         await db.execute(
-            _latest_deck_cards().where(
+            _review_deck_cards().where(
                 Course.user_id == user.id, Flashcard.id == flashcard_id
             )
         )

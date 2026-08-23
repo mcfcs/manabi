@@ -29,6 +29,30 @@ external drive or cloud folder occasionally for real disaster protection.
 4. Restore files: `robocopy backups\<stamp>\storage storage /E`
 5. `start-manabi.bat` as usual.
 
+## Ollama GPU tuning (phillmyeol) — bigger context, fewer swaps
+
+Set these on the **phillmyeol** Ollama service env, then restart Ollama:
+
+```
+OLLAMA_FLASH_ATTENTION=1      # free speedup; required for KV-cache quant
+OLLAMA_KV_CACHE_TYPE=q8_0     # ~½ the KV-cache VRAM (negligible quality loss)
+OLLAMA_MAX_LOADED_MODELS=1    # never co-load two big models → no OOM
+OLLAMA_KEEP_ALIVE=30m         # keep the model resident across a job burst
+```
+
+Why: chat (`gpt-oss:20b` ~13 GB) and generation (`qwen3.5:27b` ~17 GB) can't both
+sit in 24 GB, so Ollama cold-swaps (~30 s) when you alternate them. KV-cache-q8 +
+flash-attention free enough VRAM for one model to hold a large context — the app
+now sizes requests up to `max_num_ctx=24576`, which is only safe with q8 on.
+Verify after restart with `ollama ps` (one model, quantized KV) and `nvidia-smi`.
+
+**Which model?** Run the benchmark to compare speed + correctness:
+`uv run --package manabi-ai python apps/ai-worker/scripts/bench_models.py`
+Then either keep both and switch per-chat in the UI (Model button), or
+consolidate by pointing `CHAT_MODEL` and `GENERATION_MODEL` at the same model
+in `.env` (a worker restart via `start-manabi.bat` picks it up — `get_settings()`
+is cached).
+
 ## Moving the GPU worker to phillmyeol
 
 Full runbook: [infra/phillmyeol/README.md](../infra/phillmyeol/README.md).

@@ -7,7 +7,6 @@ import types
 
 import httpx
 import pytest
-
 from manabi_ai import ollama_client as oc
 
 
@@ -37,7 +36,7 @@ def _record_stream(monkeypatch, primary_exc=None, backup_content="BACKUP", prima
     primary_exc if given, otherwise returns primary_content."""
     calls: list[tuple[str, str]] = []
 
-    async def fake_stream_once(url, model, system, user, schema, on_preview):
+    async def fake_stream_once(url, model, system, user, schema, on_preview, think=None):
         calls.append((url, model))
         if url == "http://phillmyeol:11434" and primary_exc is not None:
             raise primary_exc
@@ -95,3 +94,47 @@ async def test_generate_structured_succeeds_via_backup(monkeypatch):
     _record_stream(monkeypatch, primary_exc=httpx.ConnectError("down"), backup_content='{"ok": true}')
     out = await oc.generate_structured("s", "u", {}, model="gpt-oss:20b")
     assert out == {"ok": True}
+
+
+# ── Thinking-mode handling ────────────────────────────────────────────────
+# Thinking models (qwen3.5) under a format grammar spend everything in
+# message.thinking and emit empty content unless think=false is sent;
+# reasoning-locked models (gpt-oss) return empty content IF it is sent.
+
+
+def _record_chat(monkeypatch, respond):
+    seen: list = []
+
+    async def fake_stream_chat(settings, system, user, schema, on_preview, model=None, think=None):
+        seen.append(think)
+        return respond(think)
+
+    monkeypatch.setattr(oc, "_stream_chat", fake_stream_chat)
+    return seen
+
+
+async def test_structured_sends_think_false_for_thinking_model(monkeypatch):
+    monkeypatch.setattr(oc, "get_settings", lambda: _settings())
+    seen = _record_chat(monkeypatch, lambda think: '{"ok": true}')
+    out = await oc.generate_structured("s", "u", {})  # generation_model=qwen3.5
+    assert out == {"ok": True}
+    assert seen == [False]
+
+
+async def test_structured_omits_think_for_reasoning_locked_model(monkeypatch):
+    monkeypatch.setattr(oc, "get_settings", lambda: _settings())
+    seen = _record_chat(monkeypatch, lambda think: '{"ok": true}')
+    await oc.generate_structured("s", "u", {}, model="gpt-oss:20b")
+    assert seen == [None]
+
+
+async def test_structured_flips_think_mode_on_empty_content(monkeypatch):
+    """Unknown reasoning-locked model: think=False yields empty → retried
+    with the field omitted."""
+    monkeypatch.setattr(oc, "get_settings", lambda: _settings())
+    seen = _record_chat(
+        monkeypatch, lambda think: "" if think is False else '{"ok": true}'
+    )
+    out = await oc.generate_structured("s", "u", {}, model="mystery-reasoner:8b")
+    assert out == {"ok": True}
+    assert seen == [False, None]

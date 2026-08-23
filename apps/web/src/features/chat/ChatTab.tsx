@@ -1,7 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useNavigate, useSearch } from "@tanstack/react-router";
 import {
-  BookMarked,
   Check,
   Copy,
   GraduationCap,
@@ -24,16 +23,17 @@ import {
   ApiError,
   type ChatMessageOut,
   type ChatThreadOut,
-  type DocumentOut,
-  type NoteListItem,
 } from "../../lib/api";
 import {
   AiOfflineBanner,
+  ModelPicker,
+  StreamingAnswer,
   useAiOnline,
   useCancelJob,
   useChatVoice,
   useGenerationJob,
 } from "../ai/common";
+import { SourcesPicker } from "../ai/SourcesPicker";
 import { Markdown } from "../../components/Markdown";
 import { ChatComposer } from "./ChatComposer";
 import "./chat.css";
@@ -56,8 +56,8 @@ function CitePill({ c }: { c: NonNullable<ChatMessageOut["citations"]>[number] }
 }
 
 /** Per-thread material scope: which documents and note sections ground the
- * answers. null scope = everything; explicit arrays narrow it. */
-function SourcesPicker({
+ * answers — the shared picker wired to the thread's persisted scope. */
+function ThreadSourcesPicker({
   moduleId,
   thread,
 }: {
@@ -65,31 +65,6 @@ function SourcesPicker({
   thread: ChatThreadOut;
 }) {
   const queryClient = useQueryClient();
-  const [open, setOpen] = useState(false);
-  const rootRef = useRef<HTMLDivElement>(null);
-
-  const documents = useQuery({
-    queryKey: ["documents", moduleId],
-    queryFn: () => api.get<DocumentOut[]>(`/api/modules/${moduleId}/documents`),
-    enabled: open,
-  });
-  const notes = useQuery({
-    queryKey: ["notes", moduleId],
-    queryFn: () => api.get<NoteListItem[]>(`/api/modules/${moduleId}/notes`),
-    enabled: open,
-  });
-
-  useEffect(() => {
-    if (!open) return;
-    const onDown = (e: MouseEvent) => {
-      if (rootRef.current && !rootRef.current.contains(e.target as Node)) {
-        setOpen(false);
-      }
-    };
-    window.addEventListener("mousedown", onDown);
-    return () => window.removeEventListener("mousedown", onDown);
-  }, [open]);
-
   const patchScope = useMutation({
     mutationFn: (scope: {
       scope_document_ids: number[] | null;
@@ -98,92 +73,18 @@ function SourcesPicker({
     onSuccess: () =>
       queryClient.invalidateQueries({ queryKey: ["chat-threads", moduleId] }),
   });
-
-  const docIds = (documents.data ?? [])
-    .filter((d) => d.ai_included)
-    .map((d) => d.id);
-  const noteIds = (notes.data ?? []).map((n) => n.id);
-  const isAll = thread.scope_document_ids === null && thread.scope_note_ids === null;
-  const docsSel = new Set(thread.scope_document_ids ?? docIds);
-  const notesSel = new Set(thread.scope_note_ids ?? noteIds);
-
-  function toggle(kind: "doc" | "note", id: number) {
-    const nextDocs = new Set(docsSel);
-    const nextNotes = new Set(notesSel);
-    const set = kind === "doc" ? nextDocs : nextNotes;
-    if (set.has(id)) set.delete(id);
-    else set.add(id);
-    patchScope.mutate({
-      scope_document_ids: [...nextDocs],
-      scope_note_ids: [...nextNotes],
-    });
-  }
-
-  const selectedCount = (thread.scope_document_ids?.length ?? 0) +
-    (thread.scope_note_ids?.length ?? 0);
-
   return (
-    <div className="chat-scope" ref={rootRef}>
-      <button
-        className={`chat-teacher-toggle${!isAll ? " on" : ""}`}
-        onClick={() => setOpen((v) => !v)}
-        title="Choose which materials ground this conversation"
-      >
-        <BookMarked size={14} strokeWidth={1.75} />
-        Sources: {isAll ? "all materials" : `${selectedCount} selected`}
-      </button>
-      {open && (
-        <div className="chat-scope-pop">
-          <label className="chat-scope-row chat-scope-all">
-            <input
-              type="checkbox"
-              checked={isAll}
-              onChange={() =>
-                isAll
-                  ? patchScope.mutate({
-                      scope_document_ids: docIds,
-                      scope_note_ids: noteIds,
-                    })
-                  : patchScope.mutate({
-                      scope_document_ids: null,
-                      scope_note_ids: null,
-                    })
-              }
-            />
-            All materials
-          </label>
-          {(documents.isLoading || notes.isLoading) && (
-            <p className="chat-scope-hint">
-              <Loader2 size={12} className="spin" /> Loading materials…
-            </p>
-          )}
-          {docIds.length > 0 && <p className="chat-scope-hint">Files</p>}
-          {(documents.data ?? [])
-            .filter((d) => d.ai_included)
-            .map((d) => (
-              <label key={d.id} className="chat-scope-row">
-                <input
-                  type="checkbox"
-                  checked={docsSel.has(d.id)}
-                  onChange={() => toggle("doc", d.id)}
-                />
-                <span className="chat-scope-name">{d.filename}</span>
-              </label>
-            ))}
-          {noteIds.length > 0 && <p className="chat-scope-hint">Notes</p>}
-          {(notes.data ?? []).map((n) => (
-            <label key={n.id} className="chat-scope-row">
-              <input
-                type="checkbox"
-                checked={notesSel.has(n.id)}
-                onChange={() => toggle("note", n.id)}
-              />
-              <span className="chat-scope-name">{n.title}</span>
-            </label>
-          ))}
-        </div>
-      )}
-    </div>
+    <SourcesPicker
+      moduleId={moduleId}
+      documentIds={thread.scope_document_ids}
+      noteIds={thread.scope_note_ids}
+      onChange={(documentIds, noteIds) =>
+        patchScope.mutate({
+          scope_document_ids: documentIds,
+          scope_note_ids: noteIds,
+        })
+      }
+    />
   );
 }
 
@@ -222,7 +123,12 @@ function ChatModeControls({
         <Lightbulb size={14} strokeWidth={1.75} />
         {thread.strict_grounding ? "Material only" : "Material + reasoning"}
       </button>
-      <SourcesPicker moduleId={moduleId} thread={thread} />
+      <ThreadSourcesPicker moduleId={moduleId} thread={thread} />
+      <ModelPicker
+        threadId={thread.id}
+        value={thread.model_override}
+        invalidateKeys={[["chat-threads", moduleId]]}
+      />
       {thread.teacher_mode && (
         <button
           className={`chat-teacher-toggle${voiceOn ? " on" : ""}`}
@@ -696,20 +602,7 @@ export function ChatTab({ moduleId }: { moduleId: string }) {
             <div className="chat-msg assistant">
               <img className="chat-avatar" src="/steven.jpg" alt="Steven" />
               <div className="chat-bubble chat-typing">
-                {answering.job?.preview ? (
-                  <p className="chat-preview">{answering.job.preview}</p>
-                ) : (
-                  <p className="chat-thinking">
-                    {answering.job?.status === "queued"
-                      ? "waiting for the AI node"
-                      : "reading your materials"}
-                    <span className="typing-dots" aria-hidden>
-                      <span />
-                      <span />
-                      <span />
-                    </span>
-                  </p>
-                )}
+                <StreamingAnswer job={answering.job} />
                 {answering.job && (
                   <button
                     className="link-btn job-cancel chat-stop"

@@ -1,11 +1,13 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
-import { AlertTriangle, Loader2, X } from "lucide-react";
+import { AlertTriangle, Cpu, Loader2, X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 
+import { Markdown } from "../../components/Markdown";
 import {
   api,
   type ActiveJobOut,
+  type AiModelsOut,
   type CitationOut,
   type HealthOut,
   type JobOut,
@@ -25,7 +27,8 @@ export function useActiveJobs(moduleId: string) {
   });
 }
 
-/** Poll a generation job until it reaches a terminal state. */
+/** Poll a generation job until it reaches a terminal state. Fast while running
+ * so the streamed answer preview updates feel like live typing. */
 export function useJob(jobId: number | null) {
   return useQuery({
     queryKey: ["job", jobId],
@@ -33,9 +36,116 @@ export function useJob(jobId: number | null) {
     queryFn: () => api.get<JobOut>(`/api/jobs/${jobId}`),
     refetchInterval: (query) => {
       const s = query.state.data?.status;
-      return s === "queued" || s === "running" ? 2000 : false;
+      return s === "queued" || s === "running" ? 800 : false;
     },
   });
+}
+
+/** Pull the (possibly partial) `answer` string out of the model's streaming
+ * JSON preview, so the chat can type the answer out live instead of showing
+ * raw JSON. Returns "" until the answer field starts streaming. */
+export function extractStreamingAnswer(preview: string | null | undefined): string {
+  if (!preview) return "";
+  const m = preview.match(/"answer"\s*:\s*"((?:\\.|[^"\\])*)/);
+  if (!m) return "";
+  try {
+    return JSON.parse(`"${m[1]}"`); // unescape \n, \", \uXXXX, …
+  } catch {
+    // Stream cut mid-escape — drop a trailing backslash and any bad escape.
+    return m[1].replace(/\\$/, "").replace(/\\(?!["\\/bfnrtu])/g, "");
+  }
+}
+
+/** Reveal `target` progressively (typewriter). Within one answer bubble the
+ * streamed text only grows, so the shown length just catches up to it; the
+ * bubble unmounts between messages, resetting state for the next answer. */
+export function useTypewriter(target: string): string {
+  const [len, setLen] = useState(0);
+  useEffect(() => {
+    if (len >= target.length) return;
+    // Reveal a fraction of the remaining gap each tick — fast when far behind
+    // (keeps up with generation), easing to a natural stop as it catches up.
+    const step = Math.max(2, Math.ceil((target.length - len) / 12));
+    const id = setTimeout(() => setLen((l) => Math.min(target.length, l + step)), 45);
+    return () => clearTimeout(id);
+  }, [len, target]);
+  return target.slice(0, Math.min(len, target.length));
+}
+
+/** Compact per-chat model switcher (gpt-oss ⇄ qwen3.5 ⇄ …). "Auto" = the
+ * server default. Works for module AND general threads (a thread's
+ * model_override rides the answer job). Hidden when the node reports no models. */
+export function ModelPicker({
+  threadId,
+  value,
+  invalidateKeys,
+}: {
+  threadId: number;
+  value: string | null;
+  invalidateKeys: unknown[][];
+}) {
+  const qc = useQueryClient();
+  const models = useQuery({
+    queryKey: ["ai-models"],
+    queryFn: () => api.get<AiModelsOut>("/api/ai/models"),
+    staleTime: 60_000,
+  });
+  const patch = useMutation({
+    mutationFn: (m: string | null) =>
+      api.patch(`/api/chat/threads/${threadId}`, { model_override: m }),
+    onSuccess: () =>
+      invalidateKeys.forEach((k) => qc.invalidateQueries({ queryKey: k })),
+  });
+  const list = models.data?.models ?? [];
+  if (list.length === 0) return null;
+  return (
+    <label className="chat-model-pick" title="Model for this chat (Auto = default)">
+      <Cpu size={13} strokeWidth={1.75} />
+      <select
+        className="chat-model-select"
+        value={value ?? ""}
+        onChange={(e) => patch.mutate(e.target.value || null)}
+      >
+        <option value="">Auto</option>
+        {list.map((m) => (
+          <option key={m} value={m}>
+            {m}
+          </option>
+        ))}
+      </select>
+    </label>
+  );
+}
+
+/** The live assistant bubble content while a reply generates: types the answer
+ * out (markdown + cursor) once the model starts streaming it, else shows the
+ * thinking dots. Shared by the module chat, the assistant, and the ask panel. */
+export function StreamingAnswer({
+  job,
+  thinkingLabel = "reading your materials",
+}: {
+  job: JobOut | undefined;
+  thinkingLabel?: string;
+}) {
+  const typed = useTypewriter(extractStreamingAnswer(job?.preview));
+  if (typed) {
+    return (
+      <div className="chat-typeout">
+        <Markdown>{typed}</Markdown>
+        <span className="type-cursor" aria-hidden />
+      </div>
+    );
+  }
+  return (
+    <p className="chat-thinking">
+      {job?.status === "queued" ? "waiting for the AI node" : thinkingLabel}
+      <span className="typing-dots" aria-hidden>
+        <span />
+        <span />
+        <span />
+      </span>
+    </p>
+  );
 }
 
 /** Track a generation job from defer to completion; fires onDone once.

@@ -280,6 +280,54 @@
   overflow: hidden;
 }
 
+/* Live "type-out": the answer streams in as markdown with a trailing cursor.
+   Blocks render inline while typing (transient) so the cursor trails the text;
+   the finished message re-renders with proper paragraphs. */
+.chat-typeout {
+  font-size: 14px;
+  line-height: 1.55;
+}
+.chat-typeout > * {
+  display: inline;
+  margin: 0;
+}
+.chat-typeout :is(ul, ol, pre, table, blockquote) {
+  display: inline-block;
+  vertical-align: top;
+  margin: 0;
+}
+.type-cursor {
+  display: inline-block;
+  width: 2px;
+  height: 1.05em;
+  margin-left: 1px;
+  background: var(--accent-blue);
+  vertical-align: text-bottom;
+  animation: type-blink 1s step-end infinite;
+}
+@keyframes type-blink {
+  50% {
+    opacity: 0;
+  }
+}
+
+/* Per-chat model switcher (in the toggle row / settings sheet). */
+.chat-model-pick {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--ink-soft);
+}
+.chat-model-select {
+  font-size: 12px;
+  padding: 2px 6px;
+  border: 1px solid var(--rule);
+  border-radius: var(--radius-sm);
+  background: var(--surface-raised);
+  color: var(--ink);
+  max-width: 132px;
+}
+
 /* ── Input ──────────────────────────────────────────────────── */
 
 .chat-input {
@@ -318,6 +366,14 @@
     flex-direction: column;
     gap: var(--s-2);
     min-height: 0;
+    /* Pin the composer like the standalone assistant: bound the tab to the
+       viewport (below the module crumb/head/tab-bar chrome ≈185px, above the
+       64px bottom nav) so only .chat-messages scrolls — the send button never
+       scrolls off once the thread grows. */
+    height: calc(100dvh - 185px - 64px - env(safe-area-inset-bottom));
+  }
+  .chat-main {
+    min-height: 0;
   }
   /* the thread sidebar + the inline toggle row are replaced on mobile.
      .chat-toggle-row is defined later with display:flex (same specificity),
@@ -337,11 +393,12 @@
   .chat-messages {
     max-height: none;
     flex: 1;
+    min-height: 0; /* the only scroll region */
   }
-  /* keep the composer within reach above the bottom nav */
+  /* composer is the bottom flex item of the bounded tab — always visible */
   .chat-input {
-    position: sticky;
-    bottom: calc(56px + env(safe-area-inset-bottom));
+    position: static;
+    bottom: auto;
     background: var(--paper);
     padding: var(--s-2) 0;
     z-index: 5;

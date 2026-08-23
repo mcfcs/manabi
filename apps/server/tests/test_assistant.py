@@ -150,7 +150,17 @@ async def _aw(v):
 async def test_module_thread_enqueue_has_no_general_kwargs(monkeypatch):
     captured = await _run_post(monkeypatch, _thread(module_id=5))
     assert "thread_id" in captured and "chunk_ids" in captured
-    assert "model" not in captured  # module chat is untouched
+    assert "model" not in captured  # plain module chat is untouched
+    assert "personal_context" not in captured
+
+
+async def test_module_thread_override_passes_model_only(monkeypatch):
+    # A per-chat model override on a MODULE thread now rides the defer — but
+    # never personal_context (that stays general-only).
+    captured = await _run_post(
+        monkeypatch, _thread(module_id=5, model_override="qwen3.5:27b")
+    )
+    assert captured.get("model") == "qwen3.5:27b"
     assert "personal_context" not in captured
 
 

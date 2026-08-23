@@ -152,22 +152,32 @@ def dedup_diversify(
     """Trim a ranked hit list to `limit`, dropping near-duplicate text and
     capping chunks per (document, page) so the context spans more of the
     material rather than piling several near-identical passages from one page.
+    Never under-fills: if diversity alone leaves fewer than `limit`, a second
+    pass adds the over-cap (but non-duplicate) hits in rank order until full —
+    diversity is preferred, grounding coverage is guaranteed.
     Pure function — retrieve a wider candidate pool, then diversify to k."""
     seen: set[str] = set()
     per: dict[tuple[int, int], int] = {}
     out: list[ScopedChunk] = []
+    overflow: list[ScopedChunk] = []  # non-dup hits skipped only by the page cap
     for h in hits:
         key = " ".join((h.text or "").split())[:200].lower()
         if key and key in seen:
             continue
+        seen.add(key)
         pk = (h.document_id, h.page_start)
         if per.get(pk, 0) >= per_page:
+            overflow.append(h)
             continue
-        seen.add(key)
         per[pk] = per.get(pk, 0) + 1
         out.append(h)
         if len(out) >= limit:
+            return out
+    # Backfill from the page-capped remainder (still rank-ordered, no dups).
+    for h in overflow:
+        if len(out) >= limit:
             break
+        out.append(h)
     return out
 
 

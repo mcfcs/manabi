@@ -295,7 +295,9 @@ export function ModuleWorkspace() {
       {module && tab === "overview" && <Overview module={module} />}
       {module && tab === "materials" && <MaterialsTab moduleId={moduleId} />}
       {module && tab === "summary" && <SummaryTab moduleId={moduleId} />}
-      {module && tab === "cards" && <FlashcardsTab moduleId={moduleId} />}
+      {module && tab === "cards" && (
+        <FlashcardsTab moduleId={moduleId} courseId={courseId} />
+      )}
       {module && tab === "quiz" && <QuizTab moduleId={moduleId} courseId={courseId} />}
       {module && tab === "teacher" && <TeacherTab moduleId={moduleId} />}
       {module && tab === "chat" && <ChatTab moduleId={moduleId} />}

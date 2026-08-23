@@ -63,7 +63,7 @@ const moduleRoute = createRoute({
   component: ModuleWorkspace,
   validateSearch: (
     search: Record<string, unknown>,
-  ): { tab: ModuleTab; ask?: string; note?: number } => ({
+  ): { tab: ModuleTab; ask?: string; note?: number; deck?: number } => ({
     tab: (MODULE_TABS.includes(search.tab as string)
       ? search.tab
       : "overview") as ModuleTab,
@@ -71,6 +71,7 @@ const moduleRoute = createRoute({
       ? { ask: search.ask }
       : {}),
     ...(Number(search.note) >= 1 ? { note: Number(search.note) } : {}),
+    ...(Number(search.deck) >= 1 ? { deck: Number(search.deck) } : {}),
   }),
 });
 

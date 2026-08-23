@@ -48,6 +48,36 @@ def test_resolve_rejects_out_of_scope_module():
     assert kept == [] and dropped == 1
 
 
+def test_resolve_exercise_mode_keeps_uncited_items():
+    """Exercise mode: synthesized items (empty source_ids) are legitimate."""
+    index_map = {1: _chunk(101)}
+    items = [
+        {"front": "trace a++ + --b", "source_ids": []},
+        {"front": "no ids at all"},  # schema fork drops required source_ids
+        {"front": "cited", "source_ids": [1]},
+    ]
+    kept, dropped = resolve_items(items, index_map, {1}, require_sources=False)
+    assert len(kept) == 3 and dropped == 0
+    assert kept[0].chunks == [] and kept[1].chunks == []
+    assert [c.id for c in kept[2].chunks] == [101]
+
+
+def test_resolve_exercise_mode_strips_invalid_ids_keeps_valid():
+    index_map = {1: _chunk(101), 2: _chunk(202, module_id=2)}
+    items = [{"front": "mixed", "source_ids": [1, 99, 2, "junk"]}]
+    kept, dropped = resolve_items(items, index_map, {1}, require_sources=False)
+    # item survives; only the resolvable in-scope citation is attached
+    assert len(kept) == 1 and dropped == 0
+    assert [c.id for c in kept[0].chunks] == [101]
+
+
+def test_resolve_default_mode_unchanged_by_flag_addition():
+    index_map = {1: _chunk(101)}
+    items = [{"text": "empty", "source_ids": []}]
+    kept, dropped = resolve_items(items, index_map, {1})
+    assert kept == [] and dropped == 1
+
+
 def test_dedup_questions_drops_near_duplicates():
     index_map = {1: _chunk(101)}
     items, _ = resolve_items(

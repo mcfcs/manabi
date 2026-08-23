@@ -29,7 +29,7 @@ from manabi_core.retrieval import (
     source_fingerprint,
 )
 from procrastinate.exceptions import JobAborted
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from manabi_ai import prompts
@@ -49,6 +49,13 @@ from manabi_ai.validators import (
 log = logging.getLogger("manabi_ai")
 
 SCORE_SUPPORT_TASK = "manabi_server.tasks.score_support"  # cpu queue contract
+
+# Exercise-mode generation with no material in scope: the FOCUS instructions
+# alone define the topic (the enqueue guard requires them for this path).
+_NO_SOURCES_TEXT = (
+    "SOURCE MATERIAL: (none provided — synthesize practice exercises on the "
+    "FOCUS topic alone)"
+)
 
 
 async def _progress(db: AsyncSession, job: Job, pct: int, note: str) -> None:
@@ -119,9 +126,13 @@ def _citation_rows(
     return rows
 
 
-def _preview_writer(db: AsyncSession, job: Job):
+def _preview_writer(db: AsyncSession, job: Job, *, from_head: bool = False):
+    """Stream the model's partial output into job.preview for the live UI.
+    `from_head=True` keeps the START of the text (chat: the answer field appears
+    early in the JSON, so the client can type it out from the beginning); the
+    default keeps the tail (long generation JSON where only the latest matters)."""
     async def write(text: str) -> None:
-        job.preview = text[-6000:]
+        job.preview = text[:8000] if from_head else text[-6000:]
         await db.commit()
 
     return write
@@ -367,33 +378,82 @@ async def generate_summary(context, job_id: int, module_id: int) -> None:
             raise
 
 
+def _deck_title(
+    module_title: str,
+    mode: str,
+    instructions: str | None,
+    document_ids: list[int] | None,
+) -> str:
+    if instructions:
+        snippet = instructions[:48] + ("…" if len(instructions) > 48 else "")
+        return f"{'Practice' if mode == 'exercise' else 'Cards'} — {snippet}"
+    if mode == "exercise":
+        return f"Practice — {module_title}"
+    if document_ids is not None:
+        n = len(document_ids)
+        return f"Cards — {n} source{'s' if n != 1 else ''} · {module_title}"
+    return f"Flashcards — {module_title}"
+
+
 @app.task(name="manabi_ai.tasks.generate_flashcards", queue="gpu", retry=1, pass_context=True)
 async def generate_flashcards(
-    context, job_id: int, module_id: int, count: int = 12
+    context,
+    job_id: int,
+    module_id: int,
+    count: int = 12,
+    document_ids: list[int] | None = None,
+    note_ids: list[int] | None = None,
+    instructions: str | None = None,
+    mode: str = "sources",
+    chunk_ids: list[int] | None = None,
 ) -> None:
     settings = get_settings()
+    exercise = mode == "exercise"
+    # A scoped/custom deck is its own study object: no summary-derived cards,
+    # no carry-over from the review deck, and it stays out of the SRS queue.
+    scoped = (
+        document_ids is not None
+        or note_ids is not None
+        or bool(instructions)
+        or exercise
+    )
     async with session_factory()() as db:
         job = await _start(db, job_id)
         preview = _preview_writer(db, job)
         try:
-            chunks = await load_context_chunks(db, [module_id])
-            notes = await _load_notes_text(db, [module_id])
+            chunks: list[ScopedChunk] = []
+            if chunk_ids:
+                # Focused retrieval (server-side, topic-steered). Hydration
+                # doesn't module-filter — re-filter as defense in depth, and
+                # fall back to the document scope if it all went stale.
+                chunks = [
+                    c
+                    for c in await load_chunks_by_ids(db, chunk_ids)
+                    if c.module_id == module_id
+                ]
+            if not chunks:
+                chunks = await load_context_chunks(
+                    db, [module_id], document_ids=document_ids
+                )
+            notes = await _load_notes_text(db, [module_id], note_ids=note_ids)
             module = (
                 await db.execute(select(Module).where(Module.id == module_id))
             ).scalar_one()
 
             # ── Derived cards: exact term/acronym cards from the summary ──
-            summary = (
-                await db.execute(
-                    select(Artifact)
-                    .where(
-                        Artifact.module_id == module_id,
-                        Artifact.artifact_type == ArtifactType.summary,
+            summary = None
+            if not scoped:
+                summary = (
+                    await db.execute(
+                        select(Artifact)
+                        .where(
+                            Artifact.module_id == module_id,
+                            Artifact.artifact_type == ArtifactType.summary,
+                        )
+                        .order_by(Artifact.id.desc())
+                        .limit(1)
                     )
-                    .order_by(Artifact.id.desc())
-                    .limit(1)
-                )
-            ).scalar_one_or_none()
+                ).scalar_one_or_none()
             derived: list[tuple[str, str, str]] = []  # (front, back, summary item_ref)
             summary_citations: dict[str, list[Citation]] = {}
             if summary is not None:
@@ -437,9 +497,38 @@ async def generate_flashcards(
             batches = batch_chunks(chunks)
             resolved_cards: list[ResolvedItem] = []
             dropped = 0
+
+            if exercise and not chunks:
+                # Topic-only practice deck: no material in scope at all.
+                await _progress(
+                    db, job, 30,
+                    f"Writing practice cards with {settings.generation_model}",
+                )
+                base_prompt = prompts.EXERCISE_FLASHCARDS_PROMPT
+                if instructions:
+                    base_prompt += prompts.FOCUS_BLOCK.replace(
+                        "{instructions}", instructions
+                    )
+                result = await generate_structured(
+                    base_prompt.replace(
+                        "{count}", str(min(max(remaining, 4), 20))
+                    ).replace("{existing_fronts}", "(none)"),
+                    _NO_SOURCES_TEXT,
+                    prompts.FLASHCARDS_EXERCISE_SCHEMA,
+                    preview,
+                )
+                kept, d = resolve_items(
+                    result.get("cards", []), {}, {module_id},
+                    require_sources=False,
+                )
+                dropped += d
+                fresh = dedup_cards(kept, existing_fronts)
+                resolved_cards.extend(fresh)
+                existing_fronts.extend((f.item.get("front") or "") for f in fresh)
+
             rounds = 0
             max_rounds = 8 if exhaustive else 3
-            while remaining > len(resolved_cards) and rounds < max_rounds:
+            while batches and remaining > len(resolved_cards) and rounds < max_rounds:
                 await _abort_if_requested(db, job, context)
                 rounds += 1
                 added_this_round = 0
@@ -455,16 +544,30 @@ async def generate_flashcards(
                     )
                     ctx = build_context(batch, notes)
                     fronts_note = "\n".join(f"- {f}" for f in existing_fronts[-60:]) or "(none)"
+                    base_prompt = (
+                        prompts.EXERCISE_FLASHCARDS_PROMPT
+                        if exercise
+                        else prompts.FLASHCARDS_PROMPT
+                    )
+                    if instructions:
+                        base_prompt += prompts.FOCUS_BLOCK.replace(
+                            "{instructions}", instructions
+                        )
                     result = await generate_structured(
-                        prompts.FLASHCARDS_PROMPT.replace(
+                        base_prompt.replace(
                             "{count}", str(min(need, 20))
                         ).replace("{existing_fronts}", fronts_note),
                         ctx.source_text,
-                        prompts.FLASHCARDS_SCHEMA,
+                        prompts.FLASHCARDS_EXERCISE_SCHEMA
+                        if exercise
+                        else prompts.FLASHCARDS_SCHEMA,
                         preview,
                     )
                     kept, d = resolve_items(
-                        result.get("cards", []), ctx.index_map, {module_id}
+                        result.get("cards", []),
+                        ctx.index_map,
+                        {module_id},
+                        require_sources=not exercise,
                     )
                     dropped += d
                     fresh = dedup_cards(kept, existing_fronts)
@@ -480,38 +583,52 @@ async def generate_flashcards(
                     break
 
             await _progress(db, job, 85, "Validating citations")
-            # carry over user-edited cards from the previous deck
-            previous = (
+            # Carry over user-edited cards — only when regenerating the
+            # module's review deck (scoped/custom decks are fresh objects).
+            carried: list[Flashcard] = []
+            if not scoped:
+                previous = (
+                    await db.execute(
+                        select(Artifact)
+                        .where(
+                            Artifact.module_id == module_id,
+                            Artifact.artifact_type == ArtifactType.flashcard_deck,
+                            Artifact.review_enabled.is_(True),
+                        )
+                        .order_by(Artifact.id.desc())
+                        .limit(1)
+                    )
+                ).scalar_one_or_none()
+                if previous is not None:
+                    carried = (
+                        (
+                            await db.execute(
+                                select(Flashcard).where(
+                                    Flashcard.artifact_id == previous.id,
+                                    Flashcard.edited.is_(True),
+                                )
+                            )
+                        )
+                        .scalars()
+                        .all()
+                    )
+                # The new whole-module deck replaces its predecessors in the
+                # SRS rotation (today's "latest deck" semantics).
                 await db.execute(
-                    select(Artifact)
+                    update(Artifact)
                     .where(
                         Artifact.module_id == module_id,
                         Artifact.artifact_type == ArtifactType.flashcard_deck,
+                        Artifact.review_enabled.is_(True),
                     )
-                    .order_by(Artifact.id.desc())
-                    .limit(1)
-                )
-            ).scalar_one_or_none()
-            carried: list[Flashcard] = []
-            if previous is not None:
-                carried = (
-                    (
-                        await db.execute(
-                            select(Flashcard).where(
-                                Flashcard.artifact_id == previous.id,
-                                Flashcard.edited.is_(True),
-                            )
-                        )
-                    )
-                    .scalars()
-                    .all()
+                    .values(review_enabled=False)
                 )
 
             artifact = Artifact(
                 module_id=module_id,
                 artifact_type=ArtifactType.flashcard_deck,
                 scope_module_ids=[module_id],
-                title=f"Flashcards — {module.title}",
+                title=_deck_title(module.title, mode, instructions, document_ids),
                 content={},
                 model_name=settings.generation_model,
                 prompt_version=prompts.PROMPT_VERSION,
@@ -519,6 +636,11 @@ async def generate_flashcards(
                 source_fingerprint=source_fingerprint(chunks),
                 module_version_at_gen=module.content_version,
                 job_id=job.id,
+                scope_document_ids=document_ids,
+                scope_note_ids=note_ids,
+                instructions=instructions,
+                generation_mode=mode,
+                review_enabled=not scoped,
             )
             db.add(artifact)
             await db.flush()
@@ -606,15 +728,25 @@ def _question_answer(item: dict) -> dict | None:
 
 @app.task(name="manabi_ai.tasks.generate_quiz", queue="gpu", retry=1, pass_context=True)
 async def generate_quiz(
-    context, job_id: int, module_ids: list[int], types: list[str], count: int = 10
+    context,
+    job_id: int,
+    module_ids: list[int],
+    types: list[str],
+    count: int = 10,
+    document_ids: list[int] | None = None,
+    note_ids: list[int] | None = None,
+    instructions: str | None = None,
+    mode: str = "sources",
+    chunk_ids: list[int] | None = None,
 ) -> None:
     settings = get_settings()
+    exercise = mode == "exercise"
     async with session_factory()() as db:
         job = await _start(db, job_id)
         preview = _preview_writer(db, job)
         try:
             scope = {int(m) for m in module_ids}
-            notes = await _load_notes_text(db, list(scope))
+            notes = await _load_notes_text(db, list(scope), note_ids=note_ids)
             modules = (
                 (await db.execute(select(Module).where(Module.id.in_(scope))))
                 .scalars()
@@ -622,32 +754,92 @@ async def generate_quiz(
             )
             per_module = max(2, round(count * 1.4 / len(scope)))  # oversample for dedup
 
+            # Focused retrieval (server-side, topic-steered): partition the
+            # hydrated chunks per module; a module the topic doesn't touch
+            # simply contributes nothing. Hydration doesn't module-filter —
+            # re-filter as defense in depth.
+            focus_by_module: dict[int, list[ScopedChunk]] | None = None
+            if chunk_ids:
+                hydrated = [
+                    c
+                    for c in await load_chunks_by_ids(db, chunk_ids)
+                    if c.module_id in scope
+                ]
+                if hydrated:
+                    focus_by_module = {}
+                    for c in hydrated:
+                        focus_by_module.setdefault(c.module_id, []).append(c)
+
+            base_prompt = (
+                prompts.EXERCISE_QUIZ_PROMPT if exercise else prompts.QUIZ_PROMPT
+            )
+            if instructions:
+                base_prompt += prompts.FOCUS_BLOCK.replace(
+                    "{instructions}", instructions
+                )
+
+            # Exercise stems legitimately look alike ("Trace this code…" with
+            # different snippets) — a loose 0.8 similarity dedup eats real
+            # variants, so practice quizzes dedup at 0.9.
+            dedup_threshold = 0.9 if exercise else 0.8
+            quiz_schema = (
+                prompts.QUIZ_EXERCISE_SCHEMA if exercise else prompts.QUIZ_SCHEMA
+            )
             candidates: list[ResolvedItem] = []
+            used_chunks: list[ScopedChunk] = []
+            last_ctx = None  # last built context — reused by the top-up pass
             dropped = 0
             for mi, module in enumerate(modules):
                 await _abort_if_requested(db, job, context)
-                chunks = await load_context_chunks(db, [module.id])
+                if focus_by_module is not None:
+                    chunks = focus_by_module.get(module.id, [])
+                else:
+                    chunks = await load_context_chunks(
+                        db, [module.id], document_ids=document_ids
+                    )
                 if not chunks:
                     continue
+                used_chunks.extend(chunks)
                 for bi, batch in enumerate(batch_chunks(chunks)):
                     await _progress(
                         db, job, 10 + int(60 * mi / len(modules)),
                         f"Writing questions — {module.title}",
                     )
                     ctx = build_context(batch, notes if mi == 0 and bi == 0 else None)
+                    last_ctx = ctx
                     result = await generate_structured(
-                        prompts.QUIZ_PROMPT.replace("{count}", str(per_module)).replace(
+                        base_prompt.replace("{count}", str(per_module)).replace(
                             "{types}", ", ".join(types)
                         ),
                         ctx.source_text,
-                        prompts.QUIZ_SCHEMA,
+                        quiz_schema,
                         preview,
                     )
                     kept, d = resolve_items(
-                        result.get("questions", []), ctx.index_map, scope
+                        result.get("questions", []),
+                        ctx.index_map,
+                        scope,
+                        require_sources=not exercise,
                     )
                     dropped += d
                     candidates.extend(kept)
+
+            if exercise and not used_chunks:
+                # Topic-only practice quiz: no material in scope at all.
+                await _progress(db, job, 40, "Writing practice questions")
+                result = await generate_structured(
+                    base_prompt.replace("{count}", str(count + 2)).replace(
+                        "{types}", ", ".join(types)
+                    ),
+                    _NO_SOURCES_TEXT,
+                    prompts.QUIZ_EXERCISE_SCHEMA,
+                    preview,
+                )
+                kept, d = resolve_items(
+                    result.get("questions", []), {}, scope, require_sources=False
+                )
+                dropped += d
+                candidates.extend(kept)
 
             await _progress(db, job, 78, "Deduplicating and balancing")
             candidates = [
@@ -655,7 +847,7 @@ async def generate_quiz(
                 for c in candidates
                 if c.item.get("qtype") in types and _question_answer(c.item) is not None
             ]
-            candidates = dedup_questions(candidates)
+            candidates = dedup_questions(candidates, dedup_threshold)
             # round-robin balance across types up to count
             by_type: dict[str, list[ResolvedItem]] = {t: [] for t in types}
             for c in candidates:
@@ -666,12 +858,65 @@ async def generate_quiz(
                     if by_type[t] and len(final) < count:
                         final.append(by_type[t].pop(0))
 
-            all_chunks = await load_context_chunks(db, list(scope))
+            # Top up: the answer/type filters and dedup routinely eat into the
+            # oversample — re-ask for the shortfall instead of shipping a
+            # short quiz. (Sourced mode needs a context to cite; exercise mode
+            # can top up even topic-only.)
+            topup_rounds = 0
+            while (
+                len(final) < count
+                and topup_rounds < 2
+                and (exercise or last_ctx is not None)
+            ):
+                await _abort_if_requested(db, job, context)
+                topup_rounds += 1
+                shortfall = count - len(final)
+                await _progress(
+                    db, job, 80, f"Topping up questions ({len(final)}/{count})"
+                )
+                avoid = "\n".join(
+                    f"- {(c.item.get('prompt') or '')[:120]}" for c in final[-30:]
+                ) or "(none)"
+                result = await generate_structured(
+                    base_prompt.replace("{count}", str(shortfall + 2)).replace(
+                        "{types}", ", ".join(types)
+                    )
+                    + "\n\nDo NOT duplicate or trivially rephrase any of these "
+                    "existing questions:\n"
+                    + avoid,
+                    last_ctx.source_text if last_ctx else _NO_SOURCES_TEXT,
+                    quiz_schema,
+                    preview,
+                )
+                kept, d = resolve_items(
+                    result.get("questions", []),
+                    last_ctx.index_map if last_ctx else {},
+                    scope,
+                    require_sources=not exercise,
+                )
+                dropped += d
+                fresh = [
+                    c
+                    for c in kept
+                    if c.item.get("qtype") in types
+                    and _question_answer(c.item) is not None
+                ]
+                # dedup against what we already kept: survivors after the
+                # existing block are the genuinely new ones
+                fresh = dedup_questions(final + fresh, dedup_threshold)[len(final):]
+                final.extend(fresh[: count - len(final)])
+
             anchor_id = int(module_ids[0])
             anchor = next(m for m in modules if m.id == anchor_id)
             title = f"Quiz — {len(final)} questions"
             if len(scope) > 1:
                 title += f" · {len(scope)} modules"
+            if instructions:
+                title += " · " + instructions[:40] + (
+                    "…" if len(instructions) > 40 else ""
+                )
+            elif exercise:
+                title += " · practice"
             artifact = Artifact(
                 module_id=anchor_id,
                 artifact_type=ArtifactType.quiz,
@@ -680,10 +925,16 @@ async def generate_quiz(
                 content={"types": types},
                 model_name=settings.generation_model,
                 prompt_version=prompts.PROMPT_VERSION,
-                source_chunk_ids=[c.id for c in all_chunks],
-                source_fingerprint=source_fingerprint(all_chunks),
+                # Fingerprint over the chunks actually offered to the model
+                # (scoped/focused set), so staleness compares like with like.
+                source_chunk_ids=[c.id for c in used_chunks],
+                source_fingerprint=source_fingerprint(used_chunks),
                 module_version_at_gen=anchor.content_version,
                 job_id=job.id,
+                scope_document_ids=document_ids,
+                scope_note_ids=note_ids,
+                instructions=instructions,
+                generation_mode=mode,
             )
             db.add(artifact)
             await db.flush()
@@ -808,7 +1059,8 @@ async def chat_answer(
 
     async with session_factory()() as db:
         job = await _start(db, job_id)
-        preview = _preview_writer(db, job)
+        # from_head: the client types the answer out from the JSON's start.
+        preview = _preview_writer(db, job, from_head=True)
         try:
             await _abort_if_requested(db, job, context)
             thread = (
@@ -1022,7 +1274,8 @@ async def daily_briefing(
 
     async with session_factory()() as db:
         job = await _start(db, job_id)
-        preview = _preview_writer(db, job)
+        # from_head: the client types the answer out from the JSON's start.
+        preview = _preview_writer(db, job, from_head=True)
         try:
             await _abort_if_requested(db, job, context)
             thread = (

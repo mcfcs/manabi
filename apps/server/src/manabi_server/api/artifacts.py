@@ -6,7 +6,9 @@ computed at read time by comparing the artifact's source fingerprint against
 the module's current AI-eligible chunk set.
 """
 
+import asyncio
 from datetime import UTC, datetime
+from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Response
 from manabi_core.models import (
@@ -14,6 +16,7 @@ from manabi_core.models import (
     ArtifactType,
     Citation,
     Course,
+    Document,
     Flashcard,
     FlashcardStatus,
     Job,
@@ -21,12 +24,19 @@ from manabi_core.models import (
     LectureAudio,
     LectureCheckpointResult,
     Module,
+    Note,
     QuizAttempt,
     QuizQuestion,
     SummaryHighlight,
     User,
 )
-from manabi_core.retrieval import load_context_chunks, source_fingerprint
+from manabi_core.retrieval import (
+    dedup_diversify,
+    load_chunks_by_ids,
+    load_context_chunks,
+    retrieve,
+    source_fingerprint,
+)
 from pydantic import BaseModel
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -68,7 +78,27 @@ class JobRef(BaseModel):
 async def _staleness(db: AsyncSession, artifact: Artifact) -> str:
     """fresh: chunk set identical · incomplete: everything the artifact used
     is unchanged but new material exists · stale: used material changed."""
-    chunks = await load_context_chunks(db, [int(m) for m in artifact.scope_module_ids])
+    if artifact.instructions:
+        # Focused-retrieval artifact: its chunk set was picked by topic
+        # relevance and can't be reproduced from scope alone. Fresh while the
+        # exact chunks it used still exist unchanged, stale otherwise — no
+        # "incomplete" tier (new material is expected to be off-topic).
+        surviving = await load_chunks_by_ids(
+            db, [int(c) for c in artifact.source_chunk_ids]
+        )
+        return (
+            "fresh"
+            if source_fingerprint(surviving) == artifact.source_fingerprint
+            else "stale"
+        )
+    # Compare against the same scope the artifact was generated from (None =
+    # whole module, today's behavior). Note-scope edits are invisible here —
+    # notes are emphasis, not chunks.
+    chunks = await load_context_chunks(
+        db,
+        [int(m) for m in artifact.scope_module_ids],
+        document_ids=artifact.scope_document_ids,
+    )
     if source_fingerprint(chunks) == artifact.source_fingerprint:
         return "fresh"
     old_ids = set(artifact.source_chunk_ids)
@@ -123,6 +153,92 @@ async def _latest_artifact(
     ).scalar_one_or_none()
 
 
+async def _review_deck(db: AsyncSession, module_id: int) -> Artifact | None:
+    """The module's review-rotation deck, falling back to the latest deck so
+    module-level card routes stay sane if every deck was toggled out."""
+    artifact = (
+        await db.execute(
+            select(Artifact)
+            .where(
+                Artifact.module_id == module_id,
+                Artifact.artifact_type == ArtifactType.flashcard_deck,
+                Artifact.review_enabled.is_(True),
+            )
+            .order_by(Artifact.id.desc())
+            .limit(1)
+        )
+    ).scalar_one_or_none()
+    if artifact is not None:
+        return artifact
+    return await _latest_artifact(db, module_id, ArtifactType.flashcard_deck)
+
+
+def _matching_inflight(jobs: list[Job], payload: dict) -> Job | None:
+    """Duplicate-proofing is payload-aware: only a request identical to one
+    already in flight is collapsed into it — different scopes/instructions on
+    the same module run as separate jobs."""
+    for job in jobs:
+        if job.payload == payload:
+            return job
+    return None
+
+
+async def _validate_scope(
+    db: AsyncSession,
+    module_id: int,
+    document_ids: list[int] | None,
+    note_ids: list[int] | None,
+) -> None:
+    """422 unless every selected document/note belongs to the module."""
+    if document_ids:
+        valid = set(
+            (
+                await db.execute(
+                    select(Document.id).where(
+                        Document.module_id == module_id,
+                        Document.deleted_at.is_(None),
+                    )
+                )
+            ).scalars()
+        )
+        if not set(document_ids) <= valid:
+            raise HTTPException(status_code=422, detail="Document not in this module")
+    if note_ids:
+        valid = set(
+            (
+                await db.execute(
+                    select(Note.id).where(Note.module_id == module_id)
+                )
+            ).scalars()
+        )
+        if not set(note_ids) <= valid:
+            raise HTTPException(status_code=422, detail="Note not in this module")
+
+
+# Generation wants breadth (it writes many items, unlike a chat answer), so the
+# focus pool is much wider than chat's 12/8.
+_FOCUS_POOL, _FOCUS_FINAL, _FOCUS_MIN_HITS = 32, 24, 6
+
+
+async def _focus_chunk_ids(
+    db: AsyncSession,
+    module_ids: list[int],
+    instructions: str,
+    document_ids: list[int] | None,
+) -> list[int] | None:
+    """Topic-focused retrieval for instruction-steered generation (mirrors chat
+    _dispatch_answer). Returns None when the topic barely matches the material —
+    the worker then falls back to the full scope with only the FOCUS prompt."""
+    from manabi_server.processing.embedding import embed_texts
+
+    vec = (await asyncio.to_thread(embed_texts, [instructions], is_query=True))[0]
+    hits = await retrieve(
+        db, module_ids, vec, instructions, k=_FOCUS_POOL, document_ids=document_ids
+    )
+    ids = [h.id for h in dedup_diversify(hits, _FOCUS_FINAL)]
+    return ids if len(ids) >= _FOCUS_MIN_HITS else None
+
+
 async def _enqueue_generation(
     db: AsyncSession,
     user: User,
@@ -131,28 +247,38 @@ async def _enqueue_generation(
     task_name: str,
     **task_kwargs,
 ) -> Job:
-    # Duplicate-proof: an identical generation already in flight is returned
-    # instead of queued twice.
     from manabi_core.models import JobStatus
 
-    existing = (
-        await db.execute(
-            select(Job).where(
-                Job.module_id == module.id,
-                Job.job_type == job_type,
-                Job.status.in_([JobStatus.queued, JobStatus.running]),
+    inflight = (
+        (
+            await db.execute(
+                select(Job).where(
+                    Job.module_id == module.id,
+                    Job.job_type == job_type,
+                    Job.status.in_([JobStatus.queued, JobStatus.running]),
+                )
             )
         )
-    ).scalar_one_or_none()
+        .scalars()
+        .all()
+    )
+    existing = _matching_inflight(list(inflight), task_kwargs)
     if existing is not None:
         return existing
 
-    chunks = await load_context_chunks(db, [module.id])
-    if not chunks:
+    chunks = await load_context_chunks(
+        db, [module.id], document_ids=task_kwargs.get("document_ids")
+    )
+    # Exercise mode with a focus topic can synthesize from nothing — every
+    # other generation needs at least one AI-eligible chunk in scope.
+    topic_only_ok = bool(
+        task_kwargs.get("mode") == "exercise" and task_kwargs.get("instructions")
+    )
+    if not chunks and not topic_only_ok:
         raise HTTPException(
             status_code=409,
-            detail="No AI-eligible material in this module — upload documents "
-            "(or re-include them for AI) first",
+            detail="No AI-eligible material in the selected sources — pick "
+            "documents that are included for AI, or widen the selection",
         )
     job = Job(
         user_id=user.id,
@@ -225,6 +351,11 @@ class ArtifactVersion(BaseModel):
     model_name: str
     generated_at: datetime
     item_count: int
+    review_enabled: bool | None = None
+    generation_mode: str | None = None
+    instructions: str | None = None
+    scope_document_ids: list[int] | None = None
+    scope_note_ids: list[int] | None = None
 
 
 @router.get("/modules/{module_id}/artifacts")
@@ -272,6 +403,11 @@ async def list_artifact_versions(
                 model_name=a.model_name,
                 generated_at=a.created_at,
                 item_count=count,
+                review_enabled=a.review_enabled,
+                generation_mode=a.generation_mode,
+                instructions=a.instructions,
+                scope_document_ids=a.scope_document_ids,
+                scope_note_ids=a.scope_note_ids,
             )
         )
     return out
@@ -308,6 +444,9 @@ async def get_artifact_version(
         "model_name": artifact.model_name,
         "generated_at": artifact.created_at,
         "staleness": await _staleness(db, artifact),
+        "review_enabled": artifact.review_enabled,
+        "generation_mode": artifact.generation_mode,
+        "instructions": artifact.instructions,
         "citations": {k: [c.model_dump() for c in v] for k, v in citations.items()},
     }
     if artifact.artifact_type == ArtifactType.summary:
@@ -341,6 +480,56 @@ async def get_artifact_version(
             for c in cards
         ]
     return base
+
+
+class ArtifactPatch(BaseModel):
+    title: str | None = None
+    review_enabled: bool | None = None
+
+
+@router.patch("/artifacts/{artifact_id}", dependencies=[Depends(require_csrf)])
+async def patch_artifact(
+    data: ArtifactPatch,
+    artifact: Artifact = Depends(_get_owned_artifact),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """Rename a deck/quiz; toggle a deck's SRS rotation membership."""
+    if artifact.artifact_type not in (
+        ArtifactType.flashcard_deck,
+        ArtifactType.quiz,
+    ):
+        raise HTTPException(status_code=422, detail="Not a deck or quiz artifact")
+    if data.title is not None:
+        title = data.title.strip()[:255]
+        if not title:
+            raise HTTPException(status_code=422, detail="Title cannot be empty")
+        artifact.title = title
+    if data.review_enabled is not None:
+        if artifact.artifact_type != ArtifactType.flashcard_deck:
+            raise HTTPException(
+                status_code=422, detail="Only flashcard decks join the review queue"
+            )
+        artifact.review_enabled = data.review_enabled
+    await db.commit()
+    return {"ok": True}
+
+
+@router.delete("/artifacts/{artifact_id}", dependencies=[Depends(require_csrf)])
+async def delete_artifact(
+    artifact: Artifact = Depends(_get_owned_artifact),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """Delete a deck or quiz (cards/questions/citations/attempts cascade).
+    Deleting a review-rotation deck removes its module from the SRS queue
+    until another deck is generated or toggled in — the UI warns first."""
+    if artifact.artifact_type not in (
+        ArtifactType.flashcard_deck,
+        ArtifactType.quiz,
+    ):
+        raise HTTPException(status_code=422, detail="Not a deck or quiz artifact")
+    await db.delete(artifact)
+    await db.commit()
+    return {"ok": True}
 
 
 # ── Summary term editing + AI find-in-material ───────────────────────────
@@ -747,14 +936,24 @@ class CardOut(BaseModel):
 
 class DeckOut(BaseModel):
     artifact_id: int
+    title: str
     model_name: str
     generated_at: datetime
     staleness: str
+    review_enabled: bool | None
+    generation_mode: str | None
+    instructions: str | None
     cards: list[CardOut]
 
 
 class GenerateCardsIn(BaseModel):
     count: int = 12
+    # None = whole module of that kind; [] = none (documents [] alone will 409 —
+    # generation needs at least one AI-eligible chunk in scope).
+    document_ids: list[int] | None = None
+    note_ids: list[int] | None = None
+    instructions: str | None = None
+    mode: Literal["sources", "exercise"] = "sources"
 
 
 class CardPatch(BaseModel):
@@ -763,13 +962,7 @@ class CardPatch(BaseModel):
     status: FlashcardStatus | None = None
 
 
-@router.get("/modules/{module_id}/flashcards")
-async def get_deck(
-    module: Module = Depends(get_owned_module), db: AsyncSession = Depends(get_db)
-) -> DeckOut | None:
-    artifact = await _latest_artifact(db, module.id, ArtifactType.flashcard_deck)
-    if artifact is None:
-        return None
+async def _deck_out(db: AsyncSession, artifact: Artifact) -> DeckOut:
     cards = (
         (
             await db.execute(
@@ -784,9 +977,13 @@ async def get_deck(
     citations = await _citations_by_ref(db, artifact.id)
     return DeckOut(
         artifact_id=artifact.id,
+        title=artifact.title,
         model_name=artifact.model_name,
         generated_at=artifact.created_at,
         staleness=await _staleness(db, artifact),
+        review_enabled=artifact.review_enabled,
+        generation_mode=artifact.generation_mode,
+        instructions=artifact.instructions,
         cards=[
             CardOut(
                 id=c.id,
@@ -801,6 +998,46 @@ async def get_deck(
     )
 
 
+@router.get("/modules/{module_id}/flashcards")
+async def get_deck(
+    module: Module = Depends(get_owned_module), db: AsyncSession = Depends(get_db)
+) -> DeckOut | None:
+    """The module's review-rotation deck (legacy single-deck shape)."""
+    artifact = await _review_deck(db, module.id)
+    if artifact is None:
+        return None
+    return await _deck_out(db, artifact)
+
+
+async def _get_owned_deck(
+    artifact_id: int,
+    user: User = Depends(get_default_user),
+    db: AsyncSession = Depends(get_db),
+) -> Artifact:
+    artifact = (
+        await db.execute(
+            select(Artifact)
+            .join(Module, Module.id == Artifact.module_id)
+            .join(Course, Course.id == Module.course_id)
+            .where(
+                Artifact.id == artifact_id,
+                Artifact.artifact_type == ArtifactType.flashcard_deck,
+                Course.user_id == user.id,
+            )
+        )
+    ).scalar_one_or_none()
+    if artifact is None:
+        raise HTTPException(status_code=404, detail="Deck not found")
+    return artifact
+
+
+@router.get("/decks/{artifact_id}")
+async def get_deck_by_id(
+    artifact: Artifact = Depends(_get_owned_deck), db: AsyncSession = Depends(get_db)
+) -> DeckOut:
+    return await _deck_out(db, artifact)
+
+
 @router.post(
     "/modules/{module_id}/flashcards/generate", dependencies=[Depends(require_csrf)]
 )
@@ -811,6 +1048,13 @@ async def generate_flashcards(
     db: AsyncSession = Depends(get_db),
 ) -> JobRef:
     count = 0 if data.count == 0 else max(4, min(60, data.count))
+    await _validate_scope(db, module.id, data.document_ids, data.note_ids)
+    instructions = (data.instructions or "").strip()[:2000] or None
+    chunk_ids = (
+        await _focus_chunk_ids(db, [module.id], instructions, data.document_ids)
+        if instructions
+        else None
+    )
     job = await _enqueue_generation(
         db,
         user,
@@ -819,6 +1063,11 @@ async def generate_flashcards(
         GENERATE_FLASHCARDS_TASK,
         module_id=module.id,
         count=count,
+        document_ids=data.document_ids,
+        note_ids=data.note_ids,
+        instructions=instructions,
+        mode=data.mode,
+        chunk_ids=chunk_ids,
     )
     return JobRef(job_id=job.id)
 
@@ -874,46 +1123,18 @@ class CardCreate(BaseModel):
     back: str
 
 
-@router.post(
-    "/modules/{module_id}/flashcards/cards", dependencies=[Depends(require_csrf)]
-)
-async def add_card(
-    data: CardCreate,
-    module: Module = Depends(get_owned_module),
-    db: AsyncSession = Depends(get_db),
-) -> CardOut:
-    """Manually add a card to the module's latest deck (creating a manual deck if
-    none exists). No CardReview row is needed — a card without one is treated as
-    due, and the row is created on its first rating."""
-    front = data.front.strip()
-    back = data.back.strip()
-    if not front or not back:
-        raise HTTPException(status_code=422, detail="Front and back are required")
-    artifact = await _latest_artifact(db, module.id, ArtifactType.flashcard_deck)
-    if artifact is None:
-        artifact = Artifact(
-            module_id=module.id,
-            artifact_type=ArtifactType.flashcard_deck,
-            scope_module_ids=[module.id],
-            title=f"Flashcards — {module.title}",
-            content={},
-            model_name="manual",
-            prompt_version="manual",
-            source_chunk_ids=[],
-            source_fingerprint="",
-            module_version_at_gen=module.content_version,
-        )
-        db.add(artifact)
-        await db.flush()
+async def _insert_card(db: AsyncSession, artifact_id: int, front: str, back: str) -> CardOut:
+    """No CardReview row is needed — a card without one is treated as due, and
+    the row is created on its first rating."""
     next_ord = (
         await db.execute(
             select(func.coalesce(func.max(Flashcard.ord), -1) + 1).where(
-                Flashcard.artifact_id == artifact.id
+                Flashcard.artifact_id == artifact_id
             )
         )
     ).scalar_one()
     card = Flashcard(
-        artifact_id=artifact.id,
+        artifact_id=artifact_id,
         ord=next_ord,
         front=front,
         back=back,
@@ -933,15 +1154,59 @@ async def add_card(
     )
 
 
-@router.get("/modules/{module_id}/flashcards/export.apkg")
-async def export_deck(
-    module: Module = Depends(get_owned_module), db: AsyncSession = Depends(get_db)
+@router.post(
+    "/modules/{module_id}/flashcards/cards", dependencies=[Depends(require_csrf)]
+)
+async def add_card(
+    data: CardCreate,
+    module: Module = Depends(get_owned_module),
+    db: AsyncSession = Depends(get_db),
+) -> CardOut:
+    """Manually add a card to the module's review deck (creating a manual deck
+    if the module has none)."""
+    front = data.front.strip()
+    back = data.back.strip()
+    if not front or not back:
+        raise HTTPException(status_code=422, detail="Front and back are required")
+    artifact = await _review_deck(db, module.id)
+    if artifact is None:
+        artifact = Artifact(
+            module_id=module.id,
+            artifact_type=ArtifactType.flashcard_deck,
+            scope_module_ids=[module.id],
+            title=f"Flashcards — {module.title}",
+            content={},
+            model_name="manual",
+            prompt_version="manual",
+            source_chunk_ids=[],
+            source_fingerprint="",
+            module_version_at_gen=module.content_version,
+            review_enabled=True,
+        )
+        db.add(artifact)
+        await db.flush()
+    return await _insert_card(db, artifact.id, front, back)
+
+
+@router.post("/artifacts/{artifact_id}/cards", dependencies=[Depends(require_csrf)])
+async def add_card_to_deck(
+    data: CardCreate,
+    artifact: Artifact = Depends(_get_owned_deck),
+    db: AsyncSession = Depends(get_db),
+) -> CardOut:
+    """Manually add a card to a specific deck."""
+    front = data.front.strip()
+    back = data.back.strip()
+    if not front or not back:
+        raise HTTPException(status_code=422, detail="Front and back are required")
+    return await _insert_card(db, artifact.id, front, back)
+
+
+async def _apkg_response(
+    db: AsyncSession, artifact: Artifact, *, include_deck_title: bool
 ) -> Response:
     from manabi_server.export.anki_export import build_apkg
 
-    artifact = await _latest_artifact(db, module.id, ArtifactType.flashcard_deck)
-    if artifact is None:
-        raise HTTPException(status_code=404, detail="No flashcards to export yet")
     cards = (
         (
             await db.execute(
@@ -957,6 +1222,9 @@ async def export_deck(
         .all()
     )
     citations = await _citations_by_ref(db, artifact.id)
+    module = (
+        await db.execute(select(Module).where(Module.id == artifact.module_id))
+    ).scalar_one()
     course = (
         await db.execute(select(Course).where(Course.id == module.course_id))
     ).scalar_one()
@@ -969,16 +1237,38 @@ async def export_deck(
             for c in cites
         )
 
+    # The module route keeps its historical Anki deck name so re-exports keep
+    # landing in the same Anki deck; per-deck exports get their own name.
+    deck_name = f"{course.code}::{module.title}"
+    if include_deck_title:
+        deck_name += f"::{artifact.title}"
     data = build_apkg(
-        deck_name=f"{course.code}::{module.title}",
+        deck_name=deck_name,
         cards=[(c.id, c.front, c.back, source_label(c.ord)) for c in cards],
     )
-    safe = f"{course.code}_{module.title}".replace(" ", "_")
+    safe = deck_name.replace("::", "_").replace(" ", "_")
     return Response(
         content=data,
         media_type="application/octet-stream",
         headers={"Content-Disposition": f'attachment; filename="{safe}.apkg"'},
     )
+
+
+@router.get("/modules/{module_id}/flashcards/export.apkg")
+async def export_deck(
+    module: Module = Depends(get_owned_module), db: AsyncSession = Depends(get_db)
+) -> Response:
+    artifact = await _review_deck(db, module.id)
+    if artifact is None:
+        raise HTTPException(status_code=404, detail="No flashcards to export yet")
+    return await _apkg_response(db, artifact, include_deck_title=False)
+
+
+@router.get("/artifacts/{artifact_id}/export.apkg")
+async def export_deck_by_id(
+    artifact: Artifact = Depends(_get_owned_deck), db: AsyncSession = Depends(get_db)
+) -> Response:
+    return await _apkg_response(db, artifact, include_deck_title=True)
 
 
 # ── Quizzes ───────────────────────────────────────────────────────────────
@@ -988,6 +1278,12 @@ class QuizConfigIn(BaseModel):
     module_ids: list[int]
     types: list[str] = ["mcq", "tf", "short"]
     count: int = 10
+    # Document/note scoping is only meaningful for a single-module quiz (422
+    # otherwise); None = whole module of that kind.
+    document_ids: list[int] | None = None
+    note_ids: list[int] | None = None
+    instructions: str | None = None
+    mode: Literal["sources", "exercise"] = "sources"
 
 
 class QuestionOut(BaseModel):
@@ -1007,6 +1303,8 @@ class QuizOut(BaseModel):
     model_name: str
     generated_at: datetime
     scope_module_ids: list[int]
+    generation_mode: str | None
+    instructions: str | None
     questions: list[QuestionOut]
 
 
@@ -1017,6 +1315,7 @@ class QuizListItem(BaseModel):
     question_count: int
     attempt_count: int
     best_score: float | None
+    generation_mode: str | None = None
 
 
 class AttemptIn(BaseModel):
@@ -1051,6 +1350,25 @@ async def create_quiz(
         await db.execute(select(Module).where(Module.id == config.module_ids[0]))
     ).scalar_one()
     types = [t for t in config.types if t in ("mcq", "tf", "short")] or ["mcq"]
+    if (config.document_ids is not None or config.note_ids is not None) and len(
+        config.module_ids
+    ) != 1:
+        raise HTTPException(
+            status_code=422,
+            detail="Document/note scoping requires exactly one module",
+        )
+    if len(config.module_ids) == 1:
+        await _validate_scope(
+            db, config.module_ids[0], config.document_ids, config.note_ids
+        )
+    instructions = (config.instructions or "").strip()[:2000] or None
+    chunk_ids = (
+        await _focus_chunk_ids(
+            db, config.module_ids, instructions, config.document_ids
+        )
+        if instructions
+        else None
+    )
     job = await _enqueue_generation(
         db,
         user,
@@ -1060,6 +1378,11 @@ async def create_quiz(
         module_ids=config.module_ids,
         types=types,
         count=max(3, min(30, config.count)),
+        document_ids=config.document_ids,
+        note_ids=config.note_ids,
+        instructions=instructions,
+        mode=config.mode,
+        chunk_ids=chunk_ids,
     )
     return JobRef(job_id=job.id)
 
@@ -1109,6 +1432,7 @@ async def list_quizzes(
                 question_count=len(questions),
                 attempt_count=len(attempts),
                 best_score=max((x.score for x in attempts if x.score is not None), default=None),
+                generation_mode=a.generation_mode,
             )
         )
     return out
@@ -1158,6 +1482,8 @@ async def get_quiz(
         model_name=artifact.model_name,
         generated_at=artifact.created_at,
         scope_module_ids=[int(m) for m in artifact.scope_module_ids],
+        generation_mode=artifact.generation_mode,
+        instructions=artifact.instructions,
         questions=[
             QuestionOut(
                 id=q.id,
