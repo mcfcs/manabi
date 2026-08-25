@@ -239,7 +239,7 @@ export function ModuleWorkspace() {
   }, [tab]);
 
   return (
-    <div className="module-page">
+    <div className={`module-page${tab === "chat" ? " module-chat" : ""}`}>
       <nav className="crumb">
         <Link to="/courses/$courseId" params={{ courseId }}>
           <ChevronLeft size={15} strokeWidth={1.5} />

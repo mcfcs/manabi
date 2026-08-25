@@ -299,6 +299,18 @@ async def _enqueue_generation(
 # ── Whole-module generation ───────────────────────────────────────────────
 
 
+QUIZ_TYPES = (
+    "mcq",
+    "tf",
+    "short",
+    "enumeration",
+    "identification",
+    "essay",
+    "coding",
+    "output",
+)
+
+
 class GenerateAllIn(BaseModel):
     summary: bool = True
     flashcards_count: int | None = 12
@@ -329,7 +341,7 @@ async def generate_all(
         )
         jobs["flashcards"] = job.id
     if config.quiz_count:
-        types = [t for t in config.quiz_types if t in ("mcq", "tf", "short")] or ["mcq"]
+        types = [t for t in config.quiz_types if t in QUIZ_TYPES] or ["mcq"]
         job = await _enqueue_generation(
             db, user, module, "generate_quiz", GENERATE_QUIZ_TASK,
             module_ids=[module.id], types=types,
@@ -1349,7 +1361,7 @@ async def create_quiz(
     anchor = (
         await db.execute(select(Module).where(Module.id == config.module_ids[0]))
     ).scalar_one()
-    types = [t for t in config.types if t in ("mcq", "tf", "short")] or ["mcq"]
+    types = [t for t in config.types if t in QUIZ_TYPES] or ["mcq"]
     if (config.document_ids is not None or config.note_ids is not None) and len(
         config.module_ids
     ) != 1:

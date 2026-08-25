@@ -588,13 +588,26 @@ export interface DeckListItem {
 export interface QuestionOut {
   id: number;
   ord: number;
-  qtype: "mcq" | "tf" | "short";
+  qtype:
+    | "mcq"
+    | "tf"
+    | "short"
+    | "enumeration"
+    | "identification"
+    | "essay"
+    | "coding"
+    | "output";
   prompt: string;
   options: string[] | null;
   answer:
     | { kind: "mcq"; correct_option: number }
     | { kind: "tf"; value: boolean }
-    | { kind: "short"; text: string };
+    | { kind: "short"; text: string }
+    | { kind: "enumeration"; items: string[] }
+    | { kind: "identification"; text: string }
+    | { kind: "essay"; model_answer: string; key_points: string[] }
+    | { kind: "coding"; solution: string }
+    | { kind: "output"; text: string };
   explanation: string | null;
   citations: CitationOut[];
 }

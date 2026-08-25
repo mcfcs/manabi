@@ -567,7 +567,9 @@ async def _dispatch_answer(
 
     # Retrieve a wider candidate pool, then diversify down to this many chunks
     # (drops near-duplicate / same-page pile-ups). num_ctx grows to hold it.
-    _POOL, _FINAL = 12, 8
+    # 16/10 (was 12/8): precision misses like "what did X say" need both the
+    # direct-statement passage AND the analysis passage in context.
+    _POOL, _FINAL = 16, 10
 
     if thread.module_id is not None:
         # ── Module thread ──

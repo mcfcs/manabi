@@ -5,7 +5,7 @@ outside the prompt: schema-constrained decoding, source-id resolution against
 the job's scope, and post-hoc support scoring.
 """
 
-PROMPT_VERSION = "v7"
+PROMPT_VERSION = "v8"
 
 _GROUNDING = """RULES — follow strictly:
 - Use ONLY the numbered SOURCE MATERIAL. Do not add outside knowledge.
@@ -174,6 +174,10 @@ asks questions; you answer from the module's SOURCE MATERIAL below.
 RULES — follow strictly:
 - If the sources cover the question: answer from them ONLY, cite the source
   numbers you used in "source_ids", set grounded=true.
+- When asked what a PERSON said, claimed, or did: answer from the passage
+  where that person's own statement or action is reported directly, and quote
+  the key phrase. Never substitute the narrator's or author's commentary or
+  analysis for the person's own words.
 - STUDENT NOTES (if present) are the student's own notes. If the question is
   answered by their notes rather than the sources, START with "According to
   your notes" and set grounded=false, general_knowledge_used=false. Notes can
@@ -271,7 +275,21 @@ Question guidelines:
 - "mcq": 4 plausible options, exactly one correct. Distractors must be
   realistic misconceptions, not obvious throwaways.
 - "tf": a statement that is clearly true or false per the sources.
-- "short": answerable in one sentence or phrase.
+- "short": answerable in one sentence or phrase; put the answer in
+  "correct_text" — a question without it is discarded.
+- "enumeration": when the sources list several related items, ask the student
+  to name ALL of them; put every item in "correct_items", one string each,
+  named exactly as in the sources. Fewer than 2 items = discarded.
+- "identification": state a definition or description from the sources and
+  ask which term/concept it names; put the exact term in "correct_text".
+- "essay": an open question needing a few sentences of synthesis; put a model
+  answer in "correct_text" and 2-5 grading criteria in "key_points".
+- "coding": ask the student to WRITE code — only when the material is
+  code-oriented; put a complete reference solution in "correct_text" inside a
+  fenced ``` block.
+- "output": show a code snippet or computation and ask for its EXACT output —
+  only when the material is code/computation-oriented; put the exact expected
+  output in "correct_text".
 - Each question includes a brief explanation of the correct answer.
 - FORMATTING: put any code in a fenced ``` code block with ONE statement per
   line — never run several statements together on one line.
@@ -287,12 +305,26 @@ QUIZ_SCHEMA = {
             "items": {
                 "type": "object",
                 "properties": {
-                    "qtype": {"type": "string", "enum": ["mcq", "tf", "short"]},
+                    "qtype": {
+                        "type": "string",
+                        "enum": [
+                            "mcq",
+                            "tf",
+                            "short",
+                            "enumeration",
+                            "identification",
+                            "essay",
+                            "coding",
+                            "output",
+                        ],
+                    },
                     "prompt": {"type": "string"},
                     "options": {"type": "array", "items": {"type": "string"}},
                     "correct_option": {"type": "integer"},
                     "correct_bool": {"type": "boolean"},
                     "correct_text": {"type": "string"},
+                    "correct_items": {"type": "array", "items": {"type": "string"}},
+                    "key_points": {"type": "array", "items": {"type": "string"}},
                     "explanation": {"type": "string"},
                     "source_ids": {
                         "type": "array",
@@ -364,6 +396,19 @@ Question guidelines:
   true or false; set "correct_bool".
 - "short": answerable with a specific value, output, or short phrase; put
   that exact answer in "correct_text" — a question without it is discarded.
+- "enumeration": ask the student to name ALL members of a set the topic
+  defines (steps, operators, rules, categories); put every item in
+  "correct_items", one string each. Fewer than 2 items = discarded.
+- "identification": describe a concept precisely and ask which term it names;
+  put the exact term in "correct_text".
+- "essay": an open exercise needing a few sentences of applied reasoning; put
+  a model answer in "correct_text" and 2-5 grading criteria in "key_points".
+- "coding": ask the student to WRITE an original snippet solving a small,
+  fully-specified task on the topic; put a complete reference solution in
+  "correct_text" inside a fenced ``` block.
+- "output": synthesize an original snippet/computation and ask for its EXACT
+  output; put the exact expected output in "correct_text". The natural
+  exercise type for code tracing.
 - Explanation: the step-by-step working, one step per line, ending with a
   final line "Answer: ...".
 - FORMATTING: put any code in a fenced ``` code block with ONE statement per
@@ -502,6 +547,10 @@ The student asks questions; the module's SOURCE MATERIAL is below.
 RULES — follow strictly:
 - Prefer the sources. If they cover the question, answer from them and cite the
   source numbers you used in "source_ids", set grounded=true.
+- When asked what a PERSON said, claimed, or did: answer from the passage
+  where that person's own statement or action is reported directly, and quote
+  the key phrase. Never substitute the narrator's or author's commentary or
+  analysis for the person's own words.
 - If the question is RELATED to the material but the sources don't fully answer
   it, you MAY reason it out using your own knowledge — but stay on the topic of
   this module, build on whatever the sources DO say, cite those, and set
@@ -555,6 +604,10 @@ RULES:
   general_knowledge_used=true. Do NOT say "the materials don't cover this" — you
   are a general assistant, not a single-module tutor.
 - Only put real SOURCE MATERIAL numbers in source_ids; never invent citations.
+- When asked what a PERSON said, claimed, or did: answer from the passage
+  where that person's own statement or action is reported directly, and quote
+  the key phrase. Never substitute the narrator's or author's commentary or
+  analysis for the person's own words.
 - Be genuinely helpful, clear, and concise.
 
 ACTIONS — "actions" is a REQUIRED list; use [] for a normal reply. Whenever the

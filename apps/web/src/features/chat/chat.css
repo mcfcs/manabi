@@ -8,6 +8,7 @@
 
 .chat-threads {
   flex: 0 0 220px;
+  min-width: 0; /* long titles must not expand past the 220px basis */
   display: flex;
   flex-direction: column;
   gap: var(--s-2);
@@ -18,6 +19,7 @@
 }
 
 .chat-thread-list {
+  min-width: 0;
   display: flex;
   flex-direction: column;
   gap: 2px;
@@ -34,6 +36,7 @@
 }
 .chat-thread-item.active .chat-thread-title {
   color: var(--accent-blue-deep);
+  font-weight: 600;
 }
 
 .chat-thread-title {
@@ -69,14 +72,27 @@
   gap: var(--s-3);
 }
 
+/* Centered, width-capped conversation column (mirror of .asst-col). */
+.chat-col {
+  flex: 1;
+  min-height: 0;
+  min-width: 0;
+  width: 100%;
+  max-width: 780px;
+  margin-inline: auto;
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-3);
+}
+
 .chat-messages {
   flex: 1;
+  min-height: 0;
   overflow-y: auto;
   display: flex;
   flex-direction: column;
   gap: var(--s-3);
   padding: var(--s-2) 0;
-  max-height: calc(100vh - 320px);
 }
 
 .chat-empty {
@@ -334,6 +350,10 @@
   display: flex;
   gap: var(--s-2);
   align-items: flex-end; /* keep Send pinned to the bottom as the textarea grows */
+  /* reads as pinned chrome: hairline + paper behind it */
+  border-top: 1px solid var(--rule);
+  padding-top: var(--s-2);
+  background: var(--paper);
 }
 .chat-textarea {
   flex: 1;
@@ -359,6 +379,33 @@
   display: none;
 }
 
+/* ── Module chat tab: pinned chrome at every width ───────────────────────
+   When the chat tab is active, .module-page becomes a fixed-height flex
+   column: crumb/head/tab-bar take their natural height and the chat tab
+   flexes into the remainder; only .chat-messages scrolls. The only constants
+   are the .content padding tokens and the mobile bottom nav — no estimated
+   chrome heights. Scoped to .module-page so the floating-panel (popout)
+   mount is unaffected. */
+.module-page.module-chat {
+  height: calc(100dvh - 2 * var(--s-6)); /* .content desktop padding */
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+.module-page.module-chat .chat-tab {
+  flex: 1;
+  min-height: 0; /* overrides the base min-height: 60vh */
+}
+.module-page.module-chat .chat-main {
+  min-height: 0;
+}
+
+/* Popout panel: the panel body is the bounded box; pin the composer to it. */
+.fp-body .chat-tab {
+  height: 100%;
+  min-height: 0;
+}
+
 /* ── Mobile: ChatGPT/Claude-style — threads in a drawer, toggles in a sheet ── */
 
 @media (max-width: 767px) {
@@ -366,14 +413,27 @@
     flex-direction: column;
     gap: var(--s-2);
     min-height: 0;
-    /* Pin the composer like the standalone assistant: bound the tab to the
-       viewport (below the module crumb/head/tab-bar chrome ≈185px, above the
-       64px bottom nav) so only .chat-messages scrolls — the send button never
-       scrolls off once the thread grows. */
-    height: calc(100dvh - 185px - 64px - env(safe-area-inset-bottom));
   }
   .chat-main {
     min-height: 0;
+  }
+  .module-page.module-chat {
+    /* .content mobile box: s-4 top pad, 64px bottom nav + safe area */
+    height: calc(100dvh - var(--s-4) - 64px - env(safe-area-inset-bottom));
+  }
+  /* Reclaim vertical space for the conversation: drop the crumb, compact
+     the head and tab bar while chatting. */
+  .module-page.module-chat .crumb {
+    display: none;
+  }
+  .module-page.module-chat .module-head {
+    margin-bottom: var(--s-2);
+  }
+  .module-page.module-chat .module-head h1 {
+    font-size: 17px;
+  }
+  .module-page.module-chat .tab-bar {
+    margin-bottom: var(--s-2);
   }
   /* the thread sidebar + the inline toggle row are replaced on mobile.
      .chat-toggle-row is defined later with display:flex (same specificity),

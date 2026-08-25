@@ -457,6 +457,8 @@ export function ChatTab({ moduleId }: { moduleId: string }) {
 
         {!aiOnline && <AiOfflineBanner />}
 
+        {/* Centered, width-capped conversation column (mirror of .asst-col) */}
+        <div className="chat-col">
         {activeThreadObj && (
           <>
             {/* Desktop: inline mode toggles */}
@@ -631,6 +633,7 @@ export function ChatTab({ moduleId }: { moduleId: string }) {
           sending={send.isPending}
           placeholder="Ask about this module…"
         />
+        </div>
       </section>
 
       {/* Mobile conversation drawer (portaled to body: escapes the routed

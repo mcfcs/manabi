@@ -723,6 +723,39 @@ def _question_answer(item: dict) -> dict | None:
         if item.get("correct_text"):
             return {"kind": "short", "text": item["correct_text"]}
         return None
+    if qtype == "enumeration":
+        items = [
+            s.strip()
+            for s in (item.get("correct_items") or [])
+            if isinstance(s, str) and s.strip()
+        ]
+        if len(items) >= 2:
+            return {"kind": "enumeration", "items": items}
+        return None
+    if qtype == "identification":
+        if item.get("correct_text"):
+            return {"kind": "identification", "text": item["correct_text"]}
+        return None
+    if qtype == "essay":
+        if item.get("correct_text"):
+            return {
+                "kind": "essay",
+                "model_answer": item["correct_text"],
+                "key_points": [
+                    s.strip()
+                    for s in (item.get("key_points") or [])
+                    if isinstance(s, str) and s.strip()
+                ],
+            }
+        return None
+    if qtype == "coding":
+        if item.get("correct_text"):
+            return {"kind": "coding", "solution": item["correct_text"]}
+        return None
+    if qtype == "output":
+        if item.get("correct_text"):
+            return {"kind": "output", "text": item["correct_text"]}
+        return None
     return None
 
 

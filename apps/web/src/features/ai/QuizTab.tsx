@@ -27,7 +27,60 @@ const TYPE_LABELS: Record<string, string> = {
   mcq: "Multiple choice",
   tf: "True / False",
   short: "Short answer",
+  identification: "Identification",
+  enumeration: "Enumeration",
+  output: "Predict output",
+  essay: "Essay",
+  coding: "Coding",
 };
+
+// Grading style per type: self-graded types show the model answer and let the
+// student judge; auto-checked types compute a verdict client-side (with an
+// override link for wording edge cases); mcq/tf grade exactly.
+const SELF_GRADED = new Set(["short", "essay", "coding"]);
+
+// ── Client-side answer matching (deliberately lenient — the override
+// buttons are the escape hatch for wording edge cases) ────────────────────
+
+const norm = (s: string) =>
+  s
+    .toLowerCase()
+    .normalize("NFKC")
+    .replace(/[^\p{L}\p{N}\s]/gu, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+
+function fuzzyEqual(a: string, b: string): boolean {
+  const na = norm(a);
+  const nb = norm(b);
+  if (!na || !nb) return false;
+  if (na === nb || na.includes(nb) || nb.includes(na)) return true;
+  const ta = na.split(" ");
+  const tb = new Set(nb.split(" "));
+  const overlap = ta.filter((t) => tb.has(t)).length;
+  return overlap / Math.max(ta.length, tb.size) >= 0.6;
+}
+
+// Exact-output compare: CRLF-safe, trailing spaces and blank lines ignored.
+const normOutput = (s: string) =>
+  s
+    .replace(/\r\n/g, "\n")
+    .split("\n")
+    .map((l) => l.trimEnd())
+    .join("\n")
+    .replace(/\n+$/, "")
+    .trim();
+
+/** Greedy 1:1 match of the student's lines against the answer items. */
+function matchEnumeration(userLines: string[], items: string[]): boolean[] {
+  const remaining = userLines.filter((l) => l.trim());
+  return items.map((item) => {
+    const i = remaining.findIndex((l) => fuzzyEqual(l, item));
+    if (i === -1) return false;
+    remaining.splice(i, 1);
+    return true;
+  });
+}
 
 // ── Taking a quiz ─────────────────────────────────────────────
 
@@ -43,7 +96,9 @@ function QuizPlayer({
   const [index, setIndex] = useState(0);
   const [selected, setSelected] = useState<string | null>(null);
   const [checked, setChecked] = useState(false);
-  const [shortInput, setShortInput] = useState("");
+  const [shortInput, setShortInput] = useState(""); // short + identification
+  const [enumInput, setEnumInput] = useState(""); // enumeration, one per line
+  const [longInput, setLongInput] = useState(""); // essay / coding / output
   const [results, setResults] = useState<boolean[]>([]);
   const [attemptId, setAttemptId] = useState<number | null>(null);
   const [responses, setResponses] = useState<Record<string, unknown>>({});
@@ -78,13 +133,21 @@ function QuizPlayer({
 
   function next(correct: boolean) {
     const q = question!;
+    const typed =
+      q.qtype === "enumeration"
+        ? enumInput
+        : q.qtype === "essay" || q.qtype === "coding" || q.qtype === "output"
+          ? longInput
+          : shortInput;
     const newResults = [...results, correct];
-    const newResponses = { ...responses, [q.id]: selected ?? shortInput };
+    const newResponses = { ...responses, [q.id]: selected ?? typed };
     setResults(newResults);
     setResponses(newResponses);
     setChecked(false);
     setSelected(null);
     setShortInput("");
+    setEnumInput("");
+    setLongInput("");
     setIndex((i) => i + 1);
     const done = index + 1 >= quiz.questions.length;
     if (attemptId != null) {
@@ -132,9 +195,25 @@ function QuizPlayer({
   if (!question) return null;
 
   const correctResponse =
-    checked && selected !== null && question.answer.kind !== "short"
+    checked &&
+    selected !== null &&
+    (question.answer.kind === "mcq" || question.answer.kind === "tf")
       ? isCorrect(question, selected)
       : null;
+  // Auto-checked open types: verdict computed from the typed answer.
+  const enumHits =
+    checked && question.answer.kind === "enumeration"
+      ? matchEnumeration(enumInput.split("\n"), question.answer.items)
+      : null;
+  const verdict: boolean | null = !checked
+    ? null
+    : question.answer.kind === "identification"
+      ? fuzzyEqual(shortInput, question.answer.text)
+      : question.answer.kind === "output"
+        ? normOutput(longInput) === normOutput(question.answer.text)
+        : enumHits !== null
+          ? enumHits.every(Boolean)
+          : null;
 
   return (
     <div className="quiz-player">
@@ -193,41 +272,174 @@ function QuizPlayer({
         </div>
       )}
 
-      {question.qtype === "short" && !checked && (
+      {(question.qtype === "short" || question.qtype === "identification") &&
+        !checked && (
+          <form
+            className="quiz-short"
+            onSubmit={(e) => {
+              e.preventDefault();
+              setChecked(true);
+            }}
+          >
+            <input
+              className="input"
+              value={shortInput}
+              onChange={(e) => setShortInput(e.target.value)}
+              placeholder={
+                question.qtype === "identification"
+                  ? "Name the term…"
+                  : "Your answer…"
+              }
+              autoFocus
+            />
+            <button className="btn btn-primary">Check</button>
+          </form>
+        )}
+
+      {question.qtype === "enumeration" && !checked && (
         <form
-          className="quiz-short"
+          className="quiz-short quiz-open"
           onSubmit={(e) => {
             e.preventDefault();
             setChecked(true);
           }}
         >
-          <input
-            className="input"
-            value={shortInput}
-            onChange={(e) => setShortInput(e.target.value)}
-            placeholder="Your answer…"
+          <textarea
+            className="input quiz-textarea"
+            rows={4}
+            value={enumInput}
+            onChange={(e) => setEnumInput(e.target.value)}
+            placeholder="One item per line…"
             autoFocus
           />
           <button className="btn btn-primary">Check</button>
         </form>
       )}
 
+      {question.qtype === "essay" && !checked && (
+        <form
+          className="quiz-short quiz-open"
+          onSubmit={(e) => {
+            e.preventDefault();
+            setChecked(true);
+          }}
+        >
+          <textarea
+            className="input quiz-textarea"
+            rows={5}
+            value={longInput}
+            onChange={(e) => setLongInput(e.target.value)}
+            placeholder="Write your answer…"
+            autoFocus
+          />
+          <button className="btn btn-primary">Submit</button>
+        </form>
+      )}
+
+      {(question.qtype === "coding" || question.qtype === "output") &&
+        !checked && (
+          <form
+            className="quiz-short quiz-open"
+            onSubmit={(e) => {
+              e.preventDefault();
+              setChecked(true);
+            }}
+          >
+            <textarea
+              className="input quiz-textarea quiz-code"
+              rows={question.qtype === "coding" ? 6 : 3}
+              value={longInput}
+              onChange={(e) => setLongInput(e.target.value)}
+              placeholder={
+                question.qtype === "coding"
+                  ? "Write your code…"
+                  : "Exact output…"
+              }
+              spellCheck={false}
+              autoFocus
+            />
+            <button className="btn btn-primary">
+              {question.qtype === "coding" ? "Submit" : "Check"}
+            </button>
+          </form>
+        )}
+
       {checked && (
         <div className="quiz-feedback">
-          {question.qtype === "short" ? (
+          {(question.answer.kind === "mcq" || question.answer.kind === "tf") && (
+            <p className={correctResponse ? "quiz-right" : "quiz-wrong"}>
+              {correctResponse ? "Correct" : "Not quite"}
+            </p>
+          )}
+          {verdict !== null && (
+            <p className={verdict ? "quiz-right" : "quiz-wrong"}>
+              {verdict ? "Correct" : "Not quite"}
+            </p>
+          )}
+
+          {(question.answer.kind === "short" ||
+            question.answer.kind === "identification") && (
             <>
               <p className="quiz-model-answer">
-                <strong>Answer:</strong>{" "}
-                {question.answer.kind === "short" ? question.answer.text : ""}
+                <strong>Answer:</strong> {question.answer.text}
               </p>
               {shortInput && (
                 <p className="quiz-your-answer">Yours: {shortInput}</p>
               )}
             </>
-          ) : (
-            <p className={correctResponse ? "quiz-right" : "quiz-wrong"}>
-              {correctResponse ? "Correct" : "Not quite"}
-            </p>
+          )}
+          {question.answer.kind === "enumeration" && enumHits && (
+            <div className="quiz-enum-list">
+              {question.answer.items.map((item, i) => (
+                <span
+                  key={i}
+                  className={`quiz-enum-item ${enumHits[i] ? "hit" : "miss"}`}
+                >
+                  {item}
+                </span>
+              ))}
+            </div>
+          )}
+          {question.answer.kind === "essay" && (
+            <>
+              <p className="quiz-model-answer">
+                <strong>Model answer</strong>
+              </p>
+              <Markdown className="quiz-explanation">
+                {question.answer.model_answer}
+              </Markdown>
+              {question.answer.key_points.length > 0 && (
+                <ul className="quiz-key-points">
+                  {question.answer.key_points.map((k, i) => (
+                    <li key={i}>{k}</li>
+                  ))}
+                </ul>
+              )}
+            </>
+          )}
+          {question.answer.kind === "coding" && (
+            <>
+              <p className="quiz-model-answer">
+                <strong>Reference solution</strong>
+              </p>
+              <Markdown className="quiz-explanation">
+                {question.answer.solution}
+              </Markdown>
+            </>
+          )}
+          {question.answer.kind === "output" && (
+            <>
+              <p className="quiz-model-answer">
+                <strong>Expected output</strong>
+              </p>
+              <pre className="quiz-output-block">{question.answer.text}</pre>
+              {longInput && (
+                <>
+                  <p className="quiz-your-answer">Yours:</p>
+                  <pre className="quiz-output-block">{longInput}</pre>
+                </>
+              )}
+            </>
           )}
           {question.explanation && (
             <Markdown className="quiz-explanation">{question.explanation}</Markdown>
@@ -246,7 +458,7 @@ function QuizPlayer({
                 </span>
               )}
           </div>
-          {question.qtype === "short" ? (
+          {SELF_GRADED.has(question.qtype) ? (
             <div className="quiz-self-grade">
               <button className="btn grade-wrong" onClick={() => next(false)}>
                 I was wrong
@@ -255,6 +467,18 @@ function QuizPlayer({
                 I was right
               </button>
             </div>
+          ) : verdict !== null ? (
+            <>
+              <button className="btn btn-primary" onClick={() => next(verdict)}>
+                Next <ChevronRight size={15} strokeWidth={2} />
+              </button>
+              <button
+                className="link-btn quiz-override"
+                onClick={() => next(!verdict)}
+              >
+                Actually, I was {verdict ? "wrong" : "right"}
+              </button>
+            </>
           ) : (
             <button
               className="btn btn-primary"

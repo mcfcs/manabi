@@ -51,6 +51,63 @@
   width: min(480px, 100%);
 }
 
+/* ── Open-answer inputs (enumeration / essay / coding / output) ─────────── */
+
+.quiz-open {
+  align-items: flex-end;
+}
+.quiz-textarea {
+  flex: 1;
+  min-height: 0;
+  resize: vertical;
+}
+.quiz-code {
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 13px;
+}
+.quiz-enum-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--s-1);
+  margin: var(--s-2) 0;
+}
+.quiz-enum-item {
+  font-size: 12.5px;
+  padding: 2px 9px;
+  border-radius: 999px;
+  border: 1px solid var(--rule);
+}
+.quiz-enum-item.hit {
+  border-color: var(--accent-blue);
+  background: var(--accent-blue-wash);
+  color: var(--accent-blue-deep);
+}
+.quiz-enum-item.miss {
+  border-color: var(--accent-red);
+  background: var(--accent-red-wash);
+  color: var(--accent-red);
+}
+.quiz-key-points {
+  margin: var(--s-1) 0 0;
+  padding-left: 1.35em;
+  color: var(--ink-soft);
+  font-size: 13.5px;
+}
+.quiz-output-block {
+  margin: var(--s-1) 0;
+  padding: var(--s-2) var(--s-3);
+  background: var(--surface-2, rgba(0, 0, 0, 0.05));
+  border-radius: 6px;
+  overflow-x: auto;
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 13px;
+  white-space: pre;
+}
+.quiz-override {
+  align-self: flex-start;
+  font-size: 12.5px;
+}
+
 .quiz-scope-hint {
   margin: 0;
   font-size: 12.5px;

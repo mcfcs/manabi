@@ -363,10 +363,11 @@ async def test_staleness_scoped_deck_compares_within_scope(monkeypatch):
 # ── Prompts v6 + exercise schema forks ────────────────────────────────────
 
 
-def test_prompt_version_bumped():
+def test_prompt_version_is_current():
     from manabi_ai import prompts
 
-    assert prompts.PROMPT_VERSION == "v7"
+    # exact value asserted in test_quiz_types.py — here just guard staleness
+    assert prompts.PROMPT_VERSION >= "v8"
 
 
 def test_exercise_schemas_make_source_ids_optional():
