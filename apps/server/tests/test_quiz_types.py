@@ -131,3 +131,145 @@ def test_chat_prompts_have_person_statement_precision_rule():
         prompts.GENERAL_ASSISTANT_PROMPT,
     ):
         assert needle in p
+
+
+# ── Dispute (verify_question) + per-question regenerate ───────────────────
+
+
+def test_verify_schema_is_flat_all_required():
+    """The grammar-safe shape: flat object, every field required."""
+    s = prompts.VERIFY_QUESTION_SCHEMA
+    assert set(s["required"]) == set(s["properties"].keys())
+    assert all(
+        v["type"] in ("boolean", "string") for v in s["properties"].values()
+    )
+
+
+def test_answer_display_per_kind():
+    from manabi_ai.tasks_gen import _answer_display
+
+    assert (
+        _answer_display({"kind": "mcq", "correct_option": 1}, ["a", "b", "c", "d"])
+        == "option 1: b"
+    )
+    assert _answer_display({"kind": "tf", "value": True}, None) == "true"
+    assert (
+        _answer_display({"kind": "enumeration", "items": ["x", "y"]}, None) == "x; y"
+    )
+    assert _answer_display({"kind": "essay", "model_answer": "m", "key_points": []}, None) == "m"
+    assert _answer_display({"kind": "coding", "solution": "s"}, None) == "s"
+    assert _answer_display({"kind": "output", "text": "5 4"}, None) == "5 4"
+    assert _answer_display({"kind": "short", "text": "t"}, None) == "t"
+    assert _answer_display(None, None) == "(none)"
+    # out-of-range option index never crashes the prompt build
+    assert _answer_display({"kind": "mcq", "correct_option": 9}, ["a"]) == "option 9: ?"
+
+
+def test_task_name_contracts():
+    from manabi_ai import tasks_gen
+    from manabi_server.jobs.queue import (
+        REGENERATE_QUESTION_TASK,
+        VERIFY_QUESTION_TASK,
+    )
+
+    assert VERIFY_QUESTION_TASK == "manabi_ai.tasks.verify_question"
+    assert REGENERATE_QUESTION_TASK == "manabi_ai.tasks.regenerate_question"
+    assert hasattr(tasks_gen, "verify_question")
+    assert hasattr(tasks_gen, "regenerate_question")
+
+
+class _Scalars:
+    def __init__(self, rows=()):
+        self._rows = list(rows)
+
+    def all(self):
+        return self._rows
+
+
+class _Result:
+    def __init__(self, *, scalars=(), scalar_one=None):
+        self._scalars = scalars
+        self._scalar_one = scalar_one
+
+    def scalars(self):
+        return _Scalars(self._scalars)
+
+    def scalar_one(self):
+        return self._scalar_one
+
+
+class _FakeDB:
+    def __init__(self, results=()):
+        self.results = list(results)
+        self.added = []
+
+    async def execute(self, *a, **k):
+        return self.results.pop(0) if self.results else _Result()
+
+    def add(self, obj):
+        self.added.append(obj)
+        if getattr(obj, "id", None) is None:
+            obj.id = 100 + len(self.added)
+
+    async def flush(self):
+        pass
+
+    async def commit(self):
+        pass
+
+
+class _User:
+    id = 1
+
+
+def _question_db():
+    import types
+
+    return (
+        _FakeDB(
+            [
+                _Result(scalar_one=types.SimpleNamespace(id=3, module_id=6)),
+                _Result(scalars=[]),  # no in-flight jobs
+            ]
+        ),
+        types.SimpleNamespace(id=9, artifact_id=3),
+    )
+
+
+async def test_challenge_endpoint_defers_with_user_answer(monkeypatch):
+    from manabi_server.api import artifacts
+
+    captured: dict = {}
+
+    async def fake_defer(task, queue, **kwargs):
+        captured.update({"task": task, **kwargs})
+        return 999
+
+    monkeypatch.setattr(artifacts, "defer_task", fake_defer)
+    db, question = _question_db()
+    ref = await artifacts.challenge_question(
+        artifacts.ChallengeIn(user_answer="  b*(ba)*a*  "),
+        question=question,
+        user=_User(),
+        db=db,
+    )
+    assert ref.job_id is not None
+    assert captured["task"] == "manabi_ai.tasks.verify_question"
+    assert captured["question_id"] == 9
+    assert captured["user_answer"] == "b*(ba)*a*"  # stripped
+
+
+async def test_regenerate_endpoint_defers(monkeypatch):
+    from manabi_server.api import artifacts
+
+    captured: dict = {}
+
+    async def fake_defer(task, queue, **kwargs):
+        captured.update({"task": task, **kwargs})
+        return 999
+
+    monkeypatch.setattr(artifacts, "defer_task", fake_defer)
+    db, question = _question_db()
+    await artifacts.regenerate_quiz_question(question=question, user=_User(), db=db)
+    assert captured["task"] == "manabi_ai.tasks.regenerate_question"
+    assert captured["question_id"] == 9

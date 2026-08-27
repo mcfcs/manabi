@@ -29,7 +29,7 @@ from manabi_core.retrieval import (
     source_fingerprint,
 )
 from procrastinate.exceptions import JobAborted
-from sqlalchemy import select, update
+from sqlalchemy import delete, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from manabi_ai import prompts
@@ -997,6 +997,246 @@ async def generate_quiz(
             raise  # cancelled — do not fail/retry
         except (GenerationError, Exception) as exc:  # noqa: BLE001
             log.exception("quiz generation failed")
+            await db.rollback()
+            await _fail(db, job, exc)
+            raise
+
+
+def _answer_display(answer: dict | None, options: list | None) -> str:
+    """Human-readable form of a stored QuizQuestion.answer for prompts."""
+    if not answer:
+        return "(none)"
+    kind = answer.get("kind")
+    if kind == "mcq":
+        i = answer.get("correct_option")
+        opts = options or []
+        label = opts[i] if isinstance(i, int) and 0 <= i < len(opts) else "?"
+        return f"option {i}: {label}"
+    if kind == "tf":
+        return "true" if answer.get("value") else "false"
+    if kind == "enumeration":
+        return "; ".join(answer.get("items") or [])
+    if kind == "essay":
+        return answer.get("model_answer") or ""
+    if kind == "coding":
+        return answer.get("solution") or ""
+    return answer.get("text") or ""  # short / identification / output
+
+
+@app.task(name="manabi_ai.tasks.verify_question", queue="gpu", retry=1)
+async def verify_question(job_id: int, question_id: int, user_answer: str = "") -> None:
+    """Student disputes a generated answer: re-adjudicate it against the
+    question's own cited sources (when it has any) and report who is right.
+    Informational only — nothing is mutated; a wrong question is fixed via
+    regenerate_question."""
+    settings = get_settings()
+    async with session_factory()() as db:
+        job = await _start(db, job_id)
+        preview = _preview_writer(db, job)
+        try:
+            question = (
+                await db.execute(
+                    select(QuizQuestion).where(QuizQuestion.id == question_id)
+                )
+            ).scalar_one()
+            artifact = (
+                await db.execute(
+                    select(Artifact).where(Artifact.id == question.artifact_id)
+                )
+            ).scalar_one()
+            cited_chunk_ids = [
+                cid
+                for (cid,) in (
+                    await db.execute(
+                        select(Citation.chunk_id).where(
+                            Citation.artifact_id == artifact.id,
+                            Citation.item_ref == f"q:{question.ord}",
+                            Citation.chunk_id.is_not(None),
+                        )
+                    )
+                ).all()
+            ]
+            chunks = (
+                await load_chunks_by_ids(db, cited_chunk_ids)
+                if cited_chunk_ids
+                else []
+            )
+            source_text = (
+                build_context(chunks, None).source_text
+                if chunks
+                else "SOURCE MATERIAL: (none — synthesized practice item; "
+                "judge by re-deriving the answer)"
+            )
+            options_line = (
+                f"OPTIONS: {question.options}\n\n" if question.options else ""
+            )
+            user_block = (
+                f"QUESTION ({question.qtype}):\n{question.prompt}\n\n"
+                + options_line
+                + f"STORED ANSWER: {_answer_display(question.answer, question.options)}\n"
+                + f"STORED EXPLANATION: {question.explanation or '(none)'}\n\n"
+                + f"STUDENT'S ANSWER: {user_answer.strip() or '(blank)'}\n\n"
+                + source_text
+            )
+            await _progress(db, job, 30, "Double-checking the answer")
+            result = await generate_structured(
+                prompts.VERIFY_QUESTION_PROMPT,
+                user_block,
+                prompts.VERIFY_QUESTION_SCHEMA,
+                preview,
+                model=settings.effective_chat_model,
+            )
+            job.status = JobStatus.succeeded
+            job.progress_pct = 100
+            job.progress_note = "Done"
+            job.preview = None
+            job.result = {
+                "verdict": {
+                    "stored_answer_correct": bool(result.get("stored_answer_correct")),
+                    "user_answer_correct": bool(result.get("user_answer_correct")),
+                    "explanation": (result.get("verdict") or "").strip(),
+                    "corrected_answer": (result.get("corrected_answer") or "").strip(),
+                }
+            }
+            job.finished_at = datetime.now(UTC)
+            await db.commit()
+        except (GenerationError, Exception) as exc:  # noqa: BLE001
+            log.exception("answer verification failed")
+            await db.rollback()
+            await _fail(db, job, exc)
+            raise
+
+
+@app.task(name="manabi_ai.tasks.regenerate_question", queue="gpu", retry=1)
+async def regenerate_question(job_id: int, question_id: int) -> None:
+    """Replace ONE quiz question in place: same type, same quiz scope and
+    mode, avoiding duplicates of the quiz's other questions. Citations for
+    the question's item_ref are rebuilt; the artifact itself is untouched."""
+    async with session_factory()() as db:
+        job = await _start(db, job_id)
+        preview = _preview_writer(db, job)
+        try:
+            question = (
+                await db.execute(
+                    select(QuizQuestion).where(QuizQuestion.id == question_id)
+                )
+            ).scalar_one()
+            artifact = (
+                await db.execute(
+                    select(Artifact).where(Artifact.id == question.artifact_id)
+                )
+            ).scalar_one()
+            scope = {int(m) for m in artifact.scope_module_ids}
+            exercise = artifact.generation_mode == "exercise"
+
+            # Rebuild the exact context the quiz was generated from; fall back
+            # to the stored scope if those chunks no longer exist.
+            chunks = [
+                c
+                for c in await load_chunks_by_ids(
+                    db, [int(cid) for cid in artifact.source_chunk_ids]
+                )
+                if c.module_id in scope
+            ]
+            if not chunks and not exercise:
+                chunks = await load_context_chunks(
+                    db, sorted(scope), document_ids=artifact.scope_document_ids
+                )
+            batch = batch_chunks(chunks)[0] if chunks else []
+            ctx = build_context(batch, None) if batch else None
+
+            existing = [
+                p
+                for (p,) in (
+                    await db.execute(
+                        select(QuizQuestion.prompt).where(
+                            QuizQuestion.artifact_id == artifact.id
+                        )
+                    )
+                ).all()
+            ]
+            avoid = "\n".join(f"- {p[:120]}" for p in existing[-30:]) or "(none)"
+            base_prompt = (
+                prompts.EXERCISE_QUIZ_PROMPT if exercise else prompts.QUIZ_PROMPT
+            )
+            if artifact.instructions:
+                base_prompt += prompts.FOCUS_BLOCK.replace(
+                    "{instructions}", artifact.instructions
+                )
+            base_prompt = (
+                base_prompt.replace("{count}", "1").replace("{types}", question.qtype)
+                + "\n\nDo NOT duplicate or trivially rephrase any of these existing "
+                "questions:\n"
+                + avoid
+            )
+
+            await _progress(db, job, 30, "Writing a replacement question")
+            new_item: dict | None = None
+            resolved_chunks: list[ScopedChunk] = []
+            for _ in range(2):
+                result = await generate_structured(
+                    base_prompt,
+                    ctx.source_text if ctx else _NO_SOURCES_TEXT,
+                    prompts.QUIZ_EXERCISE_SCHEMA if exercise else prompts.QUIZ_SCHEMA,
+                    preview,
+                )
+                kept, _d = resolve_items(
+                    result.get("questions", []),
+                    ctx.index_map if ctx else {},
+                    scope,
+                    require_sources=not exercise,
+                )
+                for cand in kept:
+                    if (
+                        cand.item.get("qtype") == question.qtype
+                        and _question_answer(cand.item) is not None
+                    ):
+                        new_item, resolved_chunks = cand.item, cand.chunks
+                        break
+                if new_item is not None:
+                    break
+            if new_item is None:
+                raise GenerationError(
+                    "Could not generate a valid replacement question"
+                )
+
+            # Replace in place — same ord keeps the citation item_ref stable.
+            question.prompt = new_item["prompt"]
+            question.options = (
+                new_item.get("options") if question.qtype == "mcq" else None
+            )
+            question.answer = _question_answer(new_item)
+            question.explanation = new_item.get("explanation")
+            await db.execute(
+                delete(Citation).where(
+                    Citation.artifact_id == artifact.id,
+                    Citation.item_ref == f"q:{question.ord}",
+                )
+            )
+            elements_by_chunk = await _elements_for_chunks(db, resolved_chunks)
+            excerpt = f"{new_item['prompt']} {new_item.get('explanation', '')}"
+            for row in _citation_rows(
+                artifact.id,
+                f"q:{question.ord}",
+                resolved_chunks,
+                excerpt,
+                elements_by_chunk,
+            ):
+                db.add(row)
+
+            job.status = JobStatus.succeeded
+            job.progress_pct = 100
+            job.progress_note = "Done"
+            job.preview = None
+            job.result = {"question_id": question.id}
+            job.finished_at = datetime.now(UTC)
+            await db.commit()
+            # re-score supports for the rebuilt citations (cpu queue)
+            await app.configure_task(SCORE_SUPPORT_TASK, queue="cpu").defer_async(
+                artifact_id=artifact.id
+            )
+        except (GenerationError, Exception) as exc:  # noqa: BLE001
+            log.exception("question regeneration failed")
             await db.rollback()
             await _fail(db, job, exc)
             raise

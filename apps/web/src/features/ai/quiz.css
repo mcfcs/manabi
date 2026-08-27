@@ -108,6 +108,55 @@
   font-size: 12.5px;
 }
 
+/* ── Skip / regenerate / dispute ────────────────────────────────────────── */
+
+.quiz-meta-actions {
+  display: flex;
+  gap: var(--s-2);
+}
+
+.quiz-pending-line {
+  margin: 0;
+  display: flex;
+  align-items: center;
+  gap: var(--s-1);
+  font-size: 13px;
+  color: var(--ink-faint);
+}
+
+.quiz-dispute {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-1);
+  align-items: flex-start;
+}
+.quiz-dispute .link-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s-1);
+  font-size: 12.5px;
+}
+
+.quiz-verdict {
+  width: 100%;
+  border: 1px solid var(--rule);
+  border-left: 3px solid var(--accent-blue);
+  border-radius: var(--radius-sm);
+  background: var(--surface-raised);
+  padding: var(--s-2) var(--s-3);
+  font-size: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-1);
+}
+.quiz-verdict.overturned {
+  border-left-color: var(--accent-red);
+  background: var(--accent-red-wash);
+}
+.quiz-verdict p {
+  margin: 0;
+}
+
 .quiz-scope-hint {
   margin: 0;
   font-size: 12.5px;
@@ -275,6 +324,13 @@
   }
   .quiz-options.tf .btn {
     flex: 1 1 100%;
+  }
+  .quiz-player .review-meta {
+    flex-wrap: wrap;
+    row-gap: var(--s-2);
+  }
+  .quiz-meta-actions {
+    flex-wrap: wrap;
   }
 }
 

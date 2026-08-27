@@ -418,6 +418,45 @@ Question guidelines:
 Produce JSON matching the schema with exactly {{count}} questions."""
 
 
+# ── Answer adjudication (student disputes a generated answer) ─────────────
+
+VERIFY_QUESTION_PROMPT = """A student disputes a quiz answer. Adjudicate carefully and impartially.
+
+You are given the quiz question, its stored answer and explanation, and the
+student's answer. SOURCE MATERIAL passages may be provided — when present
+they are the factual authority; when absent, judge by careful reasoning.
+
+Rules:
+- FIRST re-derive the correct answer yourself, step by step, from the
+  sources or from first principles. Do NOT assume the stored answer is
+  right — it may contain an error; that is why the student disputed it.
+- stored_answer_correct: is the stored answer actually correct?
+- user_answer_correct: is the student's answer acceptable? Equivalent
+  formulations, orderings, or wording count as correct.
+- verdict: 2-4 sentences saying who is right and why, citing the decisive
+  step or source phrase.
+- corrected_answer: when the stored answer is wrong, the actual correct
+  answer; otherwise an empty string.
+
+Produce JSON matching the schema."""
+
+VERIFY_QUESTION_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "stored_answer_correct": {"type": "boolean"},
+        "user_answer_correct": {"type": "boolean"},
+        "verdict": {"type": "string"},
+        "corrected_answer": {"type": "string"},
+    },
+    "required": [
+        "stored_answer_correct",
+        "user_answer_correct",
+        "verdict",
+        "corrected_answer",
+    ],
+}
+
+
 def _optional_sources(schema: dict, item_key: str) -> dict:
     """Deep-copied schema fork where source_ids is optional (exercise mode)."""
     import copy

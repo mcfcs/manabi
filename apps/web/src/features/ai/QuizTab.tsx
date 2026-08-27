@@ -1,6 +1,14 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "@tanstack/react-router";
-import { ChevronRight, ListChecks, Plus } from "lucide-react";
+import {
+  ChevronRight,
+  Flag,
+  ListChecks,
+  Loader2,
+  Plus,
+  RefreshCw,
+  SkipForward,
+} from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 
 import {
@@ -19,6 +27,7 @@ import {
   JobProgress,
   useAiOnline,
   useGenerationJob,
+  useJob,
 } from "./common";
 import { SourcesPicker } from "./SourcesPicker";
 import "./quiz.css";
@@ -99,7 +108,8 @@ function QuizPlayer({
   const [shortInput, setShortInput] = useState(""); // short + identification
   const [enumInput, setEnumInput] = useState(""); // enumeration, one per line
   const [longInput, setLongInput] = useState(""); // essay / coding / output
-  const [results, setResults] = useState<boolean[]>([]);
+  // "skip" is excluded from the score entirely (not counted as wrong)
+  const [results, setResults] = useState<("right" | "wrong" | "skip")[]>([]);
   const [attemptId, setAttemptId] = useState<number | null>(null);
   const [responses, setResponses] = useState<Record<string, unknown>>({});
 
@@ -131,7 +141,19 @@ function QuizPlayer({
     setChecked(true);
   }
 
-  function next(correct: boolean) {
+  function typedAnswerFor(q: QuestionOut): string {
+    if (q.qtype === "mcq")
+      return selected != null && q.options
+        ? (q.options[Number(selected)] ?? "")
+        : "";
+    if (q.qtype === "tf") return selected ?? "";
+    if (q.qtype === "enumeration") return enumInput;
+    if (q.qtype === "essay" || q.qtype === "coding" || q.qtype === "output")
+      return longInput;
+    return shortInput;
+  }
+
+  function finishQuestion(outcome: "right" | "wrong" | "skip") {
     const q = question!;
     const typed =
       q.qtype === "enumeration"
@@ -139,8 +161,11 @@ function QuizPlayer({
         : q.qtype === "essay" || q.qtype === "coding" || q.qtype === "output"
           ? longInput
           : shortInput;
-    const newResults = [...results, correct];
-    const newResponses = { ...responses, [q.id]: selected ?? typed };
+    const newResults = [...results, outcome];
+    const newResponses = {
+      ...responses,
+      [q.id]: outcome === "skip" ? "(skipped)" : (selected ?? typed),
+    };
     setResults(newResults);
     setResponses(newResponses);
     setChecked(false);
@@ -148,10 +173,13 @@ function QuizPlayer({
     setShortInput("");
     setEnumInput("");
     setLongInput("");
+    setChallengeJobId(null);
     setIndex((i) => i + 1);
     const done = index + 1 >= quiz.questions.length;
     if (attemptId != null) {
-      const score = newResults.filter(Boolean).length / quiz.questions.length;
+      const answered = newResults.filter((r) => r !== "skip").length;
+      const right = newResults.filter((r) => r === "right").length;
+      const score = answered ? right / answered : 0;
       api
         .patch(`/api/quiz-attempts/${attemptId}`, {
           responses: newResponses,
@@ -162,22 +190,84 @@ function QuizPlayer({
     }
   }
 
+  function next(correct: boolean) {
+    finishQuestion(correct ? "right" : "wrong");
+  }
+
+  // ── "Think this answer is wrong?" — AI adjudication ─────────────────
+  const [challengeJobId, setChallengeJobId] = useState<number | null>(null);
+  const challengeJob = useJob(challengeJobId);
+  const disputeVerdict =
+    challengeJobId != null && challengeJob.data?.status === "succeeded"
+      ? ((challengeJob.data.result?.verdict ?? null) as {
+          stored_answer_correct: boolean;
+          user_answer_correct: boolean;
+          explanation: string;
+          corrected_answer: string;
+        } | null)
+      : null;
+  const challenge = useMutation({
+    mutationFn: () =>
+      api.post<JobRef>(`/api/quiz-questions/${question!.id}/challenge`, {
+        user_answer: typedAnswerFor(question!),
+      }),
+    onSuccess: (r) => setChallengeJobId(r.job_id),
+  });
+  const challengePending =
+    challenge.isPending ||
+    (challengeJobId != null &&
+      disputeVerdict == null &&
+      challengeJob.data?.status !== "failed");
+
+  // ── Regenerate this question in place ───────────────────────────────
+  const queryClient = useQueryClient();
+  const [regenJobId, setRegenJobId] = useState<number | null>(null);
+  const regenJob = useJob(regenJobId);
+  const regen = useMutation({
+    mutationFn: () =>
+      api.post<JobRef>(`/api/quiz-questions/${question!.id}/regenerate`),
+    onSuccess: (r) => setRegenJobId(r.job_id),
+  });
+  useEffect(() => {
+    if (regenJobId != null && regenJob.data?.status === "succeeded") {
+      setRegenJobId(null);
+      setChecked(false);
+      setSelected(null);
+      setShortInput("");
+      setEnumInput("");
+      setLongInput("");
+      setChallengeJobId(null);
+      queryClient.invalidateQueries({ queryKey: ["quiz", quiz.artifact_id] });
+    }
+  }, [regenJobId, regenJob.data?.status, queryClient, quiz.artifact_id]);
+  const regenPending =
+    regen.isPending ||
+    (regenJobId != null &&
+      regenJob.data?.status !== "failed" &&
+      regenJob.data?.status !== "succeeded");
+
   if (finished) {
-    const right = results.filter(Boolean).length;
+    const right = results.filter((r) => r === "right").length;
+    const answered = results.filter((r) => r !== "skip").length;
+    const skipped = results.length - answered;
     const missed = quiz.questions
-      .filter((_, i) => !results[i])
+      .filter((_, i) => results[i] === "wrong")
       .map((q) => q.prompt);
     return (
       <div className="quiz-results">
         <h3>
-          {right} / {quiz.questions.length}
+          {right} / {answered}
         </h3>
         <p className="quiz-results-sub">
-          {right === quiz.questions.length
-            ? "Perfect score."
-            : right >= quiz.questions.length * 0.7
-              ? "Solid — review the ones you missed."
-              : "Worth another pass through the material."}
+          {skipped > 0 &&
+            `${skipped} skipped (not counted). `}
+          {answered === 0
+            ? "Nothing answered this round."
+            : right === answered
+              ? "Perfect score."
+              : right >= answered * 0.7
+                ? "Solid — review the ones you missed."
+                : "Worth another pass through the material."}
         </p>
         <div className="quiz-results-actions">
           {missed.length > 0 && (
@@ -221,10 +311,45 @@ function QuizPlayer({
         <span className="mono">
           {index + 1} / {quiz.questions.length}
         </span>
-        <button className="btn" onClick={onExit}>
-          Exit quiz
-        </button>
+        <span className="quiz-meta-actions">
+          <button
+            className="btn"
+            onClick={() => finishQuestion("skip")}
+            disabled={regenPending}
+            title="Skip this question — it won't count toward your score"
+          >
+            <SkipForward size={15} strokeWidth={1.75} /> Skip
+          </button>
+          <button
+            className="btn"
+            onClick={() => regen.mutate()}
+            disabled={regenPending}
+            title="Replace this question with a freshly generated one"
+          >
+            <RefreshCw
+              size={15}
+              strokeWidth={1.75}
+              className={regenPending ? "spin" : ""}
+            />{" "}
+            Regenerate
+          </button>
+          <button className="btn" onClick={onExit}>
+            Exit quiz
+          </button>
+        </span>
       </div>
+
+      {regenPending && (
+        <p className="quiz-pending-line">
+          <Loader2 size={13} className="spin" /> Writing a replacement
+          question…
+        </p>
+      )}
+      {regenJobId != null && regenJob.data?.status === "failed" && (
+        <p className="error-text">
+          Regeneration failed: {regenJob.data.error}
+        </p>
+      )}
 
       <Markdown className="quiz-question">{question.prompt}</Markdown>
 
@@ -457,6 +582,66 @@ function QuizPlayer({
                   synthesized
                 </span>
               )}
+          </div>
+
+          <div className="quiz-dispute">
+            {challengeJobId == null && !challenge.isPending && (
+              <button
+                className="link-btn"
+                onClick={() => challenge.mutate()}
+                title="The AI re-derives the answer against the cited sources and says who is right"
+              >
+                <Flag size={13} strokeWidth={1.75} /> Think this answer is
+                wrong? Check with AI
+              </button>
+            )}
+            {challengePending && (
+              <p className="quiz-pending-line">
+                <Loader2 size={13} className="spin" /> Double-checking against
+                the sources…
+              </p>
+            )}
+            {challengeJobId != null &&
+              challengeJob.data?.status === "failed" && (
+                <p className="error-text">
+                  Check failed: {challengeJob.data.error}
+                </p>
+              )}
+            {disputeVerdict && (
+              <div
+                className={`quiz-verdict ${
+                  disputeVerdict.stored_answer_correct ? "upheld" : "overturned"
+                }`}
+              >
+                <strong>
+                  {!disputeVerdict.stored_answer_correct &&
+                  disputeVerdict.user_answer_correct
+                    ? "You were right — the generated answer is wrong"
+                    : !disputeVerdict.stored_answer_correct
+                      ? "The generated answer is wrong (yours has issues too)"
+                      : disputeVerdict.user_answer_correct
+                        ? "Both answers check out"
+                        : "The generated answer stands"}
+                </strong>
+                {disputeVerdict.explanation && <p>{disputeVerdict.explanation}</p>}
+                {disputeVerdict.corrected_answer && (
+                  <p>
+                    <strong>Correct answer:</strong>{" "}
+                    {disputeVerdict.corrected_answer}
+                  </p>
+                )}
+                {!disputeVerdict.stored_answer_correct && (
+                  <button
+                    className="link-btn"
+                    onClick={() => regen.mutate()}
+                    disabled={regenPending}
+                  >
+                    <RefreshCw size={13} strokeWidth={1.75} /> Regenerate this
+                    question
+                  </button>
+                )}
+              </div>
+            )}
           </div>
           {SELF_GRADED.has(question.qtype) ? (
             <div className="quiz-self-grade">

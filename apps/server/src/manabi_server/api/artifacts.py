@@ -48,7 +48,9 @@ from manabi_server.jobs.queue import (
     GENERATE_FLASHCARDS_TASK,
     GENERATE_QUIZ_TASK,
     GENERATE_SUMMARY_TASK,
+    REGENERATE_QUESTION_TASK,
     TEACH_MODULE_TASK,
+    VERIFY_QUESTION_TASK,
     defer_task,
 )
 from manabi_server.security import get_default_user, require_csrf
@@ -1510,6 +1512,119 @@ async def get_quiz(
             for q in questions
         ],
     )
+
+
+async def _get_owned_question(
+    question_id: int,
+    user: User = Depends(get_default_user),
+    db: AsyncSession = Depends(get_db),
+) -> QuizQuestion:
+    q = (
+        await db.execute(
+            select(QuizQuestion)
+            .join(Artifact, Artifact.id == QuizQuestion.artifact_id)
+            .join(Module, Module.id == Artifact.module_id)
+            .join(Course, Course.id == Module.course_id)
+            .where(QuizQuestion.id == question_id, Course.user_id == user.id)
+        )
+    ).scalar_one_or_none()
+    if q is None:
+        raise HTTPException(status_code=404, detail="Question not found")
+    return q
+
+
+async def _enqueue_question_job(
+    db: AsyncSession,
+    user: User,
+    question: QuizQuestion,
+    job_type: str,
+    task_name: str,
+    **task_kwargs,
+) -> Job:
+    """Per-question GPU job (verify/regenerate) with the same payload-aware
+    duplicate-proofing as full generations."""
+    from manabi_core.models import JobStatus
+
+    artifact = (
+        await db.execute(select(Artifact).where(Artifact.id == question.artifact_id))
+    ).scalar_one()
+    inflight = (
+        (
+            await db.execute(
+                select(Job).where(
+                    Job.job_type == job_type,
+                    Job.status.in_([JobStatus.queued, JobStatus.running]),
+                )
+            )
+        )
+        .scalars()
+        .all()
+    )
+    existing = _matching_inflight(list(inflight), task_kwargs)
+    if existing is not None:
+        return existing
+    job = Job(
+        user_id=user.id,
+        job_type=job_type,
+        queue=JobQueue.gpu,
+        payload=task_kwargs,
+        module_id=artifact.module_id,
+    )
+    db.add(job)
+    await db.flush()
+    job.procrastinate_job_id = await defer_task(
+        task_name, "gpu", job_id=job.id, **task_kwargs
+    )
+    await db.commit()
+    return job
+
+
+class ChallengeIn(BaseModel):
+    user_answer: str = ""
+
+
+@router.post(
+    "/quiz-questions/{question_id}/challenge", dependencies=[Depends(require_csrf)]
+)
+async def challenge_question(
+    data: ChallengeIn,
+    question: QuizQuestion = Depends(_get_owned_question),
+    user: User = Depends(get_default_user),
+    db: AsyncSession = Depends(get_db),
+) -> JobRef:
+    """Student disputes the stored answer — an adjudication job re-checks it
+    against the question's cited sources and reports who is right."""
+    job = await _enqueue_question_job(
+        db,
+        user,
+        question,
+        "verify_question",
+        VERIFY_QUESTION_TASK,
+        question_id=question.id,
+        user_answer=(data.user_answer or "").strip()[:4000],
+    )
+    return JobRef(job_id=job.id)
+
+
+@router.post(
+    "/quiz-questions/{question_id}/regenerate", dependencies=[Depends(require_csrf)]
+)
+async def regenerate_quiz_question(
+    question: QuizQuestion = Depends(_get_owned_question),
+    user: User = Depends(get_default_user),
+    db: AsyncSession = Depends(get_db),
+) -> JobRef:
+    """Replace this question with a freshly generated one (same type, same
+    quiz scope/mode)."""
+    job = await _enqueue_question_job(
+        db,
+        user,
+        question,
+        "regenerate_question",
+        REGENERATE_QUESTION_TASK,
+        question_id=question.id,
+    )
+    return JobRef(job_id=job.id)
 
 
 @router.post("/quizzes/{artifact_id}/attempts", dependencies=[Depends(require_csrf)])
