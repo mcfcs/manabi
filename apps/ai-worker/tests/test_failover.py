@@ -36,7 +36,9 @@ def _record_stream(monkeypatch, primary_exc=None, backup_content="BACKUP", prima
     primary_exc if given, otherwise returns primary_content."""
     calls: list[tuple[str, str]] = []
 
-    async def fake_stream_once(url, model, system, user, schema, on_preview, think=None):
+    async def fake_stream_once(
+        url, model, system, user, schema, on_preview, think=None, headroom=None
+    ):
         calls.append((url, model))
         if url == "http://phillmyeol:11434" and primary_exc is not None:
             raise primary_exc
@@ -105,7 +107,9 @@ async def test_generate_structured_succeeds_via_backup(monkeypatch):
 def _record_chat(monkeypatch, respond):
     seen: list = []
 
-    async def fake_stream_chat(settings, system, user, schema, on_preview, model=None, think=None):
+    async def fake_stream_chat(
+        settings, system, user, schema, on_preview, model=None, think=None, headroom=None
+    ):
         seen.append(think)
         return respond(think)
 

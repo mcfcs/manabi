@@ -19,3 +19,13 @@ def test_num_ctx_conservative_estimate():
     # the whole point: never undersize and drop the tail of the material.
     p = "x" * 32000  # /4 = 8000 (+1024=9024 → 16384 anyway); /3.5 = 9142 (+1024)
     assert _num_ctx("", p, 24576) == 16384
+
+
+def test_num_ctx_headroom_reserves_answer_space():
+    # ~4k-token prompt with the chat-sized default fits 8192…
+    assert _num_ctx("s", "u" * 14_000, 24_576) == 8192
+    # …but a quiz's worth of step-by-step output needs a bigger reservation,
+    # or the window fills mid-answer and the JSON is cut off mid-string.
+    assert _num_ctx("s", "u" * 14_000, 24_576, headroom=6144) == 16_384
+    # Even a tiny prompt escapes the 4096 tier once real output space is asked.
+    assert _num_ctx("s", "u", 24_576, headroom=6144) == 8192

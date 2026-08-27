@@ -78,6 +78,46 @@ def test_resolve_default_mode_unchanged_by_flag_addition():
     assert kept == [] and dropped == 1
 
 
+def test_dedup_keeps_numeric_drill_variants():
+    """Math/code drills differing only in the given values are legitimate
+    variants, not duplicates."""
+    from manabi_ai.validators import dedup_questions
+
+    index_map = {1: _chunk(101)}
+    items, _ = resolve_items(
+        [
+            {"prompt": "A channel has bandwidth 5 MHz and SNR 30 dB. Find the capacity.", "source_ids": [1]},
+            {"prompt": "A channel has bandwidth 8 MHz and SNR 20 dB. Find the capacity.", "source_ids": [1]},
+            {"prompt": "A channel has bandwidth 5 MHz and SNR 30 dB. Find the capacity!", "source_ids": [1]},
+        ],
+        index_map,
+        {1},
+    )
+    deduped = dedup_questions(items)
+    # different numbers kept; identical numbers + wording deduped
+    assert len(deduped) == 2
+
+
+def test_dedup_ignores_boilerplate_openings():
+    """'According to the source material, …' must not make two different
+    questions read as duplicates — and identical cores still dedup even when
+    only one has the boilerplate."""
+    from manabi_ai.validators import dedup_questions
+
+    index_map = {1: _chunk(101)}
+    items, _ = resolve_items(
+        [
+            {"prompt": "According to the source material, what is simplex transmission?", "source_ids": [1]},
+            {"prompt": "What is simplex transmission?", "source_ids": [1]},
+            {"prompt": "According to the source material, how does Unicode differ from ASCII in encoding range?", "source_ids": [1]},
+        ],
+        index_map,
+        {1},
+    )
+    deduped = dedup_questions(items)
+    assert len(deduped) == 2  # the bare duplicate died; the Unicode one lives
+
+
 def test_dedup_questions_drops_near_duplicates():
     index_map = {1: _chunk(101)}
     items, _ = resolve_items(

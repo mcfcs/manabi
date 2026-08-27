@@ -5,7 +5,7 @@ outside the prompt: schema-constrained decoding, source-id resolution against
 the job's scope, and post-hoc support scoring.
 """
 
-PROMPT_VERSION = "v8"
+PROMPT_VERSION = "v9"
 
 _GROUNDING = """RULES — follow strictly:
 - Use ONLY the numbered SOURCE MATERIAL. Do not add outside knowledge.
@@ -291,6 +291,9 @@ Question guidelines:
   only when the material is code/computation-oriented; put the exact expected
   output in "correct_text".
 - Each question includes a brief explanation of the correct answer.
+- VARY the question stems: never open more than one question with the same
+  phrase (e.g. "According to the source material…" or "Which of the
+  following…") — repeated openings read as duplicates and are discarded.
 - FORMATTING: put any code in a fenced ``` code block with ONE statement per
   line — never run several statements together on one line.
 
@@ -411,6 +414,9 @@ Question guidelines:
   exercise type for code tracing.
 - Explanation: the step-by-step working, one step per line, ending with a
   final line "Answer: ...".
+- VARY the question stems: never open more than one question with the same
+  phrase — repeated openings read as duplicates and are discarded. Vary the
+  scenario and the given values between exercises.
 - FORMATTING: put any code in a fenced ``` code block with ONE statement per
   line — never run several statements together on one line. Prose stays
   outside the fence.

@@ -25,13 +25,20 @@ _RESPONSE_HEADROOM = 1024  # tokens reserved for the model's own answer
 _CHARS_PER_TOKEN = 3.5  # English/JSON runs ~3.3–3.8; 4 undersized → silent truncation
 
 
-def _num_ctx(system: str, user: str, cap: int) -> int:
+def _num_ctx(
+    system: str, user: str, cap: int, headroom: int = _RESPONSE_HEADROOM
+) -> int:
     """Smallest context tier that holds prompt + a response, clamped to `cap`.
     Keeps ordinary chats at 4096 (fast) and only grows for big page-range /
     whole-doc asks. The chars/token estimate is deliberately conservative (3.5,
     not 4): overestimating costs a little VRAM; underestimating silently drops
-    the tail of the prompt (the question or the last material)."""
-    need = int((len(system) + len(user)) / _CHARS_PER_TOKEN) + _RESPONSE_HEADROOM
+    the tail of the prompt (the question or the last material).
+
+    `headroom` = tokens reserved for the model's own answer. The 1024 default
+    fits chat-length replies; multi-item generation (a quiz's worth of
+    step-by-step explanations easily runs 3-6k tokens) must pass more, or the
+    window fills mid-answer and the JSON stream is cut off mid-string."""
+    need = int((len(system) + len(user)) / _CHARS_PER_TOKEN) + headroom
     for tier in _CTX_TIERS:
         if tier >= need:
             return min(tier, cap)
@@ -74,6 +81,7 @@ async def generate_structured(
     schema: dict,
     on_preview: PreviewWriter | None = None,
     model: str | None = None,
+    response_headroom: int = _RESPONSE_HEADROOM,
 ) -> dict:
     """JSON-schema-constrained generation, streamed. `on_preview` receives the
     accumulated output text (throttled) so users can watch generation live.
@@ -85,7 +93,14 @@ async def generate_structured(
     for attempt in range(3):
         try:
             content = await _stream_chat(
-                settings, system, user, schema, on_preview, model, think=think
+                settings,
+                system,
+                user,
+                schema,
+                on_preview,
+                model,
+                think=think,
+                headroom=response_headroom,
             )
             if not content.strip():
                 # Thinking-mode mismatch: a reasoning-locked model sent
@@ -135,6 +150,7 @@ async def _stream_chat(
     on_preview: PreviewWriter | None,
     model: str | None = None,
     think: bool | None = None,
+    headroom: int = _RESPONSE_HEADROOM,
 ) -> str:
     """Try the primary node; on a connection-level failure fall back to the
     local backup Ollama (small model that fits this laptop's 8 GB GPU)."""
@@ -147,6 +163,7 @@ async def _stream_chat(
             schema,
             on_preview,
             think=think,
+            headroom=headroom,
         )
     except _NODE_DOWN as exc:
         if not settings.backup_enabled:
@@ -169,6 +186,7 @@ async def _stream_chat(
             user,
             schema,
             on_preview,
+            headroom=headroom,
         )
 
 
@@ -180,10 +198,11 @@ async def _stream_once(
     schema: dict,
     on_preview: PreviewWriter | None,
     think: bool | None = None,
+    headroom: int = _RESPONSE_HEADROOM,
 ) -> str:
     accumulated: list[str] = []
     last_flush = 0.0
-    num_ctx = _num_ctx(system, user, get_settings().max_num_ctx)
+    num_ctx = _num_ctx(system, user, get_settings().max_num_ctx, headroom=headroom)
     payload: dict = {
         "model": model,
         "messages": [

@@ -110,8 +110,8 @@ def test_server_allowlist_matches():
     assert kept == ["enumeration", "coding"]
 
 
-def test_prompt_version_bumped_to_v8():
-    assert prompts.PROMPT_VERSION == "v8"
+def test_prompt_version_current():
+    assert prompts.PROMPT_VERSION == "v9"
 
 
 def test_quiz_prompts_describe_new_types():

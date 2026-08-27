@@ -57,6 +57,15 @@ _NO_SOURCES_TEXT = (
     "FOCUS topic alone)"
 )
 
+# Multi-item generation calls (a quiz's worth of step-by-step explanations,
+# a batch of cards) produce far more output than a chat reply — reserve real
+# answer space in num_ctx or the window fills and the JSON is cut off
+# mid-string ("Unterminated string" after 3 attempts).
+_GEN_RESPONSE_HEADROOM = 6144
+# One LLM call is never asked for more questions than this; the top-up loop
+# fills any shortfall. Keeps the answer inside the reserved space.
+_MAX_QUESTIONS_PER_CALL = 12
+
 
 async def _progress(db: AsyncSession, job: Job, pct: int, note: str) -> None:
     job.progress_pct = pct
@@ -316,7 +325,11 @@ async def generate_summary(context, job_id: int, module_id: int) -> None:
                 )
                 ctx = build_context(batch, notes if bi == 0 else None)
                 result = await generate_structured(
-                    base_prompt, ctx.source_text, prompts.SUMMARY_SCHEMA, preview
+                    base_prompt,
+                    ctx.source_text,
+                    prompts.SUMMARY_SCHEMA,
+                    preview,
+                    response_headroom=_GEN_RESPONSE_HEADROOM,
                 )
                 absorb(result, ctx)
 
@@ -333,6 +346,7 @@ async def generate_summary(context, job_id: int, module_id: int) -> None:
                     ctx.source_text,
                     prompts.SUMMARY_SCHEMA,
                     preview,
+                    response_headroom=_GEN_RESPONSE_HEADROOM,
                 )
                 absorb(result, ctx)
                 cited_ids = {c.id for _, cited, _ in all_citations for c in cited}
@@ -516,6 +530,7 @@ async def generate_flashcards(
                     _NO_SOURCES_TEXT,
                     prompts.FLASHCARDS_EXERCISE_SCHEMA,
                     preview,
+                    response_headroom=_GEN_RESPONSE_HEADROOM,
                 )
                 kept, d = resolve_items(
                     result.get("cards", []), {}, {module_id},
@@ -562,6 +577,7 @@ async def generate_flashcards(
                         if exercise
                         else prompts.FLASHCARDS_SCHEMA,
                         preview,
+                        response_headroom=_GEN_RESPONSE_HEADROOM,
                     )
                     kept, d = resolve_items(
                         result.get("cards", []),
@@ -785,7 +801,10 @@ async def generate_quiz(
                 .scalars()
                 .all()
             )
-            per_module = max(2, round(count * 1.4 / len(scope)))  # oversample for dedup
+            per_module = min(
+                _MAX_QUESTIONS_PER_CALL,
+                max(2, round(count * 1.4 / len(scope))),  # oversample for dedup
+            )
 
             # Focused retrieval (server-side, topic-steered): partition the
             # hydrated chunks per module; a module the topic doesn't touch
@@ -847,6 +866,7 @@ async def generate_quiz(
                         ctx.source_text,
                         quiz_schema,
                         preview,
+                        response_headroom=_GEN_RESPONSE_HEADROOM,
                     )
                     kept, d = resolve_items(
                         result.get("questions", []),
@@ -861,12 +881,13 @@ async def generate_quiz(
                 # Topic-only practice quiz: no material in scope at all.
                 await _progress(db, job, 40, "Writing practice questions")
                 result = await generate_structured(
-                    base_prompt.replace("{count}", str(count + 2)).replace(
-                        "{types}", ", ".join(types)
-                    ),
+                    base_prompt.replace(
+                        "{count}", str(min(count + 2, _MAX_QUESTIONS_PER_CALL))
+                    ).replace("{types}", ", ".join(types)),
                     _NO_SOURCES_TEXT,
                     prompts.QUIZ_EXERCISE_SCHEMA,
                     preview,
+                    response_headroom=_GEN_RESPONSE_HEADROOM,
                 )
                 kept, d = resolve_items(
                     result.get("questions", []), {}, scope, require_sources=False
@@ -893,12 +914,14 @@ async def generate_quiz(
 
             # Top up: the answer/type filters and dedup routinely eat into the
             # oversample — re-ask for the shortfall instead of shipping a
-            # short quiz. (Sourced mode needs a context to cite; exercise mode
-            # can top up even topic-only.)
+            # short quiz. Persistent (up to 4 rounds) but breaks as soon as a
+            # round contributes nothing: the material has run dry and further
+            # asks would only produce more duplicates. (Sourced mode needs a
+            # context to cite; exercise mode can top up even topic-only.)
             topup_rounds = 0
             while (
                 len(final) < count
-                and topup_rounds < 2
+                and topup_rounds < 4
                 and (exercise or last_ctx is not None)
             ):
                 await _abort_if_requested(db, job, context)
@@ -911,15 +934,16 @@ async def generate_quiz(
                     f"- {(c.item.get('prompt') or '')[:120]}" for c in final[-30:]
                 ) or "(none)"
                 result = await generate_structured(
-                    base_prompt.replace("{count}", str(shortfall + 2)).replace(
-                        "{types}", ", ".join(types)
-                    )
+                    base_prompt.replace(
+                        "{count}", str(min(shortfall + 2, _MAX_QUESTIONS_PER_CALL))
+                    ).replace("{types}", ", ".join(types))
                     + "\n\nDo NOT duplicate or trivially rephrase any of these "
                     "existing questions:\n"
                     + avoid,
                     last_ctx.source_text if last_ctx else _NO_SOURCES_TEXT,
                     quiz_schema,
                     preview,
+                    response_headroom=_GEN_RESPONSE_HEADROOM,
                 )
                 kept, d = resolve_items(
                     result.get("questions", []),
@@ -937,6 +961,12 @@ async def generate_quiz(
                 # dedup against what we already kept: survivors after the
                 # existing block are the genuinely new ones
                 fresh = dedup_questions(final + fresh, dedup_threshold)[len(final):]
+                if not fresh:
+                    log.info(
+                        "quiz top-up ran dry after %d rounds (%d/%d questions)",
+                        topup_rounds, len(final), count,
+                    )
+                    break
                 final.extend(fresh[: count - len(final)])
 
             anchor_id = int(module_ids[0])
@@ -1179,6 +1209,7 @@ async def regenerate_question(job_id: int, question_id: int) -> None:
                     ctx.source_text if ctx else _NO_SOURCES_TEXT,
                     prompts.QUIZ_EXERCISE_SCHEMA if exercise else prompts.QUIZ_SCHEMA,
                     preview,
+                    response_headroom=2048,  # single question + working
                 )
                 kept, _d = resolve_items(
                     result.get("questions", []),
@@ -1733,6 +1764,7 @@ async def teach_module(
                     ctx.source_text,
                     prompts.LECTURE_SCHEMA,
                     preview,
+                    response_headroom=_GEN_RESPONSE_HEADROOM,
                 )
                 kept, d = resolve_items(
                     result.get("segments", []), ctx.index_map, {module_id}

@@ -8,6 +8,7 @@ module-isolation audit.
 """
 
 import logging
+import re
 from dataclasses import dataclass
 
 from manabi_core.retrieval import ScopedChunk
@@ -98,19 +99,48 @@ def match_element_ids(
     return picked or [scored[0][1]]
 
 
+# Formulaic openings ("According to the source material, …") inflate difflib
+# similarity between genuinely different questions — strip them before
+# comparing, or half a quiz gets discarded as "duplicates".
+_BOILERPLATE_PREFIX = re.compile(
+    r"^(?:according to|based on|per|as stated in|as described in)\s+"
+    r"(?:the\s+)?(?:source(?:\s+material)?|text|reading|module|lecture)s?\s*,?\s*"
+)
+
+
+def _dedup_stem(text: str) -> str:
+    return _BOILERPLATE_PREFIX.sub("", (text or "").lower().strip())
+
+
+def _numeric_fingerprint(text: str) -> tuple[str, ...]:
+    return tuple(re.findall(r"\d+(?:\.\d+)?", text or ""))
+
+
+def _near_duplicate(a: str, b: str, threshold: float) -> bool:
+    from difflib import SequenceMatcher
+
+    sa, sb = _dedup_stem(a), _dedup_stem(b)
+    if SequenceMatcher(None, sa, sb).ratio() <= threshold:
+        return False
+    # Same wording but different numbers = a legitimate drill variant
+    # (math / code-tracing practice), not a duplicate.
+    na, nb = _numeric_fingerprint(sa), _numeric_fingerprint(sb)
+    if na and nb and na != nb:
+        return False
+    return True
+
+
 def dedup_cards(
     new_items: list[ResolvedItem],
     existing_fronts: list[str],
     threshold: float = 0.85,
 ) -> list[ResolvedItem]:
     """Drop cards whose fronts near-duplicate existing ones (or each other)."""
-    from difflib import SequenceMatcher
-
     kept: list[ResolvedItem] = []
-    fronts = [f.lower() for f in existing_fronts]
+    fronts = list(existing_fronts)
     for item in new_items:
-        front = (item.item.get("front") or "").lower()
-        if any(SequenceMatcher(None, front, f).ratio() > threshold for f in fronts):
+        front = item.item.get("front") or ""
+        if any(_near_duplicate(front, f, threshold) for f in fronts):
             continue
         kept.append(item)
         fronts.append(front)
@@ -119,16 +149,11 @@ def dedup_cards(
 
 def dedup_questions(items: list[ResolvedItem], threshold: float = 0.8) -> list[ResolvedItem]:
     """Drop near-duplicate question stems (difflib ratio)."""
-    from difflib import SequenceMatcher
-
     kept: list[ResolvedItem] = []
     for candidate in items:
-        stem = (candidate.item.get("prompt") or "").lower()
+        stem = candidate.item.get("prompt") or ""
         if any(
-            SequenceMatcher(
-                None, stem, (k.item.get("prompt") or "").lower()
-            ).ratio()
-            > threshold
+            _near_duplicate(stem, k.item.get("prompt") or "", threshold)
             for k in kept
         ):
             continue
