@@ -317,6 +317,7 @@ function NoteEditor({ noteId, moduleId }: { noteId: number; moduleId: string }) 
   const debounceRef = useRef<number | null>(null);
   const pendingRef = useRef<Record<string, unknown> | null>(null);
   const toolbarRef = useRef<HTMLDivElement>(null);
+  const sentinelRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   // Highlight + Ask Steven on a text selection inside the note. Use a callback
   // ref (state) so the selection hook re-attaches once the sheet mounts — the
@@ -433,6 +434,20 @@ function NoteEditor({ noteId, moduleId }: { noteId: number; moduleId: string }) 
     };
   }, [save]);
 
+  // The opaque above-bar mask (.is-stuck) must only paint while the toolbar
+  // is actually pinned — permanently it covers the sections strip above.
+  useEffect(() => {
+    const bar = toolbarRef.current;
+    const sentinel = sentinelRef.current;
+    if (!bar || !sentinel) return;
+    const io = new IntersectionObserver(
+      ([entry]) => bar.classList.toggle("is-stuck", !entry.isIntersecting),
+      { threshold: 0 },
+    );
+    io.observe(sentinel);
+    return () => io.disconnect();
+  }, [editor]);
+
   // Keep the toolbar visible above the mobile keyboard (VisualViewport)
   useEffect(() => {
     const vv = window.visualViewport;
@@ -473,6 +488,7 @@ function NoteEditor({ noteId, moduleId }: { noteId: number; moduleId: string }) 
 
   return (
     <div className="note-pane">
+      <div className="note-toolbar-sentinel" aria-hidden ref={sentinelRef} />
       <div className="note-toolbar" ref={toolbarRef}>
         <button
           className={btn(editor.isActive("bold"))}

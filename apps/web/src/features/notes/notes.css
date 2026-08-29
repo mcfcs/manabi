@@ -5,6 +5,7 @@
 }
 
 .note-pane {
+  position: relative; /* anchors the toolbar's stuck-state sentinel */
   display: flex;
   flex-direction: column;
   gap: var(--s-3);
@@ -132,9 +133,7 @@
 /* ── Toolbar ────────────────────────────────────────────────── */
 
 /* Flat, flush formatting bar (no floating card): sticks to the top while the
-   note scrolls under it. The solid box-shadow paints an opaque paper strip
-   ABOVE the stuck bar so scrolled content can't bleed through the gap between
-   the bar and the top edge (visible when zoomed / on mobile). */
+   note scrolls under it. */
 .note-toolbar {
   display: flex;
   align-items: center;
@@ -146,6 +145,21 @@
   position: sticky;
   top: 0;
   z-index: 10;
+}
+
+/* Out-of-flow marker at the pane's top: an IntersectionObserver toggles
+   .is-stuck when it scrolls out, so the opaque mask below exists ONLY while
+   the bar is pinned — a permanent mask painted over the sections strip. */
+.note-toolbar-sentinel {
+  position: absolute;
+  top: 0;
+  width: 1px;
+  height: 1px;
+}
+
+/* While stuck: an opaque paper strip above the bar stops scrolled content
+   bleeding through the gap at the top edge (visible when zoomed / mobile). */
+.note-toolbar.is-stuck {
   box-shadow: 0 -36px 0 0 var(--paper);
 }
 
