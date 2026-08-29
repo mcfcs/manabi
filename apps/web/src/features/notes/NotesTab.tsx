@@ -336,15 +336,20 @@ function NoteEditor({ noteId, moduleId }: { noteId: number; moduleId: string }) 
 
   const queryClient = useQueryClient();
   const save = useCallback(
-    async (pmJson: Record<string, unknown>) => {
+    async (pmJson: Record<string, unknown>, opts?: { flush?: boolean }) => {
       setSaveState("saving");
       try {
-        // keepalive: the flush from pagehide must survive navigation
-        const saved = await api.put<NoteOut>(
-          `/api/notes/${noteId}`,
-          { pm_json: pmJson },
-          { keepalive: true },
-        );
+        // keepalive lets the pagehide flush survive navigation — but browsers
+        // hard-cap keepalive request bodies at 64KiB, and a big pasted note
+        // exceeds it (the fetch then throws before touching the network, so
+        // EVERY save fails). Autosaves never need keepalive (the tab is
+        // open); the flush uses it only while the body fits under the cap.
+        const body = { pm_json: pmJson };
+        const keepalive =
+          (opts?.flush ?? false) && JSON.stringify(body).length < 60_000;
+        const saved = await api.put<NoteOut>(`/api/notes/${noteId}`, body, {
+          keepalive,
+        });
         // Keep the cache mirroring the server — otherwise returning to this
         // tab re-initializes the editor from a stale pre-save snapshot
         // (and typing into that would overwrite the real note).
@@ -417,7 +422,7 @@ function NoteEditor({ noteId, moduleId }: { noteId: number; moduleId: string }) 
   // Flush unsaved changes when leaving / backgrounding / switching notes
   useEffect(() => {
     const flush = () => {
-      if (pendingRef.current) save(pendingRef.current);
+      if (pendingRef.current) save(pendingRef.current, { flush: true });
     };
     window.addEventListener("visibilitychange", flush);
     window.addEventListener("pagehide", flush);
@@ -436,12 +441,14 @@ function NoteEditor({ noteId, moduleId }: { noteId: number; moduleId: string }) 
     const reposition = () => {
       const keyboardOpen = vv.height < window.innerHeight - 120;
       if (keyboardOpen) {
+        bar.classList.add("kb-docked"); // edge-to-edge accessory-bar styling
         bar.style.position = "fixed";
         bar.style.top = `${vv.offsetTop + vv.height - bar.offsetHeight}px`;
         bar.style.left = "0";
         bar.style.right = "0";
         bar.style.zIndex = "40";
       } else {
+        bar.classList.remove("kb-docked");
         bar.style.position = "";
         bar.style.top = "";
         bar.style.left = "";

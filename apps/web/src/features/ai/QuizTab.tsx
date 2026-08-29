@@ -1,6 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "@tanstack/react-router";
 import {
+  ChevronLeft,
   ChevronRight,
   Flag,
   ListChecks,
@@ -112,6 +113,18 @@ function QuizPlayer({
   const [results, setResults] = useState<("right" | "wrong" | "skip")[]>([]);
   const [attemptId, setAttemptId] = useState<number | null>(null);
   const [responses, setResponses] = useState<Record<string, unknown>>({});
+  // Per-question input snapshots so answered questions can be revisited
+  // (review-only — outcomes are final once graded).
+  type Snapshot = {
+    selected: string | null;
+    shortInput: string;
+    enumInput: string;
+    longInput: string;
+  };
+  const [answered, setAnswered] = useState<Snapshot[]>([]);
+  // Stashes the in-progress (frontier) question's inputs while reviewing.
+  const draftRef = useRef<(Snapshot & { checked: boolean }) | null>(null);
+  const reviewing = index < results.length;
 
   const started = useRef(false);
   const start = useMutation({
@@ -168,6 +181,7 @@ function QuizPlayer({
     };
     setResults(newResults);
     setResponses(newResponses);
+    setAnswered([...answered, { selected, shortInput, enumInput, longInput }]);
     setChecked(false);
     setSelected(null);
     setShortInput("");
@@ -192,6 +206,43 @@ function QuizPlayer({
 
   function next(correct: boolean) {
     finishQuestion(correct ? "right" : "wrong");
+  }
+
+  // ── Review navigation (Previous / back to current) ──────────────────
+  function restoreSnapshot(s: Snapshot) {
+    setSelected(s.selected);
+    setShortInput(s.shortInput);
+    setEnumInput(s.enumInput);
+    setLongInput(s.longInput);
+  }
+
+  function goPrev() {
+    if (index === 0) return;
+    if (!reviewing) {
+      // leaving the live question — stash its inputs so nothing is lost
+      draftRef.current = { selected, shortInput, enumInput, longInput, checked };
+    }
+    restoreSnapshot(answered[index - 1]);
+    setChecked(true);
+    setChallengeJobId(null);
+    setIndex(index - 1);
+  }
+
+  function goForward() {
+    const nextIdx = index + 1;
+    setChallengeJobId(null);
+    if (nextIdx < results.length) {
+      restoreSnapshot(answered[nextIdx]);
+      setChecked(true);
+    } else {
+      const d = draftRef.current;
+      restoreSnapshot(
+        d ?? { selected: null, shortInput: "", enumInput: "", longInput: "" },
+      );
+      setChecked(d?.checked ?? false);
+      draftRef.current = null;
+    }
+    setIndex(nextIdx);
   }
 
   // ── "Think this answer is wrong?" — AI adjudication ─────────────────
@@ -314,30 +365,48 @@ function QuizPlayer({
         <span className="quiz-meta-actions">
           <button
             className="btn"
-            onClick={() => finishQuestion("skip")}
-            disabled={regenPending}
-            title="Skip this question — it won't count toward your score"
+            onClick={goPrev}
+            disabled={index === 0 || regenPending}
+            title="Review the previous question"
           >
-            <SkipForward size={15} strokeWidth={1.75} /> Skip
+            <ChevronLeft size={15} strokeWidth={1.75} /> Previous
           </button>
-          <button
-            className="btn"
-            onClick={() => regen.mutate()}
-            disabled={regenPending}
-            title="Replace this question with a freshly generated one"
-          >
-            <RefreshCw
-              size={15}
-              strokeWidth={1.75}
-              className={regenPending ? "spin" : ""}
-            />{" "}
-            Regenerate
-          </button>
+          {!reviewing && (
+            <>
+              <button
+                className="btn"
+                onClick={() => finishQuestion("skip")}
+                disabled={regenPending}
+                title="Skip this question — it won't count toward your score"
+              >
+                <SkipForward size={15} strokeWidth={1.75} /> Skip
+              </button>
+              <button
+                className="btn"
+                onClick={() => regen.mutate()}
+                disabled={regenPending}
+                title="Replace this question with a freshly generated one"
+              >
+                <RefreshCw
+                  size={15}
+                  strokeWidth={1.75}
+                  className={regenPending ? "spin" : ""}
+                />{" "}
+                Regenerate
+              </button>
+            </>
+          )}
           <button className="btn" onClick={onExit}>
             Exit quiz
           </button>
         </span>
       </div>
+
+      {reviewing && (
+        <p className="quiz-pending-line">
+          Reviewing an answered question — its result is locked in.
+        </p>
+      )}
 
       {regenPending && (
         <p className="quiz-pending-line">
@@ -491,12 +560,31 @@ function QuizPlayer({
 
       {checked && (
         <div className="quiz-feedback">
-          {(question.answer.kind === "mcq" || question.answer.kind === "tf") && (
-            <p className={correctResponse ? "quiz-right" : "quiz-wrong"}>
-              {correctResponse ? "Correct" : "Not quite"}
+          {reviewing && (
+            <p
+              className={
+                results[index] === "right"
+                  ? "quiz-right"
+                  : results[index] === "wrong"
+                    ? "quiz-wrong"
+                    : "quiz-pending-line"
+              }
+            >
+              {results[index] === "right"
+                ? "You got this right"
+                : results[index] === "wrong"
+                  ? "You got this wrong"
+                  : "You skipped this one"}
             </p>
           )}
-          {verdict !== null && (
+          {!reviewing &&
+            (question.answer.kind === "mcq" ||
+              question.answer.kind === "tf") && (
+              <p className={correctResponse ? "quiz-right" : "quiz-wrong"}>
+                {correctResponse ? "Correct" : "Not quite"}
+              </p>
+            )}
+          {!reviewing && verdict !== null && (
             <p className={verdict ? "quiz-right" : "quiz-wrong"}>
               {verdict ? "Correct" : "Not quite"}
             </p>
@@ -643,7 +731,12 @@ function QuizPlayer({
               </div>
             )}
           </div>
-          {SELF_GRADED.has(question.qtype) ? (
+          {reviewing ? (
+            <button className="btn btn-primary" onClick={goForward}>
+              {index + 1 < results.length ? "Next" : "Back to current"}{" "}
+              <ChevronRight size={15} strokeWidth={2} />
+            </button>
+          ) : SELF_GRADED.has(question.qtype) ? (
             <div className="quiz-self-grade">
               <button className="btn grade-wrong" onClick={() => next(false)}>
                 I was wrong
