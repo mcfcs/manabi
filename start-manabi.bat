@@ -5,7 +5,7 @@ title Manabi launcher
 
 echo.
 echo   Manabi - start everything
-echo   (pass --rebuild to force a fresh web build)
+echo   (web is rebuilt and API + workers are restarted fresh on every run)
 echo.
 
 REM ── 0. .env ────────────────────────────────────────────────────────────
@@ -47,40 +47,32 @@ if errorlevel 1 (
 uv run procrastinate --app=manabi_ai.app.app schema --apply >nul 2>&1
 echo [migrate]  schema up to date
 
-REM ── 4. Web build (only if missing, or --rebuild) ──────────────────────
-set NEED_BUILD=0
-if not exist apps\web\dist\index.html set NEED_BUILD=1
-if "%~1"=="--rebuild" set NEED_BUILD=1
-if "!NEED_BUILD!"=="1" (
-    echo [web]      building...
-    call pnpm --filter web run build >nul 2>&1
-    if errorlevel 1 (
-        echo [ERROR]    web build failed - run manually: pnpm --filter web run build
-        pause
-        exit /b 1
-    )
+REM ── 4. Web build (always fresh — code changes are picked up every run) ─
+echo [web]      building...
+call pnpm --filter web run build >nul 2>&1
+if errorlevel 1 (
+    echo [ERROR]    web build failed - run manually: pnpm --filter web run build
+    pause
+    exit /b 1
 )
 echo [web]      built
 
-REM ── 5. Services (each in its own window, skipped if already running) ──
-REM Health-check the port: healthy API → skip; zombie holder → kill, then start.
+REM ── 5. Services: kill stale instances, then start fresh ───────────────
+REM Every run is a clean redeploy: previous API/worker processes (and their
+REM cmd windows) are killed by command-line match, plus anything else that
+REM holds the app port 56690. Postgres (56661, the Docker container) and the
+REM TTS server (9880, ~30s model reload for nothing) are deliberately spared.
+REM The \. in the match patterns keeps the killer from matching itself.
+echo [stop]     clearing previous Manabi processes...
 powershell -NoProfile -Command ^
-  "$c = Get-NetTCPConnection -LocalPort 56690 -State Listen -ErrorAction SilentlyContinue; if (-not $c) { exit 1 }; try { $r = Invoke-WebRequest -Uri 'http://localhost:56690/api/health' -UseBasicParsing -TimeoutSec 3; if ($r.StatusCode -eq 200) { exit 0 } } catch {}; $c | Select-Object -ExpandProperty OwningProcess -Unique | ForEach-Object { Stop-Process -Id $_ -Force -ErrorAction SilentlyContinue }; Start-Sleep -Seconds 1; exit 1"
-if errorlevel 1 (
-    start "Manabi API" cmd /k uv run --package manabi-server uvicorn manabi_server.main:app --host 0.0.0.0 --port 56690
-) else (
-    echo [api]      already running and healthy on port 56690 - not starting another
-)
+  "Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -match 'manabi_server\.main:app|manabi_ai\.worker|manabi_server\.worker' } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }; Get-NetTCPConnection -LocalPort 56690 -State Listen -ErrorAction SilentlyContinue | Select-Object -ExpandProperty OwningProcess -Unique | ForEach-Object { Stop-Process -Id $_ -Force -ErrorAction SilentlyContinue }; Start-Sleep -Milliseconds 800; exit 0"
+
+start "Manabi API" cmd /k uv run --package manabi-server uvicorn manabi_server.main:app --host 0.0.0.0 --port 56690
 
 if "%SKIP_GPU_WORKER%"=="1" (
     echo [worker]   SKIP_GPU_WORKER=1 - GPU worker runs on phillmyeol
 ) else (
-    powershell -NoProfile -Command "exit ((Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -match 'manabi_ai\.worker' }).Count)" >nul 2>&1
-    if not errorlevel 1 (
-        start "Manabi AI worker" cmd /k uv run python -m manabi_ai.worker
-    ) else (
-        echo [worker]   AI worker already running - not starting another
-    )
+    start "Manabi AI worker" cmd /k uv run python -m manabi_ai.worker
 )
 
 REM ── Teacher voice: GPT-SoVITS TTS server (only where it is installed) ──
@@ -97,12 +89,7 @@ if exist "C:\GPT-SoVITS\api_v2.py" (
     echo [tts]      GPT-SoVITS not installed here - Teacher runs in reading mode
 )
 
-powershell -NoProfile -Command "exit ((Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -match 'manabi_server\.worker' }).Count)" >nul 2>&1
-if not errorlevel 1 (
-    start "Manabi CPU worker" cmd /k uv run python -m manabi_server.worker
-) else (
-    echo [worker]   CPU worker already running - not starting another
-)
+start "Manabi CPU worker" cmd /k uv run python -m manabi_server.worker
 
 REM ── 6. URLs ───────────────────────────────────────────────────────────
 set TSIP=
