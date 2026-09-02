@@ -1,13 +1,22 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "@tanstack/react-router";
-import { ExternalLink, Pencil, Plus, Trash2, Video } from "lucide-react";
+import {
+  ChevronDown,
+  ExternalLink,
+  Pencil,
+  Plus,
+  Trash2,
+  Video,
+} from "lucide-react";
 import { useState } from "react";
 
 import { Modal } from "../../components/Modal";
 import {
   api,
   ApiError,
+  type CourseCutsOut,
   type CourseOut,
+  type CutOut,
   type ScheduleEntryOut,
   type ScheduleGroupOut,
   type ScheduleOut,
@@ -25,6 +34,196 @@ function fmt(minute: number): string {
   const h = Math.floor(minute / 60);
   const m = minute % 60;
   return `${h}:${String(m).padStart(2, "0")}`;
+}
+
+// ── Cuts & lates ──────────────────────────────────────────────
+
+const todayISO = () => new Date().toLocaleDateString("en-CA"); // YYYY-MM-DD local
+
+const fmtCuts = (total: number) =>
+  Number.isInteger(total) ? String(total) : total.toFixed(1);
+
+function CutsSection() {
+  const queryClient = useQueryClient();
+  const cuts = useQuery({
+    queryKey: ["cuts"],
+    queryFn: () => api.get<CourseCutsOut[]>("/api/cuts"),
+  });
+  const [open, setOpen] = useState<Set<number>>(new Set());
+  const [addingFor, setAddingFor] = useState<number | null>(null);
+  const [date, setDate] = useState(todayISO);
+  const [kind, setKind] = useState<"cut" | "late">("cut");
+  const [reason, setReason] = useState("");
+
+  const add = useMutation({
+    mutationFn: (courseId: number) =>
+      api.post<CutOut>("/api/cuts", {
+        course_id: courseId,
+        date,
+        kind,
+        reason: reason.trim() || null,
+      }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["cuts"] });
+      setAddingFor(null);
+      setReason("");
+      setKind("cut");
+      setDate(todayISO());
+    },
+  });
+  const remove = useMutation({
+    mutationFn: (id: number) => api.delete(`/api/cuts/${id}`),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["cuts"] }),
+  });
+
+  function toggle(courseId: number) {
+    setOpen((prev) => {
+      const next = new Set(prev);
+      if (next.has(courseId)) next.delete(courseId);
+      else next.add(courseId);
+      return next;
+    });
+  }
+
+  function startAdd(courseId: number) {
+    setAddingFor(courseId);
+    setOpen((prev) => new Set(prev).add(courseId));
+    setDate(todayISO());
+    setKind("cut");
+    setReason("");
+  }
+
+  if (!cuts.data?.length) return null;
+
+  return (
+    <section className="cuts-section">
+      <div className="cuts-head">
+        <h2>Cuts &amp; lates</h2>
+        <span className="cuts-hint">an absence uses 1 cut · a late uses 0.5</span>
+      </div>
+      <div className="cuts-list">
+        {cuts.data.map((c) => {
+          const expanded = open.has(c.course_id);
+          return (
+            <div key={c.course_id} className="cuts-course">
+              <div className="cuts-row">
+                <button
+                  className="cuts-row-main"
+                  onClick={() => toggle(c.course_id)}
+                  aria-expanded={expanded}
+                >
+                  <span
+                    className="tba-dot"
+                    style={{ background: c.accent_color ?? "var(--accent-blue)" }}
+                  />
+                  <span className="cuts-code">{c.code}</span>
+                  <span className={`cuts-total${c.total > 0 ? " used" : ""}`}>
+                    {fmtCuts(c.total)} cut{c.total === 1 ? "" : "s"} used
+                  </span>
+                  {c.entries.length > 0 && (
+                    <span className="cuts-count-hint">
+                      {c.entries.length} entr
+                      {c.entries.length === 1 ? "y" : "ies"}
+                    </span>
+                  )}
+                  <ChevronDown
+                    size={15}
+                    strokeWidth={1.75}
+                    className={`cuts-chevron${expanded ? " open" : ""}`}
+                  />
+                </button>
+                <button
+                  className="icon-btn"
+                  onClick={() => startAdd(c.course_id)}
+                  aria-label={`Record a cut or late for ${c.code}`}
+                  title="Record a cut / late"
+                >
+                  <Plus size={15} strokeWidth={1.75} />
+                </button>
+              </div>
+              {expanded && (
+                <div className="cuts-entries">
+                  {addingFor === c.course_id && (
+                    <form
+                      className="cuts-add"
+                      onSubmit={(e) => {
+                        e.preventDefault();
+                        add.mutate(c.course_id);
+                      }}
+                    >
+                      <input
+                        type="date"
+                        className="input cuts-date"
+                        value={date}
+                        onChange={(e) => setDate(e.target.value)}
+                        required
+                      />
+                      <div className="cuts-kind">
+                        <button
+                          type="button"
+                          className={`btn${kind === "cut" ? " active" : ""}`}
+                          onClick={() => setKind("cut")}
+                        >
+                          Cut
+                        </button>
+                        <button
+                          type="button"
+                          className={`btn${kind === "late" ? " active" : ""}`}
+                          onClick={() => setKind("late")}
+                        >
+                          Late · 0.5
+                        </button>
+                      </div>
+                      <input
+                        className="input cuts-reason"
+                        placeholder="Reason (optional)"
+                        value={reason}
+                        onChange={(e) => setReason(e.target.value)}
+                      />
+                      <button className="btn btn-primary" disabled={add.isPending}>
+                        Save
+                      </button>
+                      <button
+                        type="button"
+                        className="btn"
+                        onClick={() => setAddingFor(null)}
+                      >
+                        Cancel
+                      </button>
+                    </form>
+                  )}
+                  {c.entries.length === 0 && addingFor !== c.course_id && (
+                    <p className="cuts-empty">No cuts recorded — clean slate.</p>
+                  )}
+                  {c.entries.map((e) => (
+                    <div key={e.id} className="cuts-entry">
+                      <span className="cuts-entry-date mono">
+                        {new Date(`${e.date}T00:00:00`).toLocaleDateString(
+                          undefined,
+                          { month: "short", day: "numeric" },
+                        )}
+                      </span>
+                      <span className={`badge cuts-badge ${e.kind}`}>
+                        {e.kind === "late" ? "late · 0.5" : "cut"}
+                      </span>
+                      <span className="cuts-entry-reason">{e.reason ?? ""}</span>
+                      <button
+                        className="icon-btn danger cuts-entry-del"
+                        onClick={() => remove.mutate(e.id)}
+                        aria-label="Delete entry"
+                      >
+                        <Trash2 size={13} strokeWidth={1.5} />
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          );
+        })}
+      </div>
+    </section>
+  );
 }
 
 function BlockChip({
@@ -590,6 +789,8 @@ export function SchedulePage() {
           ))}
         </div>
       )}
+
+      <CutsSection />
 
       {addingTo && (
         <EntryDialog schedule={addingTo} onClose={() => setAddingTo(null)} />

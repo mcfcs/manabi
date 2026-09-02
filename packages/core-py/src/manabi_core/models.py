@@ -702,6 +702,23 @@ class ScheduleBlock(Base, TimestampMixin):
     )
 
 
+class CutEntry(Base, TimestampMixin):
+    """A self-tracked class absence ("cut") or late. A late consumes 0.5 of a
+    cut; totals are computed at read time, never stored."""
+
+    __tablename__ = "cut_entries"
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    course_id: Mapped[int] = mapped_column(
+        BigInteger, ForeignKey("courses.id", ondelete="CASCADE"), nullable=False
+    )
+    date: Mapped[date] = mapped_column(Date, nullable=False)  # naive Manila date
+    kind: Mapped[str] = mapped_column(String(8), nullable=False)  # cut | late
+    reason: Mapped[str | None] = mapped_column(Text)
+
+    __table_args__ = (Index("ix_cut_entries_course_id", "course_id"),)
+
+
 class AppSettings(Base):
     """Single-row app configuration (id always 1)."""
 

@@ -127,6 +127,23 @@ export interface ScheduleOut {
   schedules: ScheduleGroupOut[];
 }
 
+export interface CutOut {
+  id: number;
+  course_id: number;
+  date: string; // YYYY-MM-DD
+  kind: "cut" | "late";
+  reason: string | null;
+}
+
+export interface CourseCutsOut {
+  course_id: number;
+  code: string;
+  name: string | null;
+  accent_color: string | null;
+  total: number; // cuts used — a late counts 0.5
+  entries: CutOut[]; // newest first
+}
+
 export interface MeetingOut {
   date: string;
   course_id: number | null;
