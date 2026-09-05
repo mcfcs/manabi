@@ -23,9 +23,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from manabi_server.db import get_db
 from manabi_server.security import get_default_user, require_csrf
 from manabi_server.srs import (
+    NEW_CARDS_PER_LOAD,
     RATINGS,
+    QueueItem,
     ReviewState,
     apply_rating,
+    order_queue,
     preview_intervals,
     restore_review,
     snapshot_review,
@@ -52,7 +55,10 @@ class ReviewCardOut(BaseModel):
 
 class QueueOut(BaseModel):
     due: list[ReviewCardOut]
-    due_count: int
+    due_count: int  # every due card, including new ones held back by the cap
+    new_total: int = 0  # never-reviewed cards that are due
+    new_shown: int = 0  # of those, how many are in `due`
+    new_offset: int = 0  # echo of the request; next page starts at offset + shown
 
 
 def _review_deck_cards():
@@ -72,9 +78,13 @@ def _review_deck_cards():
 @router.get("/queue")
 async def review_queue(
     limit: int = 60,
+    new_offset: int = 0,
     user: User = Depends(get_default_user),
     db: AsyncSession = Depends(get_db),
 ) -> QueueOut:
+    """Today's session: overdue reviews (most overdue, weakest first), then up
+    to NEW_CARDS_PER_LOAD never-reviewed cards, both interleaved across
+    modules. `new_offset` pages through the held-back new cards."""
     today = today_manila()
     rows = (
         await db.execute(
@@ -85,11 +95,31 @@ async def review_queue(
                 Course.user_id == user.id,
                 (CardReview.id.is_(None)) | (CardReview.due_date <= today),
             )
-            .order_by(CardReview.due_date.nulls_first(), Flashcard.id)
         )
     ).all()
-    due = [_card_out(f, m, c, r, today) for f, m, c, r in rows[: max(1, min(limit, 200))]]
-    return QueueOut(due=due, due_count=len(rows))
+    by_id = {f.id: (f, m, c, r) for f, m, c, r in rows}
+    ordered, new_total = order_queue(
+        (
+            QueueItem(
+                card_id=f.id,
+                module_id=m.id,
+                due_date=r.due_date if r is not None else None,
+                ease=r.ease if r is not None else ReviewState().ease,
+            )
+            for f, m, c, r in rows
+        ),
+        new_cap=NEW_CARDS_PER_LOAD,
+        new_offset=new_offset,
+    )
+    shown = ordered[: max(1, min(limit, 200))]
+    due = [_card_out(*by_id[i], today) for i in shown]
+    return QueueOut(
+        due=due,
+        due_count=len(rows),
+        new_total=new_total,
+        new_shown=sum(1 for i in shown if by_id[i][3] is None),
+        new_offset=new_offset,
+    )
 
 
 def _state_of(review: CardReview | None) -> ReviewState:

@@ -5,6 +5,8 @@ good (×ease), easy (×ease×1.3, ease +0.15). Ease clamped 1.3–2.8,
 interval capped at 365 days.
 """
 
+from collections import deque
+from collections.abc import Iterable
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta
 
@@ -84,3 +86,64 @@ def preview_intervals(state: ReviewState, today: date) -> dict[str, int]:
     """Days until the next review for each rating — shown on the rating
     buttons so the choice is informed (Anki-style "4d / 12d")."""
     return {rating: (apply_rating(state, rating, today)[1] - today).days for rating in RATINGS}
+
+
+# ── Session ordering ────────────────────────────────────────────────────────
+
+NEW_CARDS_PER_LOAD = 20
+
+
+@dataclass(frozen=True)
+class QueueItem:
+    card_id: int
+    module_id: int
+    due_date: date | None  # None = never reviewed
+    ease: float = 2.5
+
+
+def _round_robin(groups: list[list[int]]) -> list[int]:
+    """Interleave lists element by element, preserving each list's order."""
+    queues = [deque(g) for g in groups if g]
+    out: list[int] = []
+    while queues:
+        for q in list(queues):
+            out.append(q.popleft())
+            if not q:
+                queues.remove(q)
+    return out
+
+
+def _interleave_by_module(items: list[QueueItem]) -> list[int]:
+    """Group by module in the order the modules first appear in `items`
+    (which is already sorted by priority), then round-robin across them."""
+    by_module: dict[int, list[int]] = {}
+    for it in items:
+        by_module.setdefault(it.module_id, []).append(it.card_id)
+    return _round_robin(list(by_module.values()))
+
+
+def order_queue(
+    items: Iterable[QueueItem],
+    *,
+    new_cap: int = NEW_CARDS_PER_LOAD,
+    new_offset: int = 0,
+) -> tuple[list[int], int]:
+    """Session order for the due queue.
+
+    Reviews (cards with a due date) come first, most overdue first and the
+    weakest ease first on ties; never-reviewed cards follow, capped at
+    ``new_cap`` after skipping ``new_offset`` (so a freshly generated deck
+    cannot flood a session). Within both groups cards round-robin across
+    modules so one deck never monopolises the run.
+
+    Returns (ordered card ids, total number of never-reviewed cards).
+    """
+    items = list(items)
+    reviews = sorted(
+        (i for i in items if i.due_date is not None),
+        key=lambda i: (i.due_date, i.ease, i.card_id),
+    )
+    fresh = sorted((i for i in items if i.due_date is None), key=lambda i: i.card_id)
+    ordered_new = _interleave_by_module(fresh)
+    start = max(0, new_offset)
+    return _interleave_by_module(reviews) + ordered_new[start : start + max(0, new_cap)], len(fresh)

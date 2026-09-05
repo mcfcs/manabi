@@ -24,6 +24,10 @@ interface ReviewCard {
 interface QueueOut {
   due: ReviewCard[];
   due_count: number;
+  /** never-reviewed cards that are due; only NEW_CARDS_PER_LOAD ship per page */
+  new_total: number;
+  new_shown: number;
+  new_offset: number;
 }
 
 const RATINGS = [
@@ -71,7 +75,7 @@ export function ReviewPage() {
         // "again" cards return to the end of today's session
         const card = old.due.find((c) => c.flashcard_id === v.id);
         const due = v.rating === "again" && card ? [...rest, card] : rest;
-        return { due, due_count: due.length };
+        return { ...old, due, due_count: due.length };
       });
       queryClient.invalidateQueries({ queryKey: ["review-due-count"] });
     },
@@ -88,11 +92,36 @@ export function ReviewPage() {
       queryClient.setQueryData<QueueOut>(["review-queue"], (old) => {
         const rest = (old?.due ?? []).filter((c) => c.flashcard_id !== card.flashcard_id);
         const due = [card, ...rest];
-        return { due, due_count: due.length };
+        return {
+          new_total: 0,
+          new_shown: 0,
+          new_offset: 0,
+          ...old,
+          due,
+          due_count: due.length,
+        };
       });
       queryClient.invalidateQueries({ queryKey: ["review-due-count"] });
     },
     onError: () => setLastRated(null), // nothing to undo server-side anymore
+  });
+
+  // New cards beyond the per-page cap stay on the server until asked for.
+  const loadedNew = (queue.data?.new_offset ?? 0) + (queue.data?.new_shown ?? 0);
+  const heldBack = Math.max(0, (queue.data?.new_total ?? 0) - loadedNew);
+  const loadMore = useMutation({
+    mutationFn: () => api.get<QueueOut>(`/api/review/queue?new_offset=${loadedNew}`),
+    onSuccess: (page) => {
+      queryClient.setQueryData<QueueOut>(["review-queue"], (old) => {
+        const seen = new Set((old?.due ?? []).map((c) => c.flashcard_id));
+        const fresh = page.due.filter((c) => !seen.has(c.flashcard_id));
+        return {
+          ...page,
+          due: [...(old?.due ?? []), ...fresh],
+          due_count: (old?.due.length ?? 0) + fresh.length,
+        };
+      });
+    },
   });
 
   const card = queue.data?.due[0];
@@ -142,6 +171,7 @@ export function ReviewPage() {
           )}
           <span className="review-progress mono">
             {done} done · {remaining} left
+            {heldBack > 0 ? ` · ${heldBack} new waiting` : ""}
           </span>
         </div>
       </header>
@@ -155,8 +185,25 @@ export function ReviewPage() {
           <p>
             {done > 0
               ? `${done} card${done === 1 ? "" : "s"} reviewed — intervals updated.`
-              : "Cards become due as their intervals expire. Generate decks in any module to feed the queue."}
+              : heldBack > 0
+                ? "No reviews are due."
+                : "Cards become due as their intervals expire. Generate decks in any module to feed the queue."}
           </p>
+          {heldBack > 0 && (
+            <>
+              <p>
+                {heldBack} new card{heldBack === 1 ? " is" : "s are"} held back so a
+                fresh deck can't flood one session.
+              </p>
+              <button
+                className="btn btn-primary"
+                onClick={() => loadMore.mutate()}
+                disabled={loadMore.isPending}
+              >
+                Load {Math.min(20, heldBack)} more new card{Math.min(20, heldBack) === 1 ? "" : "s"}
+              </button>
+            </>
+          )}
         </div>
       )}
 
