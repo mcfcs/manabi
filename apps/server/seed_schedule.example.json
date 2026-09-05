@@ -1,0 +1,23 @@
+{
+  "$comment": "Copy to seed_schedule.local.json (gitignored) and fill in your real courses. day: 0=Mon .. 6=Sun; start/end: minutes from midnight (480 = 08:00); blocks [] = TBA, still shown on the schedule; canvas_course_id: pick from GET /api/canvas/courses or leave null.",
+  "term": "1st Sem 2026-27",
+  "courses": [
+    {
+      "code": "CSCI 101",
+      "name": "INTRODUCTION TO COMPUTING",
+      "instructor": "Ada Example",
+      "canvas_course_id": 12345,
+      "blocks": [
+        { "day": 0, "start": 480, "end": 570, "room": "CTC 101" },
+        { "day": 3, "start": 480, "end": 570, "room": "CTC 101" }
+      ]
+    },
+    {
+      "code": "MATH 199",
+      "name": "THESIS WRITING",
+      "instructor": null,
+      "canvas_course_id": null,
+      "blocks": []
+    }
+  ]
+}
