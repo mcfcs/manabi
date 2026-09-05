@@ -318,10 +318,10 @@ a.course-file-name:hover {
   }
 }
 
-/* ── Mobile (audit-verified fixes) ─────────────────────────── */
-@media (max-width: 767px) {
-  /* Header: title full-width, actions in their own row below —
-     buttons no longer overlap the wrapped title */
+/* ── Tablet portrait + phone: header actions drop below the title ──────
+   "CODE · NAME" plus five action buttons need ~900px; below 1024 the title
+   takes the full width and the buttons form their own row. */
+@media (max-width: 1023px) {
   .course-head {
     flex-wrap: wrap;
     gap: var(--s-2) var(--s-3);
@@ -331,10 +331,6 @@ a.course-file-name:hover {
     flex-basis: calc(100% - 18px);
     min-width: 0;
   }
-  .course-head-text h1 {
-    font-size: 20px;
-    line-height: 1.25;
-  }
   .course-head > .icon-btn,
   .course-head > a.icon-btn,
   .course-head > .course-canvas-files,
@@ -343,6 +339,14 @@ a.course-file-name:hover {
   }
   .course-head-accent {
     align-self: stretch;
+  }
+}
+
+/* ── Mobile (audit-verified fixes) ─────────────────────────── */
+@media (max-width: 767px) {
+  .course-head-text h1 {
+    font-size: 20px;
+    line-height: 1.25;
   }
 
   /* Module rows: link line + actions line (was ~400px wide, overflowed) */
