@@ -3,13 +3,8 @@ import { CloudDownload, Loader2 } from "lucide-react";
 import { useState } from "react";
 
 import { Modal } from "../../components/Modal";
-import { api, ApiError } from "../../lib/api";
-
-interface CanvasCourse {
-  id: number;
-  name: string;
-  course_code: string | null;
-}
+import { api, ApiError, type CourseOut } from "../../lib/api";
+import type { CanvasCourse } from "../../lib/canvasMatch";
 
 interface CanvasFile {
   id: number;
@@ -25,13 +20,28 @@ function formatBytes(n: number): string {
 
 export function CanvasImportModal({
   moduleId,
+  manabiCourseId,
   onClose,
 }: {
   moduleId: string;
+  /** The Manabi course this module belongs to; its linked Canvas course is
+   * pre-selected so the common case is one click. */
+  manabiCourseId?: string;
   onClose: () => void;
 }) {
   const queryClient = useQueryClient();
-  const [courseId, setCourseId] = useState<number | null>(null);
+  const [picked, setPicked] = useState<number | null>(null);
+  const [touched, setTouched] = useState(false);
+  const manabiCourses = useQuery({
+    queryKey: ["courses"],
+    queryFn: () => api.get<CourseOut[]>("/api/courses"),
+    staleTime: 30_000,
+    enabled: manabiCourseId != null,
+  });
+  const linked =
+    manabiCourses.data?.find((c) => String(c.id) === manabiCourseId)?.canvas_course_id ??
+    null;
+  const courseId = touched ? picked : linked;
   const [selected, setSelected] = useState<Set<number>>(new Set());
   const [progress, setProgress] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -107,7 +117,8 @@ export function CanvasImportModal({
             className="input"
             value={courseId ?? ""}
             onChange={(e) => {
-              setCourseId(e.target.value ? Number(e.target.value) : null);
+              setTouched(true);
+              setPicked(e.target.value ? Number(e.target.value) : null);
               setSelected(new Set());
             }}
           >

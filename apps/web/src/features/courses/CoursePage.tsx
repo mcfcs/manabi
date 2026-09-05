@@ -7,6 +7,7 @@ import {
   CloudDownload,
   ExternalLink,
   FileText,
+  Link2,
   Pencil,
   Plus,
   StickyNote,
@@ -19,6 +20,7 @@ import { Modal } from "../../components/Modal";
 import { Announcements } from "./Announcements";
 import { CanvasFilesModal } from "./CanvasFilesModal";
 import { CanvasSyncModal } from "./CanvasSyncModal";
+import { CourseDialog } from "./CourseDialog";
 import { CourseFiles } from "./CourseFiles";
 import { CourseLinks } from "./CourseLinks";
 import {
@@ -183,6 +185,7 @@ export function CoursePage() {
     useState<DeleteConsequences | null>(null);
   const [canvasFilesOpen, setCanvasFilesOpen] = useState(false);
   const [canvasSyncOpen, setCanvasSyncOpen] = useState(false);
+  const [editing, setEditing] = useState(false);
 
   const courses = useQuery({
     queryKey: ["courses"],
@@ -298,6 +301,15 @@ export function CoursePage() {
             </button>
           </>
         )}
+        {course && !course.canvas_course_id && (
+          <button
+            className="btn course-canvas-files"
+            onClick={() => setEditing(true)}
+            title="Pick the matching Canvas course to enable announcements, file import and sync"
+          >
+            <Link2 size={15} strokeWidth={1.75} /> Link Canvas
+          </button>
+        )}
         <button
           className="icon-btn danger course-delete"
           onClick={() => removeCourse.mutate(false)}
@@ -366,6 +378,8 @@ export function CoursePage() {
       {canvasSyncOpen && course && (
         <CanvasSyncModal course={course} onClose={() => setCanvasSyncOpen(false)} />
       )}
+
+      {editing && course && <CourseDialog course={course} onClose={() => setEditing(false)} />}
 
       {confirmingCourse && (
         <Modal

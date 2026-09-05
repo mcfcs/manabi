@@ -17,7 +17,7 @@ import {
 import { CSS } from "@dnd-kit/utilities";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
-import { ExternalLink, GripVertical, Pencil, Plus } from "lucide-react";
+import { ExternalLink, GripVertical, Link2, Pencil, Plus } from "lucide-react";
 import { useEffect, useState } from "react";
 
 import { api, type CourseOut } from "../../lib/api";
@@ -105,6 +105,16 @@ function CourseCard({
           >
             <ExternalLink size={13} strokeWidth={1.5} />
           </a>
+        )}
+        {!course.canvas_url && (
+          <button
+            className="icon-btn"
+            onClick={onEdit}
+            aria-label={`Link ${course.code} to Canvas`}
+            title="Link to Canvas (announcements, file import, sync)"
+          >
+            <Link2 size={13} strokeWidth={1.5} />
+          </button>
         )}
       </div>
     </div>

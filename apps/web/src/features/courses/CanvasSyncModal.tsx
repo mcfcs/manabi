@@ -57,7 +57,7 @@ export function CanvasSyncModal({
   onClose: () => void;
 }) {
   const queryClient = useQueryClient();
-  const cid = course.canvas_url?.split("/").pop();
+  const cid = course.canvas_course_id;
   const [selMods, setSelMods] = useState<Set<number>>(new Set());
   const [selPages, setSelPages] = useState<Set<string>>(new Set());
   const [selDiscs, setSelDiscs] = useState<Set<number>>(new Set());

@@ -94,6 +94,7 @@ export interface CourseOut {
   document_count: number;
   card_count: number;
   canvas_url: string | null;
+  canvas_course_id: number | null;
   meeting_url: string | null;
   cover_image_url: string | null;
 }

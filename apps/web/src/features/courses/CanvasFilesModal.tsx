@@ -37,7 +37,7 @@ export function CanvasFilesModal({
   onClose: () => void;
 }) {
   const queryClient = useQueryClient();
-  const canvasCourseId = course.canvas_url?.split("/").pop();
+  const canvasCourseId = course.canvas_course_id;
   const [choices, setChoices] = useState<Map<number, RowChoice>>(new Map());
   const [progress, setProgress] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);

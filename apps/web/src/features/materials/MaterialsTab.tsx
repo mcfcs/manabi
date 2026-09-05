@@ -66,9 +66,12 @@ function StatusChip({ doc }: { doc: DocumentOut }) {
 
 export function MaterialsTab({
   moduleId,
+  courseId,
   onOpenDocument,
 }: {
   moduleId: string;
+  /** Owning course id; lets the Canvas import pre-select the linked course. */
+  courseId?: string;
   // When set (in a floating panel), a material opens IN the panel instead of
   // navigating the main window via the /documents route.
   onOpenDocument?: (doc: DocumentOut) => void;
@@ -290,7 +293,11 @@ export function MaterialsTab({
       </div>
 
       {importing && (
-        <CanvasImportModal moduleId={moduleId} onClose={() => setImporting(false)} />
+        <CanvasImportModal
+          moduleId={moduleId}
+          manabiCourseId={courseId}
+          onClose={() => setImporting(false)}
+        />
       )}
 
       {deleting && (

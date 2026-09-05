@@ -1,5 +1,5 @@
-import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { ImagePlus, Trash2 } from "lucide-react";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { ImagePlus, Loader2, Trash2 } from "lucide-react";
 import { type FormEvent, useRef, useState } from "react";
 
 import { Modal } from "../../components/Modal";
@@ -9,10 +9,20 @@ import {
   type CourseOut,
   type DeleteConsequences,
 } from "../../lib/api";
+import { type CanvasCourse, suggestCanvasCourse } from "../../lib/canvasMatch";
 
 const ACCENTS = [
   "#C93A2E", "#28518F", "#3E7A4E", "#B07D1F", "#6A4C93", "#1C2434", "#2E7D8F",
 ];
+
+/** Prefer the server's structured message (e.g. the Canvas-link 409). */
+function describeError(err: unknown): string {
+  if (err instanceof ApiError) {
+    const d = err.detail as { message?: unknown } | string | undefined;
+    if (d && typeof d === "object" && typeof d.message === "string") return d.message;
+  }
+  return err instanceof Error ? err.message : "Something went wrong";
+}
 
 /** Create/edit a course; editing also offers deletion (with consequences
  * confirm). Used from Home, Schedule, and the calendar day panel. */
@@ -34,6 +44,31 @@ export function CourseDialog({
   const [cover, setCover] = useState(course?.cover_image_url ?? null);
   const [coverBusy, setCoverBusy] = useState(false);
   const coverInput = useRef<HTMLInputElement>(null);
+
+  // Canvas link: the dropdown pre-selects the code match for an unlinked
+  // course ("suggested"); nothing is written until Save.
+  const [canvasId, setCanvasId] = useState<number | null>(null);
+  const [canvasTouched, setCanvasTouched] = useState(false);
+  const canvasCourses = useQuery({
+    queryKey: ["canvas-courses"],
+    queryFn: () => api.get<CanvasCourse[]>("/api/canvas/courses"),
+    staleTime: 5 * 60_000,
+    retry: false,
+  });
+  const linkedId = course?.canvas_course_id ?? null;
+  const suggestion =
+    linkedId == null && canvasCourses.data
+      ? suggestCanvasCourse(code, canvasCourses.data)
+      : null;
+  const effectiveCanvasId = canvasTouched ? canvasId : (linkedId ?? suggestion?.id ?? null);
+  const showSuggested = !canvasTouched && linkedId == null && suggestion != null;
+  const canvasUnavailable =
+    canvasCourses.error instanceof ApiError && canvasCourses.error.status === 409
+      ? "Canvas isn't configured (set CANVAS_BASE_URL and CANVAS_ACCESS_TOKEN in .env)."
+      : "Couldn't reach Canvas right now.";
+  const effectiveInList =
+    effectiveCanvasId == null ||
+    (canvasCourses.data ?? []).some((c) => c.id === effectiveCanvasId);
 
   const invalidate = () => {
     queryClient.invalidateQueries({ queryKey: ["courses"] });
@@ -104,6 +139,7 @@ export function CourseDialog({
       instructor: instructor || null,
       meeting_url: meetingUrl.trim() || null,
       accent_color: accent,
+      canvas_course_id: effectiveCanvasId,
     });
   }
 
@@ -196,6 +232,55 @@ export function CourseDialog({
           />
         </div>
         <div>
+          <label className="field-label" htmlFor="course-canvas">
+            Canvas course (optional)
+          </label>
+          {canvasCourses.isLoading && (
+            <p className="gen-hint">
+              <Loader2 size={13} className="spin" /> Loading your Canvas courses…
+            </p>
+          )}
+          {canvasCourses.isError && (
+            <p className="gen-hint">
+              {canvasUnavailable}
+              {linkedId != null ? ` Currently linked to Canvas course #${linkedId}.` : ""}
+            </p>
+          )}
+          {canvasCourses.data && (
+            <>
+              <select
+                id="course-canvas"
+                className="input"
+                value={effectiveCanvasId ?? ""}
+                onChange={(e) => {
+                  setCanvasTouched(true);
+                  setCanvasId(e.target.value ? Number(e.target.value) : null);
+                }}
+              >
+                <option value="">Not linked</option>
+                {!effectiveInList && effectiveCanvasId != null && (
+                  <option value={effectiveCanvasId}>
+                    Canvas course #{effectiveCanvasId} (not in your active courses)
+                  </option>
+                )}
+                {canvasCourses.data.map((c) => (
+                  <option key={c.id} value={c.id}>
+                    {c.course_code ? `${c.course_code} — ` : ""}
+                    {c.name.slice(0, 60)}
+                  </option>
+                ))}
+              </select>
+              <p className="gen-hint">
+                {showSuggested
+                  ? "Suggested from the course code — Save to confirm."
+                  : effectiveCanvasId == null
+                    ? "Linking enables announcements, Canvas file import and course sync."
+                    : "Announcements, file import and sync use this Canvas course."}
+              </p>
+            </>
+          )}
+        </div>
+        <div>
           <span className="field-label">Accent</span>
           <div className="accent-row">
             {ACCENTS.map((c) => (
@@ -253,7 +338,7 @@ export function CourseDialog({
             </div>
           </div>
         )}
-        {save.isError && <p className="error-text">{(save.error as Error).message}</p>}
+        {save.isError && <p className="error-text">{describeError(save.error)}</p>}
         <div className="modal-actions">
           {course && (
             <button

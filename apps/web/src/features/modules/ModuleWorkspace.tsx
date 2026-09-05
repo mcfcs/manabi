@@ -293,7 +293,9 @@ export function ModuleWorkspace() {
       </nav>
 
       {module && tab === "overview" && <Overview module={module} />}
-      {module && tab === "materials" && <MaterialsTab moduleId={moduleId} />}
+      {module && tab === "materials" && (
+        <MaterialsTab moduleId={moduleId} courseId={courseId} />
+      )}
       {module && tab === "summary" && <SummaryTab moduleId={moduleId} />}
       {module && tab === "cards" && (
         <FlashcardsTab moduleId={moduleId} courseId={courseId} />
