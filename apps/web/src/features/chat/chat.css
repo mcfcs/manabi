@@ -372,8 +372,8 @@
   flex: 0 0 auto;
 }
 
-/* Mobile-only chrome (top bar + settings chip) — hidden on desktop, where the
-   sidebar + inline toggle row are used instead. */
+/* Compact chrome (top bar + settings chip) for phone and tablet portrait —
+   hidden from 1024 up, where the sidebar + inline toggle row are used instead. */
 .chat-mbar,
 .chat-settings-btn {
   display: none;
@@ -406,9 +406,12 @@
   min-height: 0;
 }
 
-/* ── Mobile: ChatGPT/Claude-style — threads in a drawer, toggles in a sheet ── */
+/* ── Phone + tablet portrait (≤1023): ChatGPT/Claude-style — threads in a
+   drawer, toggles in a sheet. Even with the compact rail a 768px iPad has only
+   ~650px of content; a 220px thread list would leave the conversation ~400px,
+   so the drawer recipe runs through the tablet-portrait tier. ── */
 
-@media (max-width: 767px) {
+@media (max-width: 1023px) {
   .chat-tab {
     flex-direction: column;
     gap: var(--s-2);
@@ -417,23 +420,10 @@
   .chat-main {
     min-height: 0;
   }
-  /* Reclaim vertical space for the conversation: drop the crumb, compact
-     the head and tab bar while chatting. */
-  .module-page.module-chat .crumb {
-    display: none;
-  }
-  .module-page.module-chat .module-head {
-    margin-bottom: var(--s-2);
-  }
-  .module-page.module-chat .module-head h1 {
-    font-size: 17px;
-  }
-  .module-page.module-chat .tab-bar {
-    margin-bottom: var(--s-2);
-  }
-  /* the thread sidebar + the inline toggle row are replaced on mobile.
-     .chat-toggle-row is defined later with display:flex (same specificity),
-     so the hide rule needs the compound selector to win. */
+  /* the thread sidebar + the inline toggle row are replaced by the drawer
+     and the settings sheet. .chat-toggle-row is defined later with
+     display:flex (same specificity), so the hide rule needs the compound
+     selector to win. */
   .chat-threads {
     display: none;
   }
@@ -458,6 +448,23 @@
     background: var(--paper);
     padding: var(--s-2) 0;
     z-index: 5;
+  }
+}
+
+/* Phone only: reclaim vertical space for the conversation — drop the crumb,
+   compact the head and tab bar while chatting. */
+@media (max-width: 767px) {
+  .module-page.module-chat .crumb {
+    display: none;
+  }
+  .module-page.module-chat .module-head {
+    margin-bottom: var(--s-2);
+  }
+  .module-page.module-chat .module-head h1 {
+    font-size: 17px;
+  }
+  .module-page.module-chat .tab-bar {
+    margin-bottom: var(--s-2);
   }
 }
 
@@ -677,7 +684,7 @@
   color: var(--ink-faint);
 }
 
-@media (max-width: 767px) {
+@media (max-width: 1023px) {
   .chat-scope-pop {
     left: auto;
     right: 0;
