@@ -3,6 +3,12 @@ setlocal enabledelayedexpansion
 cd /d "%~dp0"
 title Manabi launcher
 
+REM --quiet (or MANABI_NOPAUSE=1): skip every "press any key" pause so the
+REM launcher can run non-interactively (e.g. from a tool). It still opens the
+REM service windows and is the ONLY sanctioned way to (re)start the services.
+set NOPAUSE=%MANABI_NOPAUSE%
+if /i "%~1"=="--quiet" set NOPAUSE=1
+
 echo.
 echo   Manabi - start everything
 echo   (web is rebuilt and API + workers are restarted fresh on every run)
@@ -41,7 +47,7 @@ uv run --package manabi-server alembic -c apps\server\alembic.ini upgrade head >
 if errorlevel 1 (
     echo [ERROR]    database migration failed - run it manually to see why:
     echo            uv run --package manabi-server alembic -c apps\server\alembic.ini upgrade head
-    pause
+    call :maybe_pause
     exit /b 1
 )
 uv run procrastinate --app=manabi_ai.app.app schema --apply >nul 2>&1
@@ -52,7 +58,7 @@ echo [web]      building...
 call pnpm --filter web run build >nul 2>&1
 if errorlevel 1 (
     echo [ERROR]    web build failed - run manually: pnpm --filter web run build
-    pause
+    call :maybe_pause
     exit /b 1
 )
 echo [web]      built
@@ -62,10 +68,11 @@ REM Every run is a clean redeploy: previous API/worker processes (and their
 REM cmd windows) are killed by command-line match, plus anything else that
 REM holds the app port 56690. Postgres (56661, the Docker container) and the
 REM TTS server (9880, ~30s model reload for nothing) are deliberately spared.
-REM The \. in the match patterns keeps the killer from matching itself.
+REM The \. in the match patterns keeps the killer from matching itself. The
+REM loop waits (up to ~10s) until 56690 is really free before uvicorn binds it.
 echo [stop]     clearing previous Manabi processes...
 powershell -NoProfile -Command ^
-  "Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -match 'manabi_server\.main:app|manabi_ai\.worker|manabi_server\.worker' } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }; Get-NetTCPConnection -LocalPort 56690 -State Listen -ErrorAction SilentlyContinue | Select-Object -ExpandProperty OwningProcess -Unique | ForEach-Object { Stop-Process -Id $_ -Force -ErrorAction SilentlyContinue }; Start-Sleep -Milliseconds 800; exit 0"
+  "Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -match 'manabi_server\.main:app|manabi_ai\.worker|manabi_server\.worker' } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }; $freed = $false; for ($i = 0; $i -lt 20; $i++) { $held = Get-NetTCPConnection -LocalPort 56690 -State Listen -ErrorAction SilentlyContinue; if (-not $held) { break }; $held | Select-Object -ExpandProperty OwningProcess -Unique | ForEach-Object { Stop-Process -Id $_ -Force -ErrorAction SilentlyContinue; $freed = $true }; Start-Sleep -Milliseconds 500 }; if ($freed) { Write-Host '[stop]     freed port 56690' }; Start-Sleep -Milliseconds 300; exit 0"
 
 start "Manabi API" cmd /k uv run --package manabi-server uvicorn manabi_server.main:app --host 0.0.0.0 --port 56690
 
@@ -108,4 +115,10 @@ echo.
 echo   First run: if Windows Firewall asks, click "Allow" so tailnet
 echo   devices can reach the server.
 echo.
+call :maybe_pause
+exit /b 0
+
+:maybe_pause
+if "%NOPAUSE%"=="1" exit /b 0
 pause
+exit /b 0
