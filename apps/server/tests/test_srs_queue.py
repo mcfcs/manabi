@@ -159,3 +159,27 @@ def test_snapshot_carries_leech_flag_for_undo():
     review.is_leech = True  # the rating that tipped it over
     restore_review(review, snap)
     assert review.is_leech is False
+
+
+# ── Stats helpers ──────────────────────────────────────────────────────────
+
+from manabi_server.srs import forecast, retention  # noqa: E402
+
+
+def test_forecast_bundles_overdue_and_new_into_today():
+    dues = [
+        None,
+        TODAY - timedelta(days=3),
+        TODAY,
+        TODAY + timedelta(days=1),
+        TODAY + timedelta(days=6),
+        TODAY + timedelta(days=7),
+    ]
+    assert forecast(TODAY, dues) == [3, 1, 0, 0, 0, 0, 1]
+
+
+def test_retention_is_share_of_good_or_easy():
+    assert retention([]) is None
+    assert retention([None, None]) is None
+    assert retention(["good", "easy", "again", "hard"]) == 0.5
+    assert retention(["good"]) == 1.0

@@ -5,6 +5,7 @@ import { useEffect, useState } from "react";
 import { api } from "../../lib/api";
 import { formatDays } from "./formatDays";
 import { LeechesPanel } from "./LeechesPanel";
+import { ReviewStats } from "./ReviewStats";
 import "./review.css";
 
 interface ReviewCard {
@@ -88,6 +89,7 @@ export function ReviewPage() {
         return { ...old, due, due_count: due.length };
       });
       queryClient.invalidateQueries({ queryKey: ["review-due-count"] });
+      queryClient.invalidateQueries({ queryKey: ["review-stats"] });
     },
   });
 
@@ -114,6 +116,7 @@ export function ReviewPage() {
         };
       });
       queryClient.invalidateQueries({ queryKey: ["review-due-count"] });
+      queryClient.invalidateQueries({ queryKey: ["review-stats"] });
     },
     onError: () => setLastRated(null), // nothing to undo server-side anymore
   });
@@ -187,6 +190,8 @@ export function ReviewPage() {
           </span>
         </div>
       </header>
+
+      <ReviewStats />
 
       {leechNotice && <p className="review-notice">{leechNotice}</p>}
 

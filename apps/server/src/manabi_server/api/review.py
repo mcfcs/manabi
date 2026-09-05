@@ -5,6 +5,8 @@ the daily queue. Whole-module regeneration moves the flag to the new deck;
 scoped/practice decks stay out unless the user toggles them in.
 """
 
+from datetime import timedelta
+
 from fastapi import APIRouter, Depends, HTTPException
 from manabi_core.models import (
     Artifact,
@@ -28,13 +30,15 @@ from manabi_server.srs import (
     QueueItem,
     ReviewState,
     apply_rating,
+    forecast,
     is_leech,
     order_queue,
     preview_intervals,
     restore_review,
+    retention,
     snapshot_review,
 )
-from manabi_server.timeutil import now_manila, today_manila
+from manabi_server.timeutil import MANILA, now_manila, today_manila
 
 router = APIRouter(prefix="/api/review", tags=["review"])
 
@@ -354,3 +358,70 @@ async def dismiss_leech(
     review.prev_state = None
     await db.commit()
     return {"ok": True}
+
+
+# ── Stats ──────────────────────────────────────────────────────────────────
+
+
+class ReviewStatsOut(BaseModel):
+    reviewed_today: int
+    due_now: int
+    in_rotation: int  # active cards in review-enabled decks
+    leeches: int
+    retention_30d: float | None  # share of cards reviewed in the last 30 days last rated good/easy
+    forecast: list[int]  # due per day for the next 7 days; index 0 = today (incl. overdue + new)
+
+
+@router.get("/stats")
+async def review_stats(
+    user: User = Depends(get_default_user), db: AsyncSession = Depends(get_db)
+) -> ReviewStatsOut:
+    today = today_manila()
+    rows = (
+        await db.execute(
+            select(CardReview.due_date, CardReview.last_rating, CardReview.reviewed_at)
+            .select_from(Flashcard)
+            .join(Artifact, Artifact.id == Flashcard.artifact_id)
+            .join(Module, Module.id == Artifact.module_id)
+            .join(Course, Course.id == Module.course_id)
+            .join(CardReview, CardReview.flashcard_id == Flashcard.id, isouter=True)
+            .where(
+                Artifact.artifact_type == ArtifactType.flashcard_deck,
+                Artifact.review_enabled.is_(True),
+                Flashcard.status == FlashcardStatus.active,
+                Course.user_id == user.id,
+            )
+        )
+    ).all()
+    due_dates = [r.due_date for r in rows]
+    counts = forecast(today, due_dates)
+    since = today - timedelta(days=30)
+    recent = [
+        r.last_rating
+        for r in rows
+        if r.reviewed_at is not None and r.reviewed_at.astimezone(MANILA).date() >= since
+    ]
+    reviewed_today = sum(
+        1
+        for r in rows
+        if r.reviewed_at is not None and r.reviewed_at.astimezone(MANILA).date() == today
+    )
+    leeches = (
+        await db.execute(
+            select(func.count())
+            .select_from(CardReview)
+            .join(Flashcard, Flashcard.id == CardReview.flashcard_id)
+            .join(Artifact, Artifact.id == Flashcard.artifact_id)
+            .join(Module, Module.id == Artifact.module_id)
+            .join(Course, Course.id == Module.course_id)
+            .where(Course.user_id == user.id, CardReview.is_leech.is_(True))
+        )
+    ).scalar_one()
+    return ReviewStatsOut(
+        reviewed_today=reviewed_today,
+        due_now=counts[0],
+        in_rotation=len(rows),
+        leeches=leeches,
+        retention_30d=retention(recent),
+        forecast=counts,
+    )

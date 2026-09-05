@@ -158,3 +158,29 @@ def order_queue(
     ordered_new = _interleave_by_module(fresh)
     start = max(0, new_offset)
     return _interleave_by_module(reviews) + ordered_new[start : start + max(0, new_cap)], len(fresh)
+
+
+# ── Stats helpers ───────────────────────────────────────────────────────────
+
+
+def forecast(today: date, due_dates: Iterable[date | None], days: int = 7) -> list[int]:
+    """Cards due on each of the next ``days`` days. Day 0 bundles everything
+    due today or earlier (and never-reviewed cards, which are due now)."""
+    counts = [0] * days
+    for d in due_dates:
+        if d is None or d <= today:
+            counts[0] += 1
+            continue
+        offset = (d - today).days
+        if offset < days:
+            counts[offset] += 1
+    return counts
+
+
+def retention(last_ratings: Iterable[str | None]) -> float | None:
+    """Share of recent reviews rated good/easy; None when there were none.
+    (Approximation: card_reviews keeps only each card's LAST rating.)"""
+    ratings = [r for r in last_ratings if r]
+    if not ratings:
+        return None
+    return sum(1 for r in ratings if r in ("good", "easy")) / len(ratings)
