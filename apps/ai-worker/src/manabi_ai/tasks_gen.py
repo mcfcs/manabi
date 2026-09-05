@@ -38,6 +38,7 @@ from manabi_ai.config import get_settings
 from manabi_ai.context import batch_chunks, build_context, scan_acronym_candidates
 from manabi_ai.db import session_factory
 from manabi_ai.ollama_client import GenerationError, generate_structured
+from manabi_ai.recap import recap_block, should_refresh, turns_to_fold
 from manabi_ai.validators import (
     ResolvedItem,
     dedup_cards,
@@ -53,8 +54,7 @@ SCORE_SUPPORT_TASK = "manabi_server.tasks.score_support"  # cpu queue contract
 # Exercise-mode generation with no material in scope: the FOCUS instructions
 # alone define the topic (the enqueue guard requires them for this path).
 _NO_SOURCES_TEXT = (
-    "SOURCE MATERIAL: (none provided — synthesize practice exercises on the "
-    "FOCUS topic alone)"
+    "SOURCE MATERIAL: (none provided — synthesize practice exercises on the FOCUS topic alone)"
 )
 
 # Multi-item generation calls (a quiz's worth of step-by-step explanations,
@@ -101,9 +101,7 @@ async def _elements_for_chunks(
         )
     ).all()
     text_by_id = {i: (t or "") for i, t in rows}
-    return {
-        c.id: [(eid, text_by_id.get(eid, "")) for eid in c.element_ids] for c in chunks
-    }
+    return {c.id: [(eid, text_by_id.get(eid, "")) for eid in c.element_ids] for c in chunks}
 
 
 def _citation_rows(
@@ -140,6 +138,7 @@ def _preview_writer(db: AsyncSession, job: Job, *, from_head: bool = False):
     `from_head=True` keeps the START of the text (chat: the answer field appears
     early in the JSON, so the client can type it out from the beginning); the
     default keeps the tail (long generation JSON where only the latest matters)."""
+
     async def write(text: str) -> None:
         job.preview = text[:8000] if from_head else text[-6000:]
         await db.commit()
@@ -156,9 +155,7 @@ async def _finish(db: AsyncSession, job: Job, artifact_id: int, dropped: int) ->
     job.finished_at = datetime.now(UTC)
     await db.commit()
     # support scoring runs on the cpu queue (needs the app server's embed model)
-    await app.configure_task(SCORE_SUPPORT_TASK, queue="cpu").defer_async(
-        artifact_id=artifact_id
-    )
+    await app.configure_task(SCORE_SUPPORT_TASK, queue="cpu").defer_async(artifact_id=artifact_id)
 
 
 async def _fail(db: AsyncSession, job: Job, exc: Exception) -> None:
@@ -206,9 +203,7 @@ async def generate_summary(context, job_id: int, module_id: int) -> None:
         try:
             chunks = await load_context_chunks(db, [module_id])
             notes = await _load_notes_text(db, [module_id])
-            module = (
-                await db.execute(select(Module).where(Module.id == module_id))
-            ).scalar_one()
+            module = (await db.execute(select(Module).where(Module.id == module_id))).scalar_one()
 
             candidates = scan_acronym_candidates(chunks)
             candidate_note = (
@@ -217,9 +212,7 @@ async def generate_summary(context, job_id: int, module_id: int) -> None:
                 if candidates
                 else ""
             )
-            base_prompt = prompts.SUMMARY_PROMPT.replace(
-                "{acronym_candidates}", candidate_note
-            )
+            base_prompt = prompts.SUMMARY_PROMPT.replace("{acronym_candidates}", candidate_note)
 
             sections: list[dict] = []
             key_terms: list[dict] = []
@@ -236,9 +229,7 @@ async def generate_summary(context, job_id: int, module_id: int) -> None:
                 if not overview and (ov := (result.get("overview") or "").strip()):
                     overview = ov
                 for section in result.get("sections", []):
-                    kept, d = resolve_items(
-                        section.get("blocks", []), ctx.index_map, {module_id}
-                    )
+                    kept, d = resolve_items(section.get("blocks", []), ctx.index_map, {module_id})
                     dropped += d
                     if not kept:
                         continue
@@ -260,10 +251,7 @@ async def generate_summary(context, job_id: int, module_id: int) -> None:
                 )
                 dropped += d
                 for resolved in kept_terms:
-                    if any(
-                        t["term"].lower() == resolved.item["term"].lower()
-                        for t in key_terms
-                    ):
+                    if any(t["term"].lower() == resolved.item["term"].lower() for t in key_terms):
                         continue
                     ref = f"kt:{len(key_terms)}"
                     key_terms.append(
@@ -275,14 +263,11 @@ async def generate_summary(context, job_id: int, module_id: int) -> None:
                     excerpt = f"{resolved.item['term']}: {resolved.item['definition']}"
                     all_citations.append((ref, resolved.chunks, excerpt))
 
-                kept_acr, d = resolve_items(
-                    result.get("acronyms", []), ctx.index_map, {module_id}
-                )
+                kept_acr, d = resolve_items(result.get("acronyms", []), ctx.index_map, {module_id})
                 dropped += d
                 for resolved in kept_acr:
                     if any(
-                        a["acronym"].lower() == resolved.item["acronym"].lower()
-                        for a in acronyms
+                        a["acronym"].lower() == resolved.item["acronym"].lower() for a in acronyms
                     ):
                         continue
                     ref = f"ac:{len(acronyms)}"
@@ -295,15 +280,10 @@ async def generate_summary(context, job_id: int, module_id: int) -> None:
                     excerpt = f"{resolved.item['acronym']} means {resolved.item['meaning']}"
                     all_citations.append((ref, resolved.chunks, excerpt))
 
-                kept_people, d = resolve_items(
-                    result.get("people", []), ctx.index_map, {module_id}
-                )
+                kept_people, d = resolve_items(result.get("people", []), ctx.index_map, {module_id})
                 dropped += d
                 for resolved in kept_people:
-                    if any(
-                        p["name"].lower() == resolved.item["name"].lower()
-                        for p in people
-                    ):
+                    if any(p["name"].lower() == resolved.item["name"].lower() for p in people):
                         continue
                     ref = f"pep:{len(people)}"
                     people.append(
@@ -319,7 +299,9 @@ async def generate_summary(context, job_id: int, module_id: int) -> None:
             for bi, batch in enumerate(batches):
                 await _abort_if_requested(db, job, context)
                 await _progress(
-                    db, job, 15 + int(50 * bi / len(batches)),
+                    db,
+                    job,
+                    15 + int(50 * bi / len(batches)),
                     f"Generating with {settings.generation_model}"
                     + (f" ({bi + 1}/{len(batches)})" if len(batches) > 1 else ""),
                 )
@@ -337,9 +319,7 @@ async def generate_summary(context, job_id: int, module_id: int) -> None:
             cited_ids = {c.id for _, cited, _ in all_citations for c in cited}
             uncited = [c for c in chunks if c.id not in cited_ids]
             if chunks and len(cited_ids) / len(chunks) < COVERAGE_TARGET and uncited:
-                await _progress(
-                    db, job, 72, f"Covering {len(uncited)} missed passages"
-                )
+                await _progress(db, job, 72, f"Covering {len(uncited)} missed passages")
                 ctx = build_context(uncited, None)
                 result = await generate_structured(
                     base_prompt + prompts.GAP_PROMPT_SUFFIX,
@@ -378,9 +358,7 @@ async def generate_summary(context, job_id: int, module_id: int) -> None:
             db.add(artifact)
             await db.flush()
             for ref, cited, excerpt in all_citations:
-                for row in _citation_rows(
-                    artifact.id, ref, cited, excerpt, elements_by_chunk
-                ):
+                for row in _citation_rows(artifact.id, ref, cited, excerpt, elements_by_chunk):
                     db.add(row)
             await _finish(db, job, artifact.id, dropped)
         except JobAborted:
@@ -425,12 +403,7 @@ async def generate_flashcards(
     exercise = mode == "exercise"
     # A scoped/custom deck is its own study object: no summary-derived cards,
     # no carry-over from the review deck, and it stays out of the SRS queue.
-    scoped = (
-        document_ids is not None
-        or note_ids is not None
-        or bool(instructions)
-        or exercise
-    )
+    scoped = document_ids is not None or note_ids is not None or bool(instructions) or exercise
     async with session_factory()() as db:
         job = await _start(db, job_id)
         preview = _preview_writer(db, job)
@@ -441,18 +414,12 @@ async def generate_flashcards(
                 # doesn't module-filter — re-filter as defense in depth, and
                 # fall back to the document scope if it all went stale.
                 chunks = [
-                    c
-                    for c in await load_chunks_by_ids(db, chunk_ids)
-                    if c.module_id == module_id
+                    c for c in await load_chunks_by_ids(db, chunk_ids) if c.module_id == module_id
                 ]
             if not chunks:
-                chunks = await load_context_chunks(
-                    db, [module_id], document_ids=document_ids
-                )
+                chunks = await load_context_chunks(db, [module_id], document_ids=document_ids)
             notes = await _load_notes_text(db, [module_id], note_ids=note_ids)
-            module = (
-                await db.execute(select(Module).where(Module.id == module_id))
-            ).scalar_one()
+            module = (await db.execute(select(Module).where(Module.id == module_id))).scalar_one()
 
             # ── Derived cards: exact term/acronym cards from the summary ──
             summary = None
@@ -472,20 +439,14 @@ async def generate_flashcards(
             summary_citations: dict[str, list[Citation]] = {}
             if summary is not None:
                 for row in (
-                    (
-                        await db.execute(
-                            select(Citation).where(Citation.artifact_id == summary.id)
-                        )
-                    )
+                    (await db.execute(select(Citation).where(Citation.artifact_id == summary.id)))
                     .scalars()
                     .all()
                 ):
                     summary_citations.setdefault(row.item_ref, []).append(row)
                 for i, t in enumerate(summary.content.get("key_terms", [])):
                     if t.get("term") and t.get("definition"):
-                        derived.append(
-                            (f"Define: {t['term']}", t["definition"], f"kt:{i}")
-                        )
+                        derived.append((f"Define: {t['term']}", t["definition"], f"kt:{i}"))
                 for i, a in enumerate(summary.content.get("acronyms", [])):
                     if a.get("acronym") and a.get("meaning"):
                         derived.append(
@@ -515,25 +476,27 @@ async def generate_flashcards(
             if exercise and not chunks:
                 # Topic-only practice deck: no material in scope at all.
                 await _progress(
-                    db, job, 30,
+                    db,
+                    job,
+                    30,
                     f"Writing practice cards with {settings.generation_model}",
                 )
                 base_prompt = prompts.EXERCISE_FLASHCARDS_PROMPT
                 if instructions:
-                    base_prompt += prompts.FOCUS_BLOCK.replace(
-                        "{instructions}", instructions
-                    )
+                    base_prompt += prompts.FOCUS_BLOCK.replace("{instructions}", instructions)
                 result = await generate_structured(
-                    base_prompt.replace(
-                        "{count}", str(min(max(remaining, 4), 20))
-                    ).replace("{existing_fronts}", "(none)"),
+                    base_prompt.replace("{count}", str(min(max(remaining, 4), 20))).replace(
+                        "{existing_fronts}", "(none)"
+                    ),
                     _NO_SOURCES_TEXT,
                     prompts.FLASHCARDS_EXERCISE_SCHEMA,
                     preview,
                     response_headroom=_GEN_RESPONSE_HEADROOM,
                 )
                 kept, d = resolve_items(
-                    result.get("cards", []), {}, {module_id},
+                    result.get("cards", []),
+                    {},
+                    {module_id},
                     require_sources=False,
                 )
                 dropped += d
@@ -552,7 +515,9 @@ async def generate_flashcards(
                     if need <= 0:
                         break
                     await _progress(
-                        db, job, 15 + min(60, 60 * rounds // max_rounds),
+                        db,
+                        job,
+                        15 + min(60, 60 * rounds // max_rounds),
                         f"Creating cards with {settings.generation_model}"
                         f" ({len(derived) + len(resolved_cards)}"
                         f"/{'∞' if exhaustive else count})",
@@ -565,13 +530,11 @@ async def generate_flashcards(
                         else prompts.FLASHCARDS_PROMPT
                     )
                     if instructions:
-                        base_prompt += prompts.FOCUS_BLOCK.replace(
-                            "{instructions}", instructions
-                        )
+                        base_prompt += prompts.FOCUS_BLOCK.replace("{instructions}", instructions)
                     result = await generate_structured(
-                        base_prompt.replace(
-                            "{count}", str(min(need, 20))
-                        ).replace("{existing_fronts}", fronts_note),
+                        base_prompt.replace("{count}", str(min(need, 20))).replace(
+                            "{existing_fronts}", fronts_note
+                        ),
                         ctx.source_text,
                         prompts.FLASHCARDS_EXERCISE_SCHEMA
                         if exercise
@@ -591,9 +554,7 @@ async def generate_flashcards(
                         continue
                     added_this_round += len(fresh)
                     resolved_cards.extend(fresh)
-                    existing_fronts.extend(
-                        (f.item.get("front") or "") for f in fresh
-                    )
+                    existing_fronts.extend((f.item.get("front") or "") for f in fresh)
                 if exhaustive and added_this_round < 3:
                     log.info("exhaustive card generation ran dry after %d rounds", rounds)
                     break
@@ -666,9 +627,7 @@ async def generate_flashcards(
             ord_ = 0
             # Derived term/acronym cards: exact content, summary's citations cloned
             for front, back, ref in derived:
-                db.add(
-                    Flashcard(artifact_id=artifact.id, ord=ord_, front=front, back=back)
-                )
+                db.add(Flashcard(artifact_id=artifact.id, ord=ord_, front=front, back=back))
                 for src in summary_citations.get(ref, []):
                     db.add(
                         Citation(
@@ -741,9 +700,7 @@ def _question_answer(item: dict) -> dict | None:
         return None
     if qtype == "enumeration":
         items = [
-            s.strip()
-            for s in (item.get("correct_items") or [])
-            if isinstance(s, str) and s.strip()
+            s.strip() for s in (item.get("correct_items") or []) if isinstance(s, str) and s.strip()
         ]
         if len(items) >= 2:
             return {"kind": "enumeration", "items": items}
@@ -796,11 +753,7 @@ async def generate_quiz(
         try:
             scope = {int(m) for m in module_ids}
             notes = await _load_notes_text(db, list(scope), note_ids=note_ids)
-            modules = (
-                (await db.execute(select(Module).where(Module.id.in_(scope))))
-                .scalars()
-                .all()
-            )
+            modules = (await db.execute(select(Module).where(Module.id.in_(scope)))).scalars().all()
             per_module = min(
                 _MAX_QUESTIONS_PER_CALL,
                 max(2, round(count * 1.4 / len(scope))),  # oversample for dedup
@@ -813,30 +766,22 @@ async def generate_quiz(
             focus_by_module: dict[int, list[ScopedChunk]] | None = None
             if chunk_ids:
                 hydrated = [
-                    c
-                    for c in await load_chunks_by_ids(db, chunk_ids)
-                    if c.module_id in scope
+                    c for c in await load_chunks_by_ids(db, chunk_ids) if c.module_id in scope
                 ]
                 if hydrated:
                     focus_by_module = {}
                     for c in hydrated:
                         focus_by_module.setdefault(c.module_id, []).append(c)
 
-            base_prompt = (
-                prompts.EXERCISE_QUIZ_PROMPT if exercise else prompts.QUIZ_PROMPT
-            )
+            base_prompt = prompts.EXERCISE_QUIZ_PROMPT if exercise else prompts.QUIZ_PROMPT
             if instructions:
-                base_prompt += prompts.FOCUS_BLOCK.replace(
-                    "{instructions}", instructions
-                )
+                base_prompt += prompts.FOCUS_BLOCK.replace("{instructions}", instructions)
 
             # Exercise stems legitimately look alike ("Trace this code…" with
             # different snippets) — a loose 0.8 similarity dedup eats real
             # variants, so practice quizzes dedup at 0.9.
             dedup_threshold = 0.9 if exercise else 0.8
-            quiz_schema = (
-                prompts.QUIZ_EXERCISE_SCHEMA if exercise else prompts.QUIZ_SCHEMA
-            )
+            quiz_schema = prompts.QUIZ_EXERCISE_SCHEMA if exercise else prompts.QUIZ_SCHEMA
             candidates: list[ResolvedItem] = []
             used_chunks: list[ScopedChunk] = []
             last_ctx = None  # last built context — reused by the top-up pass
@@ -846,15 +791,15 @@ async def generate_quiz(
                 if focus_by_module is not None:
                     chunks = focus_by_module.get(module.id, [])
                 else:
-                    chunks = await load_context_chunks(
-                        db, [module.id], document_ids=document_ids
-                    )
+                    chunks = await load_context_chunks(db, [module.id], document_ids=document_ids)
                 if not chunks:
                     continue
                 used_chunks.extend(chunks)
                 for bi, batch in enumerate(batch_chunks(chunks)):
                     await _progress(
-                        db, job, 10 + int(60 * mi / len(modules)),
+                        db,
+                        job,
+                        10 + int(60 * mi / len(modules)),
                         f"Writing questions — {module.title}",
                     )
                     ctx = build_context(batch, notes if mi == 0 and bi == 0 else None)
@@ -919,27 +864,21 @@ async def generate_quiz(
             # asks would only produce more duplicates. (Sourced mode needs a
             # context to cite; exercise mode can top up even topic-only.)
             topup_rounds = 0
-            while (
-                len(final) < count
-                and topup_rounds < 4
-                and (exercise or last_ctx is not None)
-            ):
+            while len(final) < count and topup_rounds < 4 and (exercise or last_ctx is not None):
                 await _abort_if_requested(db, job, context)
                 topup_rounds += 1
                 shortfall = count - len(final)
-                await _progress(
-                    db, job, 80, f"Topping up questions ({len(final)}/{count})"
+                await _progress(db, job, 80, f"Topping up questions ({len(final)}/{count})")
+                avoid = (
+                    "\n".join(f"- {(c.item.get('prompt') or '')[:120]}" for c in final[-30:])
+                    or "(none)"
                 )
-                avoid = "\n".join(
-                    f"- {(c.item.get('prompt') or '')[:120]}" for c in final[-30:]
-                ) or "(none)"
                 result = await generate_structured(
                     base_prompt.replace(
                         "{count}", str(min(shortfall + 2, _MAX_QUESTIONS_PER_CALL))
                     ).replace("{types}", ", ".join(types))
                     + "\n\nDo NOT duplicate or trivially rephrase any of these "
-                    "existing questions:\n"
-                    + avoid,
+                    "existing questions:\n" + avoid,
                     last_ctx.source_text if last_ctx else _NO_SOURCES_TEXT,
                     quiz_schema,
                     preview,
@@ -955,16 +894,17 @@ async def generate_quiz(
                 fresh = [
                     c
                     for c in kept
-                    if c.item.get("qtype") in types
-                    and _question_answer(c.item) is not None
+                    if c.item.get("qtype") in types and _question_answer(c.item) is not None
                 ]
                 # dedup against what we already kept: survivors after the
                 # existing block are the genuinely new ones
-                fresh = dedup_questions(final + fresh, dedup_threshold)[len(final):]
+                fresh = dedup_questions(final + fresh, dedup_threshold)[len(final) :]
                 if not fresh:
                     log.info(
                         "quiz top-up ran dry after %d rounds (%d/%d questions)",
-                        topup_rounds, len(final), count,
+                        topup_rounds,
+                        len(final),
+                        count,
                     )
                     break
                 final.extend(fresh[: count - len(final)])
@@ -975,9 +915,7 @@ async def generate_quiz(
             if len(scope) > 1:
                 title += f" · {len(scope)} modules"
             if instructions:
-                title += " · " + instructions[:40] + (
-                    "…" if len(instructions) > 40 else ""
-                )
+                title += " · " + instructions[:40] + ("…" if len(instructions) > 40 else "")
             elif exercise:
                 title += " · practice"
             artifact = Artifact(
@@ -1001,9 +939,7 @@ async def generate_quiz(
             )
             db.add(artifact)
             await db.flush()
-            elements_by_chunk = await _elements_for_chunks(
-                db, [c for r in final for c in r.chunks]
-            )
+            elements_by_chunk = await _elements_for_chunks(db, [c for r in final for c in r.chunks])
             for ord_, resolved in enumerate(final):
                 item = resolved.item
                 db.add(
@@ -1065,14 +1001,10 @@ async def verify_question(job_id: int, question_id: int, user_answer: str = "") 
         preview = _preview_writer(db, job)
         try:
             question = (
-                await db.execute(
-                    select(QuizQuestion).where(QuizQuestion.id == question_id)
-                )
+                await db.execute(select(QuizQuestion).where(QuizQuestion.id == question_id))
             ).scalar_one()
             artifact = (
-                await db.execute(
-                    select(Artifact).where(Artifact.id == question.artifact_id)
-                )
+                await db.execute(select(Artifact).where(Artifact.id == question.artifact_id))
             ).scalar_one()
             cited_chunk_ids = [
                 cid
@@ -1086,20 +1018,14 @@ async def verify_question(job_id: int, question_id: int, user_answer: str = "") 
                     )
                 ).all()
             ]
-            chunks = (
-                await load_chunks_by_ids(db, cited_chunk_ids)
-                if cited_chunk_ids
-                else []
-            )
+            chunks = await load_chunks_by_ids(db, cited_chunk_ids) if cited_chunk_ids else []
             source_text = (
                 build_context(chunks, None).source_text
                 if chunks
                 else "SOURCE MATERIAL: (none — synthesized practice item; "
                 "judge by re-deriving the answer)"
             )
-            options_line = (
-                f"OPTIONS: {question.options}\n\n" if question.options else ""
-            )
+            options_line = f"OPTIONS: {question.options}\n\n" if question.options else ""
             user_block = (
                 f"QUESTION ({question.qtype}):\n{question.prompt}\n\n"
                 + options_line
@@ -1147,14 +1073,10 @@ async def regenerate_question(job_id: int, question_id: int) -> None:
         preview = _preview_writer(db, job)
         try:
             question = (
-                await db.execute(
-                    select(QuizQuestion).where(QuizQuestion.id == question_id)
-                )
+                await db.execute(select(QuizQuestion).where(QuizQuestion.id == question_id))
             ).scalar_one()
             artifact = (
-                await db.execute(
-                    select(Artifact).where(Artifact.id == question.artifact_id)
-                )
+                await db.execute(select(Artifact).where(Artifact.id == question.artifact_id))
             ).scalar_one()
             scope = {int(m) for m in artifact.scope_module_ids}
             exercise = artifact.generation_mode == "exercise"
@@ -1179,25 +1101,18 @@ async def regenerate_question(job_id: int, question_id: int) -> None:
                 p
                 for (p,) in (
                     await db.execute(
-                        select(QuizQuestion.prompt).where(
-                            QuizQuestion.artifact_id == artifact.id
-                        )
+                        select(QuizQuestion.prompt).where(QuizQuestion.artifact_id == artifact.id)
                     )
                 ).all()
             ]
             avoid = "\n".join(f"- {p[:120]}" for p in existing[-30:]) or "(none)"
-            base_prompt = (
-                prompts.EXERCISE_QUIZ_PROMPT if exercise else prompts.QUIZ_PROMPT
-            )
+            base_prompt = prompts.EXERCISE_QUIZ_PROMPT if exercise else prompts.QUIZ_PROMPT
             if artifact.instructions:
-                base_prompt += prompts.FOCUS_BLOCK.replace(
-                    "{instructions}", artifact.instructions
-                )
+                base_prompt += prompts.FOCUS_BLOCK.replace("{instructions}", artifact.instructions)
             base_prompt = (
                 base_prompt.replace("{count}", "1").replace("{types}", question.qtype)
                 + "\n\nDo NOT duplicate or trivially rephrase any of these existing "
-                "questions:\n"
-                + avoid
+                "questions:\n" + avoid
             )
 
             await _progress(db, job, 30, "Writing a replacement question")
@@ -1227,15 +1142,11 @@ async def regenerate_question(job_id: int, question_id: int) -> None:
                 if new_item is not None:
                     break
             if new_item is None:
-                raise GenerationError(
-                    "Could not generate a valid replacement question"
-                )
+                raise GenerationError("Could not generate a valid replacement question")
 
             # Replace in place — same ord keeps the citation item_ref stable.
             question.prompt = new_item["prompt"]
-            question.options = (
-                new_item.get("options") if question.qtype == "mcq" else None
-            )
+            question.options = new_item.get("options") if question.qtype == "mcq" else None
             question.answer = _question_answer(new_item)
             question.explanation = new_item.get("explanation")
             await db.execute(
@@ -1274,9 +1185,7 @@ async def regenerate_question(job_id: int, question_id: int) -> None:
 
 
 @app.task(name="manabi_ai.tasks.define_term", queue="gpu", retry=1)
-async def define_term(
-    job_id: int, artifact_id: int, term: str, chunk_ids: list[int]
-) -> None:
+async def define_term(job_id: int, artifact_id: int, term: str, chunk_ids: list[int]) -> None:
     """User asked for a missing key term. Retrieval already confirmed the
     materials mention it; define it strictly from those passages or refuse."""
     async with session_factory()() as db:
@@ -1288,9 +1197,7 @@ async def define_term(
             ).scalar_one()
             scope = [int(m) for m in artifact.scope_module_ids]
             wanted = set(chunk_ids)
-            chunks = [
-                c for c in await load_context_chunks(db, scope) if c.id in wanted
-            ]
+            chunks = [c for c in await load_context_chunks(db, scope) if c.id in wanted]
             if not chunks:
                 raise GenerationError("Retrieved passages no longer exist")
 
@@ -1303,18 +1210,14 @@ async def define_term(
                 model=get_settings().effective_chat_model,
             )
             if not result.get("found") or not result.get("definition"):
-                raise GenerationError(
-                    f"The materials mention '{term}' but do not define it"
-                )
+                raise GenerationError(f"The materials mention '{term}' but do not define it")
             kept, _ = resolve_items(
                 [{"text": result["definition"], "source_ids": result.get("source_ids", [])}],
                 ctx.index_map,
                 set(scope),
             )
             if not kept:
-                raise GenerationError(
-                    f"Could not support a definition of '{term}' with citations"
-                )
+                raise GenerationError(f"Could not support a definition of '{term}' with citations")
             resolved = kept[0]
 
             content = dict(artifact.content)
@@ -1344,6 +1247,63 @@ async def define_term(
             await db.rollback()
             await _fail(db, job, exc)
             raise
+
+
+async def _refresh_thread_recap(db: AsyncSession, thread, model: str) -> None:
+    """Fold turns that no longer fit the prompt window into the thread's rolling
+    recap (chat model, ~150 words). Runs after an answer is saved; the caller
+    treats any failure as non-fatal."""
+    from manabi_core.models import ChatMessage, ChatRole
+
+    ids = (
+        (
+            await db.execute(
+                select(ChatMessage.id)
+                .where(ChatMessage.thread_id == thread.id)
+                .order_by(ChatMessage.id)
+            )
+        )
+        .scalars()
+        .all()
+    )
+    upto = getattr(thread, "summary_upto_id", None)
+    if not should_refresh(ids, upto):
+        return
+    fold_ids, cutoff = turns_to_fold(ids, upto)
+    if not fold_ids or cutoff is None:
+        return
+    msgs = (
+        (
+            await db.execute(
+                select(ChatMessage).where(ChatMessage.id.in_(fold_ids)).order_by(ChatMessage.id)
+            )
+        )
+        .scalars()
+        .all()
+    )
+    transcript = "\n\n".join(
+        f"{'STUDENT' if m.role == ChatRole.user else 'ASSISTANT'}: {m.content[:1500]}" for m in msgs
+    )
+    previous = (getattr(thread, "summary", None) or "").strip()
+    user_prompt = (
+        (f"PREVIOUS RECAP:\n{previous}\n\n" if previous else "")
+        + "NEW TURNS TO FOLD IN:\n"
+        + transcript
+    )
+    result = await generate_structured(
+        prompts.THREAD_RECAP_PROMPT,
+        user_prompt,
+        prompts.THREAD_RECAP_SCHEMA,
+        None,
+        model=model,
+    )
+    summary = (result.get("summary") or "").strip()
+    if not summary:
+        return
+    thread.summary = summary[:2000]
+    thread.summary_upto_id = cutoff
+    await db.commit()
+    log.info("thread %s recap refreshed through message %s", thread.id, cutoff)
 
 
 @app.task(name="manabi_ai.tasks.chat_answer", queue="gpu", retry=1, pass_context=True)
@@ -1421,6 +1381,7 @@ async def chat_answer(
                     if notes
                     else ""
                 )
+                + recap_block(getattr(thread, "summary", None))
                 + "\n\nCONVERSATION:\n"
                 + conversation
             )
@@ -1443,8 +1404,7 @@ async def chat_answer(
             answer = (result.get("answer") or "").strip()
             raw_actions = result.get("actions") if is_general else None
             has_actions = isinstance(raw_actions, list) and any(
-                isinstance(a, dict)
-                and a.get("kind") in ("create_task", "create_event")
+                isinstance(a, dict) and a.get("kind") in ("create_task", "create_event")
                 for a in raw_actions
             )
             if not answer:
@@ -1480,8 +1440,14 @@ async def chat_answer(
             action = None
             if has_actions:
                 _fields = (
-                    "title", "notes", "course_code", "due_date", "due_minute",
-                    "date", "start_minute", "end_minute",
+                    "title",
+                    "notes",
+                    "course_code",
+                    "due_date",
+                    "due_minute",
+                    "date",
+                    "start_minute",
+                    "end_minute",
                 )
                 items = []
                 for a in raw_actions:
@@ -1496,11 +1462,13 @@ async def chat_answer(
                             params.pop(mk, None)
                     if not params.get("title"):
                         continue
-                    items.append({
-                        "kind": a["kind"],
-                        "summary": (a.get("summary") or "").strip() or params["title"],
-                        "params": params,
-                    })
+                    items.append(
+                        {
+                            "kind": a["kind"],
+                            "summary": (a.get("summary") or "").strip() or params["title"],
+                            "params": params,
+                        }
+                    )
                 if items:
                     action = {"status": "proposed", "items": items}
 
@@ -1537,6 +1505,14 @@ async def chat_answer(
                 await db.rollback()  # discards the pending assistant message too
                 return
             await db.commit()
+
+            # Long threads: fold the turns that fell out of the prompt window into
+            # the rolling recap. Best effort — the answer is already saved.
+            try:
+                await _refresh_thread_recap(db, thread, model or settings.effective_chat_model)
+            except Exception:  # noqa: BLE001
+                log.exception("thread recap refresh failed (answer already saved)")
+                await db.rollback()
 
             # Steven speaks his own replies: teacher-mode threads auto-queue
             # synthesis so the UI can just poll the audio endpoint.
@@ -1672,9 +1648,7 @@ def sanitize_spoken(text: str) -> str:
     lines = []
     for line in (text or "").split("\n"):
         stripped = line.strip()
-        symbol_share = (
-            sum(stripped.count(c) for c in ";{}()=<>") / max(len(stripped), 1)
-        )
+        symbol_share = sum(stripped.count(c) for c in ";{}()=<>") / max(len(stripped), 1)
         if line.startswith(("    ", "\t")) and symbol_share > 0.08:
             continue  # code block leak — narrated version exists in prose
         lines.append(stripped.translate(_MD_CHARS))
@@ -1701,9 +1675,7 @@ async def teach_module(
             if chunk_ids:
                 wanted = set(chunk_ids)
                 chunks = [c for c in chunks if c.id in wanted] or chunks
-            module = (
-                await db.execute(select(Module).where(Module.id == module_id))
-            ).scalar_one()
+            module = (await db.execute(select(Module).where(Module.id == module_id))).scalar_one()
 
             # The latest summary's section titles act as the lecture syllabus
             summary = (
@@ -1718,10 +1690,7 @@ async def teach_module(
                 )
             ).scalar_one_or_none()
             syllabus = (
-                "; ".join(
-                    s.get("title", "")
-                    for s in (summary.content or {}).get("sections", [])
-                )
+                "; ".join(s.get("title", "") for s in (summary.content or {}).get("sections", []))
                 if summary
                 else "(no summary yet — derive the arc from the sources)"
             )
@@ -1743,7 +1712,9 @@ async def teach_module(
             for bi, batch in enumerate(batches):
                 await _abort_if_requested(db, job, context)
                 await _progress(
-                    db, job, 15 + int(60 * bi / len(batches)),
+                    db,
+                    job,
+                    15 + int(60 * bi / len(batches)),
                     f"Steven is preparing the lesson ({bi + 1}/{len(batches)})"
                     if len(batches) > 1
                     else "Steven is preparing the lesson",
@@ -1766,9 +1737,7 @@ async def teach_module(
                     preview,
                     response_headroom=_GEN_RESPONSE_HEADROOM,
                 )
-                kept, d = resolve_items(
-                    result.get("segments", []), ctx.index_map, {module_id}
-                )
+                kept, d = resolve_items(result.get("segments", []), ctx.index_map, {module_id})
                 dropped += d
                 for resolved in kept:
                     idx = len(segments)
@@ -1788,9 +1757,7 @@ async def teach_module(
                             "answer": cp["answer"],
                         }
                     segments.append(seg)
-                    all_citations.append(
-                        (f"seg:{idx}", resolved.chunks, spoken[:400])
-                    )
+                    all_citations.append((f"seg:{idx}", resolved.chunks, spoken[:400]))
 
             if not segments:
                 raise GenerationError("No lecture segments survived validation")
@@ -1815,9 +1782,7 @@ async def teach_module(
             db.add(artifact)
             await db.flush()
             for ref, cited, excerpt in all_citations:
-                for row in _citation_rows(
-                    artifact.id, ref, cited, excerpt, elements_by_chunk
-                ):
+                for row in _citation_rows(artifact.id, ref, cited, excerpt, elements_by_chunk):
                     db.add(row)
             await _finish(db, job, artifact.id, dropped)
 

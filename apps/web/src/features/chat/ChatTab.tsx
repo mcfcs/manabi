@@ -502,6 +502,12 @@ export function ChatTab({ moduleId }: { moduleId: string }) {
         />
 
         <div className="chat-messages">
+          {activeThreadObj?.summary && (
+            <details className="chat-recap">
+              <summary>Earlier in this thread</summary>
+              <p>{activeThreadObj.summary}</p>
+            </details>
+          )}
           {(messages.data ?? []).length === 0 && !answering.running && (
             <div className="gen-empty chat-empty">
               <p>

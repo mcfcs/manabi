@@ -555,6 +555,11 @@ class ChatThread(Base, TimestampMixin):
     # thread. NULL = single-page/passage (use source_page/source_quote).
     source_pages: Mapped[list[int] | None] = mapped_column(ARRAY(BigInteger))
     source_quote: Mapped[str | None] = mapped_column(Text)
+    # Rolling recap of the turns that no longer fit the prompt window (written
+    # by the chat model once a thread outgrows it) and the last message id it
+    # covers. Shown to the user as "Earlier in this thread".
+    summary: Mapped[str | None] = mapped_column(Text)
+    summary_upto_id: Mapped[int | None] = mapped_column(BigInteger)
 
     __table_args__ = (
         Index("ix_chat_threads_module_id", "module_id"),

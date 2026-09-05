@@ -501,6 +501,8 @@ export interface ChatThreadOut {
   source_page: number | null;
   source_pages: number[] | null;
   source_quote: string | null;
+  /** rolling recap of turns older than the prompt window (long threads only) */
+  summary?: string | null;
   created_at: string;
 }
 

@@ -67,6 +67,8 @@ class ThreadOut(BaseModel):
     source_page: int | None
     source_pages: list[int] | None = None
     source_quote: str | None
+    # rolling recap of turns older than the prompt window (long threads only)
+    summary: str | None = None
     created_at: datetime
 
 
@@ -87,6 +89,7 @@ def _thread_out(t: ChatThread) -> ThreadOut:
         source_page=t.source_page,
         source_pages=t.source_pages,
         source_quote=t.source_quote,
+        summary=getattr(t, "summary", None),  # tolerate rows/fakes without it
         created_at=t.created_at,
     )
 

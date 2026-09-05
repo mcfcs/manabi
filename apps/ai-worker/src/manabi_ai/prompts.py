@@ -576,10 +576,8 @@ LECTURE_SCHEMA = {
 # Persona wraps the standard chat contract — it changes the voice, never the
 # sourcing/grounding behavior.
 TEACHER_CHAT_PROMPT = (
-    STEVEN_PERSONA
-    + "\n\nYou are tutoring the student on ONE university module, fully in"
-    " character, while following this contract exactly:\n\n"
-    + CHAT_PROMPT
+    STEVEN_PERSONA + "\n\nYou are tutoring the student on ONE university module, fully in"
+    " character, while following this contract exactly:\n\n" + CHAT_PROMPT
 )
 
 # "Material + reasoning" mode: still prefers and cites the sources, but is
@@ -612,10 +610,8 @@ RULES — follow strictly:
 Produce JSON matching the schema."""
 
 TEACHER_REASONING_PROMPT = (
-    STEVEN_PERSONA
-    + "\n\nYou are tutoring the student on ONE university module, fully in"
-    " character, while following this contract exactly:\n\n"
-    + REASONING_CHAT_PROMPT
+    STEVEN_PERSONA + "\n\nYou are tutoring the student on ONE university module, fully in"
+    " character, while following this contract exactly:\n\n" + REASONING_CHAT_PROMPT
 )
 
 
@@ -681,23 +677,17 @@ you have already added anything.
 Produce JSON matching the schema."""
 
 GENERAL_ASSISTANT_TEACHER_PROMPT = (
-    STEVEN_PERSONA
-    + "\n\nYou are the student's personal assistant, fully in character, while"
-    " following this contract exactly:\n\n"
-    + GENERAL_ASSISTANT_PROMPT
+    STEVEN_PERSONA + "\n\nYou are the student's personal assistant, fully in character, while"
+    " following this contract exactly:\n\n" + GENERAL_ASSISTANT_PROMPT
 )
 
 
-def assistant_prompt_for(
-    is_general: bool, teacher_mode: bool, strict_grounding: bool
-) -> str:
+def assistant_prompt_for(is_general: bool, teacher_mode: bool, strict_grounding: bool) -> str:
     """Pick the chat system prompt. General (module-less) threads use the
     personal-assistant prompt (grounding toggle ignored); module threads keep
     the existing selector."""
     if is_general:
-        return (
-            GENERAL_ASSISTANT_TEACHER_PROMPT if teacher_mode else GENERAL_ASSISTANT_PROMPT
-        )
+        return GENERAL_ASSISTANT_TEACHER_PROMPT if teacher_mode else GENERAL_ASSISTANT_PROMPT
     return chat_prompt_for(teacher_mode, strict_grounding)
 
 
@@ -706,8 +696,7 @@ def assistant_prompt_for(
 # be read aloud, so plain prose. The worker joins the non-empty fields into one
 # short message in Steven's voice.
 DAILY_BRIEFING_PROMPT = (
-    STEVEN_PERSONA
-    + "\n\nYou are opening your protégé's day with a short, FIRM briefing — a"
+    STEVEN_PERSONA + "\n\nYou are opening your protégé's day with a short, FIRM briefing — a"
     " demanding but caring mentor who wants them to take today seriously, fully"
     " in character. Below is the student's REAL schedule and tasks as PERSONAL"
     " CONTEXT — it is the ONLY ground truth.\n\n"
@@ -750,4 +739,27 @@ DAILY_BRIEFING_SCHEMA = {
         "closing": {"type": "string"},
     },
     "required": ["greeting", "focus"],
+}
+
+
+# ── Thread recap: rolling digest of turns that left the prompt window ───────
+# Written by the chat model after an answer once a thread outgrows the 7-turn
+# window (see manabi_ai.recap), and prepended to later prompts as
+# "EARLIER IN THIS CONVERSATION". Short output; default response headroom.
+THREAD_RECAP_PROMPT = """You maintain a running recap of a study conversation between a
+STUDENT and an ASSISTANT.
+Fold the NEW TURNS into the PREVIOUS RECAP (if any) and return ONE updated recap that lets
+a reader continue the conversation without seeing the older turns:
+- what the student is trying to understand or accomplish;
+- what has been established or answered — keep key terms, definitions, numbers and
+  formulas verbatim;
+- open questions, or things promised but not yet covered;
+- preferences the student stated (e.g. "simpler", "with examples", "in code").
+Plain prose or short dash lines, under 180 words. No greetings, no headers, no markdown
+emphasis. Never invent content that is not in the turns. Produce JSON matching the schema."""
+
+THREAD_RECAP_SCHEMA = {
+    "type": "object",
+    "properties": {"summary": {"type": "string"}},
+    "required": ["summary"],
 }
