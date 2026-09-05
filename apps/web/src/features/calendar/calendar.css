@@ -160,6 +160,7 @@
   .day-panel {
     top: auto;
     left: 0;
+    bottom: calc(var(--bottom-nav-h) + env(safe-area-inset-bottom));
     width: 100%;
     max-width: none;
     max-height: 70vh;
@@ -466,9 +467,10 @@
   display: contents;
 }
 
-@media (max-width: 767px) {
+@media (max-width: 1023px) {
   /* Week view scrolls sideways with readable day columns + a sticky time
-     gutter, instead of crushing 7 columns into a phone's width. */
+     gutter, instead of crushing 7 columns into a phone's (or a portrait
+     iPad's ~650px) width. */
   .week-scroll {
     display: block;
     overflow-x: auto;
@@ -706,6 +708,27 @@
 }
 .cal-filter-wrap {
   gap: 1px; /* swatch hugs its pill */
+}
+
+/* Tablet portrait: ~90px month cells — hide chip times, tighten chips. The
+   phone block below goes further (it comes later, so it wins at ≤767). */
+@media (max-width: 1023px) {
+  .cal-nav h1 {
+    min-width: 0;
+  }
+  .cal-cell {
+    min-height: 80px;
+    padding: 3px;
+  }
+  .cal-chip {
+    font-size: 9.5px;
+    padding: 0 3px;
+    text-overflow: clip;
+  }
+  .cal-chip-time,
+  .cal-chip-video {
+    display: none;
+  }
 }
 
 @media (max-width: 767px) {

@@ -1,4 +1,5 @@
 import { X } from "lucide-react";
+import { createPortal } from "react-dom";
 
 import type { CalendarEventOut } from "../../lib/api";
 import type { DayData } from "./CalendarPage";
@@ -23,7 +24,9 @@ export function DayPanel({
     day: "numeric",
   });
 
-  return (
+  // Portalled: position:fixed inside the animated route element (.content > *
+  // has a transform) would be positioned against that element, not the viewport.
+  return createPortal(
     <aside className="day-panel">
       <header className="day-panel-head">
         <h2>{label}</h2>
@@ -37,6 +40,7 @@ export function DayPanel({
         onAddEvent={onAddEvent}
         onEditEvent={onEditEvent}
       />
-    </aside>
+    </aside>,
+    document.body,
   );
 }

@@ -203,6 +203,25 @@
 }
 
 
+/* Tablet portrait: five day columns share ~600px, so blocks drop the
+   instructor line and tighten their type; the phone list view takes over
+   below 768. */
+@media (max-width: 1023px) {
+  .sched-block-prof {
+    display: none;
+  }
+  .sched-block-code {
+    font-size: 11.5px;
+  }
+  .sched-block-time,
+  .sched-block-room {
+    font-size: 10px;
+  }
+  .schedule-add-input {
+    width: 120px;
+  }
+}
+
 /* ── Mobile stacked list ───────────────────────────────────── */
 
 .schedule-list {
