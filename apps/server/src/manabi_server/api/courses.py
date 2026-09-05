@@ -3,6 +3,7 @@ from fastapi.responses import FileResponse
 from manabi_core.models import Course, Document, Module, Note, User
 from pydantic import BaseModel
 from sqlalchemy import delete, func, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from manabi_server.api.notes import (
@@ -27,6 +28,7 @@ class CourseIn(BaseModel):
     term: str | None = None
     accent_color: str | None = None
     meeting_url: str | None = None
+    canvas_course_id: int | None = None
 
 
 class CoursePatch(BaseModel):
@@ -37,6 +39,7 @@ class CoursePatch(BaseModel):
     term: str | None = None
     accent_color: str | None = None
     meeting_url: str | None = None
+    canvas_course_id: int | None = None
 
 
 class CourseOut(BaseModel):
@@ -52,6 +55,7 @@ class CourseOut(BaseModel):
     document_count: int = 0
     card_count: int = 0
     canvas_url: str | None = None
+    canvas_course_id: int | None = None
     meeting_url: str | None = None
     cover_image_url: str | None = None
 
@@ -83,6 +87,7 @@ def _course_out(
         document_count=document_count,
         card_count=card_count,
         canvas_url=canvas_course_url(course.canvas_course_id),
+        canvas_course_id=course.canvas_course_id,
         meeting_url=course.meeting_url,
         cover_image_url=(
             f"/api/courses/{course.id}/cover/{course.cover_image_path.rsplit('/', 1)[-1]}"
@@ -94,13 +99,46 @@ def _course_out(
 
 async def _get_course(db: AsyncSession, user: User, course_id: int) -> Course:
     course = (
-        await db.execute(
-            select(Course).where(Course.id == course_id, Course.user_id == user.id)
-        )
+        await db.execute(select(Course).where(Course.id == course_id, Course.user_id == user.id))
     ).scalar_one_or_none()
     if course is None:
         raise HTTPException(status_code=404, detail="Course not found")
     return course
+
+
+CANVAS_LINK_CONSTRAINT = "uq_courses_canvas_course_id"
+
+
+async def _commit_course(db: AsyncSession, user: User, canvas_course_id: int | None) -> None:
+    """Commit a course insert/update; a Canvas-link uniqueness violation
+    becomes a 409 naming the course that already holds that link."""
+    try:
+        await db.commit()
+    except IntegrityError as exc:
+        await db.rollback()
+        if CANVAS_LINK_CONSTRAINT not in str(exc.orig):
+            raise
+        other = (
+            await db.execute(
+                select(Course).where(
+                    Course.user_id == user.id, Course.canvas_course_id == canvas_course_id
+                )
+            )
+        ).scalar_one_or_none()
+        raise HTTPException(status_code=409, detail=canvas_link_conflict(other)) from exc
+
+
+def canvas_link_conflict(other: Course | None) -> dict:
+    code = other.code if other is not None else None
+    return {
+        "conflict": "canvas_course_id",
+        "course_code": code,
+        "message": (
+            f"That Canvas course is already linked to {code}"
+            if code
+            else "That Canvas course is already linked to another course"
+        ),
+    }
 
 
 @router.get("")
@@ -153,9 +191,7 @@ async def list_courses(
         ).all()
     )
     return [
-        _course_out(
-            course, count, doc_counts.get(course.id, 0), card_counts.get(course.id, 0)
-        )
+        _course_out(course, count, doc_counts.get(course.id, 0), card_counts.get(course.id, 0))
         for course, count in rows
     ]
 
@@ -168,14 +204,12 @@ async def create_course(
 ) -> CourseOut:
     max_pos = (
         await db.execute(
-            select(func.coalesce(func.max(Course.position), -1)).where(
-                Course.user_id == user.id
-            )
+            select(func.coalesce(func.max(Course.position), -1)).where(Course.user_id == user.id)
         )
     ).scalar_one()
     course = Course(user_id=user.id, position=max_pos + 1, **data.model_dump())
     db.add(course)
-    await db.commit()
+    await _commit_course(db, user, data.canvas_course_id)
     return _course_out(course, 0)
 
 
@@ -189,7 +223,7 @@ async def update_course(
     course = await _get_course(db, user, course_id)
     for key, value in data.model_dump(exclude_unset=True).items():
         setattr(course, key, value)
-    await db.commit()
+    await _commit_course(db, user, data.canvas_course_id)
     count = (
         await db.execute(select(func.count(Module.id)).where(Module.course_id == course.id))
     ).scalar_one()
@@ -202,11 +236,7 @@ async def reorder_courses(
     user: User = Depends(get_default_user),
     db: AsyncSession = Depends(get_db),
 ) -> dict:
-    courses = (
-        (await db.execute(select(Course).where(Course.user_id == user.id)))
-        .scalars()
-        .all()
-    )
+    courses = (await db.execute(select(Course).where(Course.user_id == user.id))).scalars().all()
     by_id = {c.id: c for c in courses}
     for position, course_id in enumerate(data.ids):
         if course_id in by_id:
@@ -224,9 +254,7 @@ async def delete_course(
 ) -> dict:
     course = await _get_course(db, user, course_id)
     module_ids = (
-        (await db.execute(select(Module.id).where(Module.course_id == course.id)))
-        .scalars()
-        .all()
+        (await db.execute(select(Module.id).where(Module.course_id == course.id))).scalars().all()
     )
     doc_count = 0
     note_count = 0
@@ -237,9 +265,7 @@ async def delete_course(
             )
         ).scalar_one()
         note_count = (
-            await db.execute(
-                select(func.count(Note.id)).where(Note.module_id.in_(module_ids))
-            )
+            await db.execute(select(func.count(Note.id)).where(Note.module_id.in_(module_ids)))
         ).scalar_one()
 
     if not confirm:
