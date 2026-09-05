@@ -14,13 +14,13 @@ echo   Manabi - start everything
 echo   (web is rebuilt and API + workers are restarted fresh on every run)
 echo.
 
-REM ── 0. .env ────────────────────────────────────────────────────────────
+REM -- 0. .env ------------------------------------------------------------
 if not exist .env (
     copy .env.example .env >nul
     echo [env]      created .env from .env.example
 )
 
-REM ── 1. Docker Desktop ─────────────────────────────────────────────────
+REM -- 1. Docker Desktop -------------------------------------------------
 docker info >nul 2>&1
 if errorlevel 1 (
     echo [docker]   starting Docker Desktop...
@@ -32,7 +32,7 @@ if errorlevel 1 (
 )
 echo [docker]   ready
 
-REM ── 2. Database ───────────────────────────────────────────────────────
+REM -- 2. Database -------------------------------------------------------
 docker compose -f infra\compose.yaml up -d >nul 2>&1
 :wait_pg
 docker exec manabi-postgres pg_isready -U manabi -d manabi >nul 2>&1
@@ -42,7 +42,7 @@ if errorlevel 1 (
 )
 echo [postgres] ready on port 56661
 
-REM ── 3. Migrations (idempotent) ────────────────────────────────────────
+REM -- 3. Migrations (idempotent) ----------------------------------------
 uv run --package manabi-server alembic -c apps\server\alembic.ini upgrade head >nul 2>&1
 if errorlevel 1 (
     echo [ERROR]    database migration failed - run it manually to see why:
@@ -53,7 +53,7 @@ if errorlevel 1 (
 uv run procrastinate --app=manabi_ai.app.app schema --apply >nul 2>&1
 echo [migrate]  schema up to date
 
-REM ── 4. Web build (always fresh — code changes are picked up every run) ─
+REM -- 4. Web build (always fresh - code changes are picked up every run) -
 echo [web]      building...
 call pnpm --filter web run build >nul 2>&1
 if errorlevel 1 (
@@ -63,7 +63,7 @@ if errorlevel 1 (
 )
 echo [web]      built
 
-REM ── 5. Services: kill stale instances, then start fresh ───────────────
+REM -- 5. Services: kill stale instances, then start fresh ---------------
 REM Every run is a clean redeploy: previous API/worker processes (and their
 REM cmd windows) are killed by command-line match, plus anything else that
 REM holds the app port 56690. Postgres (56661, the Docker container) and the
@@ -82,7 +82,7 @@ if "%SKIP_GPU_WORKER%"=="1" (
     start "Manabi AI worker" cmd /k uv run python -m manabi_ai.worker
 )
 
-REM ── Teacher voice: GPT-SoVITS TTS server (only where it is installed) ──
+REM -- Teacher voice: GPT-SoVITS TTS server (only where it is installed) --
 REM Moves with the GPU worker; skipped automatically if C:\GPT-SoVITS is absent.
 if exist "C:\GPT-SoVITS\api_v2.py" (
     powershell -NoProfile -Command "exit [int][bool](Get-NetTCPConnection -LocalPort 9880 -State Listen -ErrorAction SilentlyContinue)" >nul 2>&1
@@ -98,7 +98,7 @@ if exist "C:\GPT-SoVITS\api_v2.py" (
 
 start "Manabi CPU worker" cmd /k uv run python -m manabi_server.worker
 
-REM ── 6. URLs ───────────────────────────────────────────────────────────
+REM -- 6. URLs -----------------------------------------------------------
 set TSIP=
 for /f "delims=" %%i in ('tailscale ip -4 2^>nul') do if not defined TSIP set TSIP=%%i
 echo.
