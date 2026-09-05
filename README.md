@@ -76,7 +76,7 @@ keys (see below).
 ### Addresses — and why HTTPS matters
 
 - `http://localhost:56690` — this machine.
-- `https://peakfiction.tail580e35.ts.net` — any tailnet device, via
+- `https://your-machine.your-tailnet.ts.net` — any tailnet device, via
   `tailscale serve --bg 56690`. **Use this one on phones**: browsers only
   allow service-worker push notifications and PWA install on secure (HTTPS)
   origins. The scheme is what matters, not the port — `http://…:56690` can
@@ -98,7 +98,7 @@ tailscale serve --bg --https=8444 <local-port>  :: :8444 -> the next one…
 tailscale serve status                          :: see the current map
 ```
 
-Then open `https://peakfiction.tail580e35.ts.net:<tls-port>`. Only :443 gets
+Then open `https://your-machine.your-tailnet.ts.net:<tls-port>`. Only :443 gets
 the bare URL; everything else carries its port — which is fine, because it's
 still HTTPS.
 
