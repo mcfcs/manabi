@@ -28,6 +28,7 @@ from manabi_server.srs import (
     QueueItem,
     ReviewState,
     apply_rating,
+    is_leech,
     order_queue,
     preview_intervals,
     restore_review,
@@ -190,6 +191,7 @@ async def rate_card(
     ).first()
     if owned is None:
         raise HTTPException(status_code=404, detail="Card not found")
+    card: Flashcard = owned[0]
 
     review = (
         await db.execute(select(CardReview).where(CardReview.flashcard_id == flashcard_id))
@@ -208,24 +210,35 @@ async def rate_card(
     review.lapses = new_state.lapses
     review.last_rating = data.rating
     review.reviewed_at = now_manila()
+    # Leech: too many lapses -> suspend and flag; undo restores both.
+    became_leech = data.rating == "again" and is_leech(new_state) and not review.is_leech
+    if became_leech:
+        review.is_leech = True
+        card.status = FlashcardStatus.suspended
     await db.commit()
-    return {"due_date": due.isoformat(), "interval_days": new_state.interval_days}
+    return {
+        "due_date": due.isoformat(),
+        "interval_days": new_state.interval_days,
+        "leech": became_leech,
+    }
 
 
-async def _owned_card_review(db: AsyncSession, user: User, flashcard_id: int) -> CardReview | None:
-    """The card's review row if the card belongs to this user (any status —
-    undo must also reach a card that the rating just suspended)."""
+async def _owned_card_review(
+    db: AsyncSession, user: User, flashcard_id: int
+) -> tuple[CardReview, Flashcard] | None:
+    """The card's review row (+ the card) if it belongs to this user — any
+    status, because undo and leech actions must reach suspended cards."""
     row = (
         await db.execute(
-            select(CardReview)
+            select(CardReview, Flashcard)
             .join(Flashcard, Flashcard.id == CardReview.flashcard_id)
             .join(Artifact, Artifact.id == Flashcard.artifact_id)
             .join(Module, Module.id == Artifact.module_id)
             .join(Course, Course.id == Module.course_id)
             .where(Course.user_id == user.id, Flashcard.id == flashcard_id)
         )
-    ).scalar_one_or_none()
-    return row
+    ).first()
+    return (row[0], row[1]) if row is not None else None
 
 
 @router.post("/{flashcard_id}/undo", dependencies=[Depends(require_csrf)])
@@ -235,16 +248,109 @@ async def undo_rating(
     db: AsyncSession = Depends(get_db),
 ) -> dict:
     """Revert the last rating (one level). A card whose only rating is undone
-    goes back to never-reviewed."""
-    review = await _owned_card_review(db, user, flashcard_id)
-    if review is None or not review.prev_state:
+    goes back to never-reviewed; a rating that suspended a leech un-suspends it."""
+    found = await _owned_card_review(db, user, flashcard_id)
+    if found is None or not found[0].prev_state:
         raise HTTPException(status_code=404, detail="Nothing to undo for this card")
+    review, card = found
     snap = review.prev_state
     was_new = bool(snap.get("new"))
     if was_new:
         await db.delete(review)
     else:
+        was_leech = review.is_leech
         restore_review(review, snap)
         review.prev_state = None
+        if was_leech and not review.is_leech and card.status == FlashcardStatus.suspended:
+            card.status = FlashcardStatus.active
     await db.commit()
     return {"ok": True, "new": was_new}
+
+
+# ── Leeches ────────────────────────────────────────────────────────────────
+
+
+class LeechOut(BaseModel):
+    flashcard_id: int
+    front: str
+    back: str
+    module_id: int
+    module_title: str
+    course_code: str | None
+    accent_color: str | None
+    lapses: int
+    reviewed_at: str | None
+
+
+@router.get("/leeches")
+async def list_leeches(
+    user: User = Depends(get_default_user), db: AsyncSession = Depends(get_db)
+) -> list[LeechOut]:
+    rows = (
+        await db.execute(
+            select(Flashcard, Module, Course, CardReview)
+            .join(Artifact, Artifact.id == Flashcard.artifact_id)
+            .join(Module, Module.id == Artifact.module_id)
+            .join(Course, Course.id == Module.course_id)
+            .join(CardReview, CardReview.flashcard_id == Flashcard.id)
+            .where(Course.user_id == user.id, CardReview.is_leech.is_(True))
+            .order_by(CardReview.reviewed_at.desc().nulls_last(), Flashcard.id)
+        )
+    ).all()
+    return [
+        LeechOut(
+            flashcard_id=f.id,
+            front=f.front,
+            back=f.back,
+            module_id=m.id,
+            module_title=m.title,
+            course_code=c.code,
+            accent_color=c.accent_color,
+            lapses=r.lapses,
+            reviewed_at=r.reviewed_at.isoformat() if r.reviewed_at else None,
+        )
+        for f, m, c, r in rows
+    ]
+
+
+@router.post("/{flashcard_id}/leech-reset", dependencies=[Depends(require_csrf)])
+async def reset_leech(
+    flashcard_id: int,
+    user: User = Depends(get_default_user),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """Start the card over: fresh scheduling state, active again, due today."""
+    found = await _owned_card_review(db, user, flashcard_id)
+    if found is None or not found[0].is_leech:
+        raise HTTPException(status_code=404, detail="Card is not a leech")
+    review, card = found
+    fresh = ReviewState()
+    review.interval_days = fresh.interval_days
+    review.ease = fresh.ease
+    review.reps = fresh.reps
+    review.lapses = fresh.lapses
+    review.due_date = today_manila()
+    review.last_rating = None
+    review.prev_state = None
+    review.is_leech = False
+    card.status = FlashcardStatus.active
+    await db.commit()
+    return {"ok": True}
+
+
+@router.post("/{flashcard_id}/leech-dismiss", dependencies=[Depends(require_csrf)])
+async def dismiss_leech(
+    flashcard_id: int,
+    user: User = Depends(get_default_user),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """Keep the card suspended but drop it from the Leeches list (it stays
+    visible as suspended in its deck)."""
+    found = await _owned_card_review(db, user, flashcard_id)
+    if found is None or not found[0].is_leech:
+        raise HTTPException(status_code=404, detail="Card is not a leech")
+    review, _card = found
+    review.is_leech = False
+    review.prev_state = None
+    await db.commit()
+    return {"ok": True}

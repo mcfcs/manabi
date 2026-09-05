@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 
 import { api } from "../../lib/api";
 import { formatDays } from "./formatDays";
+import { LeechesPanel } from "./LeechesPanel";
 import "./review.css";
 
 interface ReviewCard {
@@ -50,6 +51,7 @@ export function ReviewPage() {
   const [done, setDone] = useState(0);
   // One-level undo: the card (with its pre-rating previews) we just rated.
   const [lastRated, setLastRated] = useState<ReviewCard | null>(null);
+  const [leechNotice, setLeechNotice] = useState<string | null>(null);
 
   const queue = useQuery({
     queryKey: ["review-queue"],
@@ -59,16 +61,24 @@ export function ReviewPage() {
 
   const rate = useMutation({
     mutationFn: (v: { id: number; rating: string }) =>
-      api.post<{ due_date: string; interval_days: number }>(
+      api.post<{ due_date: string; interval_days: number; leech?: boolean }>(
         `/api/review/${v.id}`,
         { rating: v.rating },
       ),
-    onSuccess: (_r, v) => {
+    onSuccess: (r, v) => {
       setRevealed(false);
       setDone((d) => d + 1);
       const current = queryClient.getQueryData<QueueOut>(["review-queue"]);
       const rated = current?.due.find((c) => c.flashcard_id === v.id) ?? null;
       setLastRated(rated);
+      if (r.leech) {
+        setLeechNotice(
+          "That card hit 8 lapses and was suspended as a leech — it's listed under Leeches below. Press u to undo if that was a slip.",
+        );
+        queryClient.invalidateQueries({ queryKey: ["review-leeches"] });
+      } else {
+        setLeechNotice(null);
+      }
       queryClient.setQueryData<QueueOut>(["review-queue"], (old) => {
         if (!old) return old;
         const rest = old.due.filter((c) => c.flashcard_id !== v.id);
@@ -88,6 +98,8 @@ export function ReviewPage() {
       setRevealed(false);
       setDone((d) => Math.max(0, d - 1));
       setLastRated(null);
+      setLeechNotice(null);
+      queryClient.invalidateQueries({ queryKey: ["review-leeches"] });
       // back to the head of the session, with its pre-rating previews
       queryClient.setQueryData<QueueOut>(["review-queue"], (old) => {
         const rest = (old?.due ?? []).filter((c) => c.flashcard_id !== card.flashcard_id);
@@ -175,6 +187,8 @@ export function ReviewPage() {
           </span>
         </div>
       </header>
+
+      {leechNotice && <p className="review-notice">{leechNotice}</p>}
 
       {queue.isLoading && <p className="gen-hint">Loading your queue…</p>}
 
@@ -271,6 +285,8 @@ export function ReviewPage() {
           </p>
         </div>
       )}
+
+      <LeechesPanel />
     </div>
   );
 }

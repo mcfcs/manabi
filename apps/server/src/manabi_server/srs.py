@@ -16,6 +16,15 @@ INTERVAL_CAP = 365.0
 
 RATINGS = ("again", "hard", "good", "easy")
 
+# A card that keeps lapsing is a "leech" (Anki's default threshold): it is
+# suspended and surfaced on the Review page for a rewrite or a reset instead
+# of soaking up sessions.
+LEECH_LAPSES = 8
+
+
+def is_leech(state: "ReviewState") -> bool:
+    return state.lapses >= LEECH_LAPSES
+
 
 @dataclass
 class ReviewState:
@@ -66,6 +75,7 @@ def snapshot_review(review) -> dict:
         "lapses": review.lapses,
         "last_rating": review.last_rating,
         "reviewed_at": review.reviewed_at.isoformat() if review.reviewed_at else None,
+        "is_leech": bool(getattr(review, "is_leech", False)),
     }
 
 
@@ -80,6 +90,7 @@ def restore_review(review, snap: dict) -> None:
     review.reviewed_at = (
         datetime.fromisoformat(snap["reviewed_at"]) if snap.get("reviewed_at") else None
     )
+    review.is_leech = bool(snap.get("is_leech", False))
 
 
 def preview_intervals(state: ReviewState, today: date) -> dict[str, int]:

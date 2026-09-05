@@ -162,3 +162,81 @@
 .review-rate.easy {
   color: #3e7a4e;
 }
+
+/* ── Leeches (cards auto-suspended after 8 lapses) ─────────────── */
+.review-notice {
+  margin: 0;
+  padding: var(--s-2) var(--s-3);
+  border-radius: var(--radius-sm);
+  background: var(--stale-wash);
+  color: var(--stale);
+  font-size: 13px;
+}
+.review-leeches {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-3);
+  border-top: 1px solid var(--rule);
+  padding-top: var(--s-4);
+  margin-top: var(--s-4);
+}
+.review-leeches-head h2 {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  margin: 0;
+  font-family: var(--font-display);
+  font-size: 18px;
+}
+.review-leeches-head p {
+  margin: 4px 0 0;
+  font-size: 13px;
+  color: var(--ink-soft);
+}
+.leech-row {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-2);
+  padding: var(--s-3);
+  border: 1px solid var(--rule);
+  border-radius: var(--radius-sm);
+  background: var(--surface-raised);
+}
+.leech-meta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--s-2);
+  font-size: 12px;
+  color: var(--ink-faint);
+}
+.leech-course {
+  font-weight: 600;
+}
+.leech-front {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 600;
+}
+.leech-back {
+  margin: 0;
+  font-family: var(--font-reading);
+  font-size: 13.5px;
+  color: var(--ink-soft);
+}
+.leech-edit {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-2);
+}
+.leech-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--s-2);
+}
+.leech-actions .btn {
+  min-height: 32px;
+  padding: 0 var(--s-3);
+  font-size: 12.5px;
+  gap: var(--s-1);
+}

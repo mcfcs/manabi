@@ -124,3 +124,38 @@ def test_new_card_cap_and_offset_page_through_the_backlog():
 
 def test_empty_queue():
     assert order_queue([]) == ([], 0)
+
+
+# ── Leeches ────────────────────────────────────────────────────────────────
+
+from manabi_server.srs import LEECH_LAPSES, is_leech  # noqa: E402
+
+
+def test_leech_threshold_matches_anki_default():
+    assert LEECH_LAPSES == 8
+    assert not is_leech(ReviewState(lapses=7))
+    assert is_leech(ReviewState(lapses=8))
+    assert is_leech(ReviewState(lapses=20))
+
+
+def test_eighth_again_crosses_the_leech_line():
+    state = ReviewState(interval_days=1.0, ease=1.3, reps=1, lapses=7)
+    new_state, _ = apply_rating(state, "again", TODAY)
+    assert is_leech(new_state) and not is_leech(state)
+
+
+def test_snapshot_carries_leech_flag_for_undo():
+    review = types.SimpleNamespace(
+        due_date=TODAY,
+        interval_days=1.0,
+        ease=1.3,
+        reps=1,
+        lapses=7,
+        last_rating="again",
+        reviewed_at=None,
+        is_leech=False,
+    )
+    snap = snapshot_review(review)
+    review.is_leech = True  # the rating that tipped it over
+    restore_review(review, snap)
+    assert review.is_leech is False
