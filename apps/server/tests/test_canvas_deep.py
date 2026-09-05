@@ -12,9 +12,16 @@ def _chunk(cid, doc, page, text):
     from manabi_core.retrieval import ScopedChunk
 
     return ScopedChunk(
-        id=cid, module_id=1, document_id=doc, document_title="D",
-        page_start=page, page_end=page, heading_path=None, text=text,
-        token_count=10, content_hash=str(cid),
+        id=cid,
+        module_id=1,
+        document_id=doc,
+        document_title="D",
+        page_start=page,
+        page_end=page,
+        heading_path=None,
+        text=text,
+        token_count=10,
+        content_hash=str(cid),
     )
 
 
@@ -25,9 +32,9 @@ def test_dedup_diversify_prefers_diversity_then_fills():
         _chunk(1, 10, 1, "alpha beta"),
         _chunk(2, 10, 1, "alpha beta"),  # exact dup text → always dropped
         _chunk(3, 10, 1, "gamma"),
-        _chunk(4, 10, 1, "delta"),       # 3rd on (10,1) → deferred by page cap
-        _chunk(5, 10, 2, "epsilon"),     # different page → kept
-        _chunk(6, 11, 1, "zeta"),        # different doc → kept
+        _chunk(4, 10, 1, "delta"),  # 3rd on (10,1) → deferred by page cap
+        _chunk(5, 10, 2, "epsilon"),  # different page → kept
+        _chunk(6, 11, 1, "zeta"),  # different doc → kept
     ]
     # Small limit: diversity wins; the page-capped 4 stays out, dup 2 dropped.
     assert [c.id for c in dedup_diversify(hits, limit=4, per_page=2)] == [1, 3, 5, 6]
@@ -63,21 +70,43 @@ class _Res:
 
 
 class _DB:
-    def __init__(self, rows):
-        self._rows = rows
+    """Answers successive execute() calls with successive result lists (the last
+    one repeats): _retrieval_query asks for user turns, then the last answer."""
+
+    def __init__(self, *results):
+        self._results = list(results)
 
     async def execute(self, *a, **k):
-        return _Res(self._rows)
+        rows = self._results.pop(0) if len(self._results) > 1 else self._results[0]
+        return _Res(rows)
 
 
 async def test_retrieval_query_folds_in_recent_turns():
     from manabi_server.api.chat import _retrieval_query
 
     thread = types.SimpleNamespace(id=7)
-    # DB returns the last user messages, newest first (incl. the current one).
-    db = _DB(["explain that more", "what is photosynthesis"])
+    # DB returns the last user messages, newest first (incl. the current one),
+    # then the last assistant answer (none yet).
+    db = _DB(["explain that more", "what is photosynthesis"], [])
     q = await _retrieval_query(db, thread, "explain that more")
     assert q == "explain that more\nwhat is photosynthesis"  # deduped, current first
+
+
+async def test_retrieval_query_adds_answer_terms_for_followups_only():
+    from manabi_server.api.chat import _retrieval_query
+
+    thread = types.SimpleNamespace(id=7)
+    answer = ["Photosynthesis happens in the Chloroplast using Chlorophyll."]
+    q = await _retrieval_query(
+        _DB(["explain that more", "what is photosynthesis"], answer), thread, "explain that more"
+    )
+    assert q.startswith("explain that more\nwhat is photosynthesis\n")
+    assert "Chloroplast" in q and "Chlorophyll" in q
+
+    # a self-contained new question ignores the history entirely
+    fresh = "What is the difference between mitosis and meiosis in eukaryotic cells"
+    q2 = await _retrieval_query(_DB([fresh, "what is photosynthesis"], answer), thread, fresh)
+    assert q2 == fresh
 
 
 # ── Canvas structure parse (mocked Canvas) ─────────────────────────────────
@@ -90,11 +119,17 @@ async def test_canvas_structure_parses_modules_items(monkeypatch):
         if "/modules" in path:
             return [
                 {
-                    "id": 1, "name": "Week 1", "position": 1,
+                    "id": 1,
+                    "name": "Week 1",
+                    "position": 1,
                     "items": [
                         {"id": 11, "type": "File", "title": "Slides", "content_id": 99},
-                        {"id": 12, "type": "ExternalUrl", "title": "Docs",
-                         "external_url": "https://x.test"},
+                        {
+                            "id": 12,
+                            "type": "ExternalUrl",
+                            "title": "Docs",
+                            "external_url": "https://x.test",
+                        },
                         {"id": 13, "type": "Page", "title": "Notes", "page_url": "notes"},
                     ],
                 }

@@ -42,6 +42,7 @@ from manabi_server.jobs.queue import (
     defer_task,
 )
 from manabi_server.security import get_default_user, require_csrf
+from manabi_server.services.followup import build_retrieval_query
 
 router = APIRouter(prefix="/api", tags=["chat"])
 
@@ -116,9 +117,7 @@ async def _get_owned_thread(
     # threads without a Module join.
     thread = (
         await db.execute(
-            select(ChatThread).where(
-                ChatThread.id == thread_id, ChatThread.user_id == user.id
-            )
+            select(ChatThread).where(ChatThread.id == thread_id, ChatThread.user_id == user.id)
         )
     ).scalar_one_or_none()
     if thread is None:
@@ -164,9 +163,7 @@ async def create_thread(
     user: User = Depends(get_default_user),
     db: AsyncSession = Depends(get_db),
 ) -> ThreadOut:
-    thread = ChatThread(
-        user_id=user.id, module_id=module.id, title="New conversation"
-    )
+    thread = ChatThread(user_id=user.id, module_id=module.id, title="New conversation")
     db.add(thread)
     await db.commit()
     return _thread_out(thread)
@@ -277,17 +274,13 @@ async def update_thread(
                 ).scalars()
             )
             if not set(data.scope_document_ids) <= valid:
-                raise HTTPException(
-                    status_code=422, detail="Document not in this module"
-                )
+                raise HTTPException(status_code=422, detail="Document not in this module")
         thread.scope_document_ids = data.scope_document_ids
     if thread.module_id is not None and "scope_note_ids" in data.model_fields_set:
         if data.scope_note_ids:
             valid = set(
                 (
-                    await db.execute(
-                        select(Note.id).where(Note.module_id == thread.module_id)
-                    )
+                    await db.execute(select(Note.id).where(Note.module_id == thread.module_id))
                 ).scalars()
             )
             if not set(data.scope_note_ids) <= valid:
@@ -409,9 +402,7 @@ class SummaryDiscussIn(BaseModel):
     quote: str
 
 
-@router.post(
-    "/modules/{module_id}/summary/discuss", dependencies=[Depends(require_csrf)]
-)
+@router.post("/modules/{module_id}/summary/discuss", dependencies=[Depends(require_csrf)])
 async def discuss_summary(
     data: SummaryDiscussIn,
     module: Module = Depends(get_owned_module),
@@ -443,9 +434,7 @@ class NoteDiscussIn(BaseModel):
     note_id: int | None = None  # the note the passage came from (provenance only)
 
 
-@router.post(
-    "/modules/{module_id}/notes/discuss", dependencies=[Depends(require_csrf)]
-)
+@router.post("/modules/{module_id}/notes/discuss", dependencies=[Depends(require_csrf)])
 async def discuss_note(
     data: NoteDiscussIn,
     module: Module = Depends(get_owned_module),
@@ -520,10 +509,12 @@ _WHOLE_DOC_MAX_CHUNKS = 24  # single-doc scope: load the whole doc up to this ma
 async def _retrieval_query(
     db: AsyncSession, thread: ChatThread, content: str, max_prev: int = 2
 ) -> str:
-    """Retrieval query = the new message + the last couple of user turns (deduped,
-    current first), so a bare follow-up ('explain that more') still retrieves the
-    right material instead of embedding a contextless fragment."""
-    rows = (
+    """Text to embed for retrieval. A self-contained question embeds alone (so a
+    topic change does not drag the previous topic along); a bare follow-up
+    ('explain that more') carries the last user turns and the salient terms of
+    the last answer, so it retrieves the right material instead of a
+    contextless fragment. Detection is deterministic — services.followup."""
+    user_rows = (
         (
             await db.execute(
                 select(ChatMessage.content)
@@ -538,17 +529,28 @@ async def _retrieval_query(
         .scalars()
         .all()
     )
-    parts: list[str] = []
-    for p in [content, *rows]:
-        p = (p or "").strip()
-        if p and p not in parts:
-            parts.append(p)
-    return "\n".join(parts)[:2000]
+    # the new message is already flushed, so it is usually user_rows[0]
+    prev_users = [r for r in user_rows if (r or "").strip() and r.strip() != content.strip()]
+    assistant_rows = (
+        (
+            await db.execute(
+                select(ChatMessage.content)
+                .where(
+                    ChatMessage.thread_id == thread.id,
+                    ChatMessage.role == ChatRole.assistant,
+                )
+                .order_by(ChatMessage.id.desc())
+                .limit(1)
+            )
+        )
+        .scalars()
+        .all()
+    )
+    last_assistant = assistant_rows[0] if assistant_rows else None
+    return build_retrieval_query(content, prev_users, last_assistant, max_prev=max_prev)
 
 
-async def _dispatch_answer(
-    db: AsyncSession, user: User, thread: ChatThread, content: str
-) -> int:
+async def _dispatch_answer(db: AsyncSession, user: User, thread: ChatThread, content: str) -> int:
     """Retrieve context for `content` and defer a chat_answer job; returns the
     Job id. Shared by post_message (new question) and regenerate (re-answer the
     same question). Retrieval runs here — the app server owns the embed model."""
@@ -576,9 +578,7 @@ async def _dispatch_answer(
         if thread.source_pages and thread.source_document_id:
             # Page-anchored "Ask about pages 1-3, 5": ground on the exact text of
             # those pages, deterministically, not embedding top-k.
-            pg_chunks = await chunks_for_pages(
-                db, thread.source_document_id, thread.source_pages
-            )
+            pg_chunks = await chunks_for_pages(db, thread.source_document_id, thread.source_pages)
             chunk_ids = [c.id for c in pg_chunks]
         elif thread.scope_document_ids == []:
             chunk_ids: list[int] = []  # documents excluded from scope
@@ -593,13 +593,21 @@ async def _dispatch_answer(
                 chunk_ids = [c.id for c in whole]
             else:
                 hits = await retrieve(
-                    db, [thread.module_id], await _embed(), query_text, k=_POOL,
+                    db,
+                    [thread.module_id],
+                    await _embed(),
+                    query_text,
+                    k=_POOL,
                     document_ids=thread.scope_document_ids,
                 )
                 chunk_ids = [h.id for h in dedup_diversify(hits, _FINAL)]
         else:
             hits = await retrieve(
-                db, [thread.module_id], await _embed(), query_text, k=_POOL,
+                db,
+                [thread.module_id],
+                await _embed(),
+                query_text,
+                k=_POOL,
                 document_ids=thread.scope_document_ids,
             )
             chunk_ids = [h.id for h in dedup_diversify(hits, _FINAL)]
@@ -653,9 +661,7 @@ async def _dispatch_answer(
     return job.id
 
 
-@router.post(
-    "/chat/threads/{thread_id}/messages", dependencies=[Depends(require_csrf)]
-)
+@router.post("/chat/threads/{thread_id}/messages", dependencies=[Depends(require_csrf)])
 async def post_message(
     data: MessageIn,
     thread: ChatThread = Depends(_get_owned_thread),
@@ -708,9 +714,7 @@ async def speak_message(
     db: AsyncSession = Depends(get_db),
 ) -> dict:
     existing = (
-        await db.execute(
-            select(SpeechClip.id).where(SpeechClip.chat_message_id == message.id)
-        )
+        await db.execute(select(SpeechClip.id).where(SpeechClip.chat_message_id == message.id))
     ).scalar_one_or_none()
     if existing is not None:
         return {"ready": True}
@@ -730,9 +734,7 @@ async def message_audio(
     db: AsyncSession = Depends(get_db),
 ) -> Response:
     clip = (
-        await db.execute(
-            select(SpeechClip).where(SpeechClip.chat_message_id == message.id)
-        )
+        await db.execute(select(SpeechClip).where(SpeechClip.chat_message_id == message.id))
     ).scalar_one_or_none()
     if clip is None:
         raise HTTPException(status_code=404, detail="Not synthesized yet")
@@ -754,9 +756,7 @@ async def delete_message(
     return {"ok": True}
 
 
-@router.post(
-    "/chat/messages/{message_id}/regenerate", dependencies=[Depends(require_csrf)]
-)
+@router.post("/chat/messages/{message_id}/regenerate", dependencies=[Depends(require_csrf)])
 async def regenerate_message(
     message: ChatMessage = Depends(_get_owned_message),
     user: User = Depends(get_default_user),
@@ -765,9 +765,7 @@ async def regenerate_message(
     """Regenerate an assistant reply: delete it and re-answer the same question
     (or re-run the daily briefing if it has no preceding question)."""
     if message.role != ChatRole.assistant:
-        raise HTTPException(
-            status_code=422, detail="Only Steven's replies can be regenerated"
-        )
+        raise HTTPException(status_code=422, detail="Only Steven's replies can be regenerated")
     thread = (
         await db.execute(select(ChatThread).where(ChatThread.id == message.thread_id))
     ).scalar_one()
@@ -822,9 +820,7 @@ async def regenerate_message(
     return {"job_id": job_id}
 
 
-@router.post(
-    "/chat/threads/{thread_id}/voice-message", dependencies=[Depends(require_csrf)]
-)
+@router.post("/chat/threads/{thread_id}/voice-message", dependencies=[Depends(require_csrf)])
 async def post_voice_message(
     audio: UploadFile = File(...),  # noqa: B008 — FastAPI idiom
     thread: ChatThread = Depends(_get_owned_thread),
