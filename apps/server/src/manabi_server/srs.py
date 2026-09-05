@@ -48,8 +48,12 @@ def apply_rating(state: ReviewState, rating: str, today: date) -> tuple[ReviewSt
         raise ValueError(f"unknown rating {rating!r}")
 
     interval = min(interval, INTERVAL_CAP)
-    new_state = ReviewState(
-        interval_days=interval, ease=ease, reps=reps, lapses=lapses
-    )
+    new_state = ReviewState(interval_days=interval, ease=ease, reps=reps, lapses=lapses)
     due = today + timedelta(days=round(interval))
     return new_state, due
+
+
+def preview_intervals(state: ReviewState, today: date) -> dict[str, int]:
+    """Days until the next review for each rating — shown on the rating
+    buttons so the choice is informed (Anki-style "4d / 12d")."""
+    return {rating: (apply_rating(state, rating, today)[1] - today).days for rating in RATINGS}

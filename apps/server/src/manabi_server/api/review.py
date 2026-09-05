@@ -22,7 +22,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from manabi_server.db import get_db
 from manabi_server.security import get_default_user, require_csrf
-from manabi_server.srs import RATINGS, ReviewState, apply_rating
+from manabi_server.srs import RATINGS, ReviewState, apply_rating, preview_intervals
 from manabi_server.timeutil import now_manila, today_manila
 
 router = APIRouter(prefix="/api/review", tags=["review"])
@@ -37,6 +37,10 @@ class ReviewCardOut(BaseModel):
     course_code: str | None
     accent_color: str | None
     reps: int
+    lapses: int = 0
+    interval_days: float = 0.0
+    # rating -> days until the next review if chosen now
+    previews: dict[str, int] = {}
 
 
 class QueueOut(BaseModel):
@@ -69,6 +73,7 @@ async def review_queue(
         await db.execute(
             _review_deck_cards()
             .join(CardReview, CardReview.flashcard_id == Flashcard.id, isouter=True)
+            .add_columns(CardReview)
             .where(
                 Course.user_id == user.id,
                 (CardReview.id.is_(None)) | (CardReview.due_date <= today),
@@ -76,20 +81,38 @@ async def review_queue(
             .order_by(CardReview.due_date.nulls_first(), Flashcard.id)
         )
     ).all()
-    due = [
-        ReviewCardOut(
-            flashcard_id=f.id,
-            front=f.front,
-            back=f.back,
-            module_id=m.id,
-            module_title=m.title,
-            course_code=c.code,
-            accent_color=c.accent_color,
-            reps=0,
-        )
-        for f, m, c in rows[: max(1, min(limit, 200))]
-    ]
+    due = [_card_out(f, m, c, r, today) for f, m, c, r in rows[: max(1, min(limit, 200))]]
     return QueueOut(due=due, due_count=len(rows))
+
+
+def _state_of(review: CardReview | None) -> ReviewState:
+    if review is None:
+        return ReviewState()
+    return ReviewState(
+        interval_days=review.interval_days,
+        ease=review.ease,
+        reps=review.reps,
+        lapses=review.lapses,
+    )
+
+
+def _card_out(
+    card: Flashcard, module: Module, course: Course, review: CardReview | None, today
+) -> ReviewCardOut:
+    state = _state_of(review)
+    return ReviewCardOut(
+        flashcard_id=card.id,
+        front=card.front,
+        back=card.back,
+        module_id=module.id,
+        module_title=module.title,
+        course_code=course.code,
+        accent_color=course.accent_color,
+        reps=state.reps,
+        lapses=state.lapses,
+        interval_days=state.interval_days,
+        previews=preview_intervals(state, today),
+    )
 
 
 @router.get("/due-count")
@@ -106,9 +129,7 @@ async def review_due_count(
         )
         .subquery()
     )
-    count = (
-        await db.execute(select(func.count()).select_from(subq))
-    ).scalar_one()
+    count = (await db.execute(select(func.count()).select_from(subq))).scalar_one()
     return {"count": count}
 
 
@@ -127,29 +148,16 @@ async def rate_card(
         raise HTTPException(status_code=422, detail=f"rating must be one of {RATINGS}")
     owned = (
         await db.execute(
-            _review_deck_cards().where(
-                Course.user_id == user.id, Flashcard.id == flashcard_id
-            )
+            _review_deck_cards().where(Course.user_id == user.id, Flashcard.id == flashcard_id)
         )
     ).first()
     if owned is None:
         raise HTTPException(status_code=404, detail="Card not found")
 
     review = (
-        await db.execute(
-            select(CardReview).where(CardReview.flashcard_id == flashcard_id)
-        )
+        await db.execute(select(CardReview).where(CardReview.flashcard_id == flashcard_id))
     ).scalar_one_or_none()
-    state = (
-        ReviewState(
-            interval_days=review.interval_days,
-            ease=review.ease,
-            reps=review.reps,
-            lapses=review.lapses,
-        )
-        if review
-        else ReviewState()
-    )
+    state = _state_of(review)
     new_state, due = apply_rating(state, data.rating, today_manila())
     if review is None:
         review = CardReview(flashcard_id=flashcard_id, due_date=due)

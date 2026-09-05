@@ -102,12 +102,41 @@
   border: 1px solid var(--rule);
   background: var(--surface-raised);
   border-radius: var(--radius-sm);
-  padding: var(--s-3) 0;
+  padding: var(--s-2) 0;
   font: inherit;
   font-weight: 600;
   font-size: 14px;
   cursor: pointer;
   min-height: var(--touch-target);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 1px;
+}
+/* next-interval preview under the label ("4d", "3w") */
+.review-rate-hint {
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  font-weight: 500;
+  color: var(--ink-faint);
+}
+.review-kbd-hint {
+  margin: 0;
+  text-align: center;
+  font-size: 11.5px;
+  color: var(--ink-faint);
+}
+.review-kbd-hint kbd {
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  border: 1px solid var(--rule);
+  border-radius: 4px;
+  padding: 0 4px;
+}
+@media (pointer: coarse) {
+  .review-kbd-hint {
+    display: none;
+  }
 }
 .review-rate.again {
   color: var(--accent-red);

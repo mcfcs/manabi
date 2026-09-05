@@ -1,8 +1,9 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Layers } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
 import { api } from "../../lib/api";
+import { formatDays } from "./formatDays";
 import "./review.css";
 
 interface ReviewCard {
@@ -13,6 +14,11 @@ interface ReviewCard {
   module_title: string;
   course_code: string | null;
   accent_color: string | null;
+  reps: number;
+  lapses: number;
+  interval_days: number;
+  /** rating → days until the next review if chosen now */
+  previews: Record<string, number>;
 }
 
 interface QueueOut {
@@ -21,11 +27,18 @@ interface QueueOut {
 }
 
 const RATINGS = [
-  { key: "again", label: "Again", hint: "today", cls: "again" },
-  { key: "hard", label: "Hard", hint: "", cls: "hard" },
-  { key: "good", label: "Good", hint: "", cls: "good" },
-  { key: "easy", label: "Easy", hint: "", cls: "easy" },
+  { key: "again", label: "Again", cls: "again", hotkey: "1" },
+  { key: "hard", label: "Hard", cls: "hard", hotkey: "2" },
+  { key: "good", label: "Good", cls: "good", hotkey: "3" },
+  { key: "easy", label: "Easy", cls: "easy", hotkey: "4" },
 ];
+
+function isTypingTarget(t: EventTarget | null): boolean {
+  if (!(t instanceof HTMLElement)) return false;
+  return (
+    t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.isContentEditable
+  );
+}
 
 export function ReviewPage() {
   const queryClient = useQueryClient();
@@ -62,6 +75,28 @@ export function ReviewPage() {
   const card = queue.data?.due[0];
   const remaining = queue.data?.due.length ?? 0;
 
+  // Keyboard: Space/Enter reveals, 1–4 rates. Ignored while typing elsewhere.
+  useEffect(() => {
+    if (!card) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (isTypingTarget(e.target) || e.ctrlKey || e.metaKey || e.altKey) return;
+      if (!revealed && (e.key === " " || e.key === "Enter")) {
+        e.preventDefault();
+        setRevealed(true);
+        return;
+      }
+      if (revealed && !rate.isPending) {
+        const r = RATINGS.find((x) => x.hotkey === e.key);
+        if (r) {
+          e.preventDefault();
+          rate.mutate({ id: card.flashcard_id, rating: r.key });
+        }
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [card, revealed, rate]);
+
   return (
     <div className="review-page">
       <header className="review-head">
@@ -92,6 +127,7 @@ export function ReviewPage() {
             style={{ color: card.accent_color ?? "var(--accent-blue)" }}
           >
             {card.course_code} · {card.module_title}
+            {card.reps === 0 ? " · new" : ""}
           </span>
           <button
             className="review-card"
@@ -118,12 +154,28 @@ export function ReviewPage() {
                     rate.mutate({ id: card.flashcard_id, rating: r.key })
                   }
                   disabled={rate.isPending}
+                  title={`${r.label} (${r.hotkey})`}
                 >
                   {r.label}
+                  <span className="review-rate-hint">
+                    {formatDays(card.previews?.[r.key])}
+                  </span>
                 </button>
               ))}
             </div>
           )}
+          <p className="review-kbd-hint">
+            {revealed ? (
+              <>
+                <kbd>1</kbd> again · <kbd>2</kbd> hard · <kbd>3</kbd> good ·{" "}
+                <kbd>4</kbd> easy
+              </>
+            ) : (
+              <>
+                <kbd>Space</kbd> to reveal
+              </>
+            )}
+          </p>
         </div>
       )}
     </div>
