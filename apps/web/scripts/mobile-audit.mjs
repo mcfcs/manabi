@@ -6,6 +6,7 @@
  * Env:    MANABI_URL (default http://localhost:56690)
  *         MANABI_COURSE / MANABI_MODULE / MANABI_DOC  — ids for the deep routes
  *         SIZES=390,1024  — subset of the widths below
+ *         ONLY=module-,viewer — only routes whose name contains one of these
  */
 import { chromium } from "playwright";
 import { mkdirSync, writeFileSync } from "node:fs";
@@ -46,6 +47,11 @@ const ALL_SIZES = {
   1194: [834, true],
   1440: [900, false],
 };
+const only = (process.env.ONLY ?? "")
+  .split(",")
+  .map((s) => s.trim())
+  .filter(Boolean);
+const routes = only.length ? ROUTES.filter(([n]) => only.some((o) => n.includes(o))) : ROUTES;
 const widths = (process.env.SIZES ?? Object.keys(ALL_SIZES).join(","))
   .split(",")
   .map((w) => Number(w.trim()))
@@ -63,7 +69,7 @@ for (const width of widths) {
     deviceScaleFactor: 2,
   });
   const page = await ctx.newPage();
-  for (const [name, route] of ROUTES) {
+  for (const [name, route] of routes) {
     try {
       await page.goto(BASE + route, { waitUntil: "networkidle", timeout: 20000 });
       await page.waitForTimeout(700);

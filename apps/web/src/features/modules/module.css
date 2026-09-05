@@ -9,6 +9,10 @@
   gap: var(--s-4);
   margin-bottom: var(--s-5);
 }
+.module-head h1 {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
 
 .module-head h1 {
   font-size: 24px;
@@ -231,7 +235,10 @@
   }
 }
 
-@media (max-width: 767px) {
+/* The 8 tabs overflow anywhere under ~900px of content (phone and both
+   tablet tiers), and the scrollbar is hidden — so the fade-out edge and
+   snap points apply through the tablet tiers, not just on phones. */
+@media (max-width: 1023px) {
   .tab-bar {
     scroll-snap-type: x proximity;
     -webkit-mask-image: linear-gradient(90deg, #000 92%, transparent);
@@ -239,5 +246,9 @@
   }
   .tab {
     scroll-snap-align: start;
+  }
+  .module-head {
+    flex-wrap: wrap;
+    row-gap: var(--s-2);
   }
 }
