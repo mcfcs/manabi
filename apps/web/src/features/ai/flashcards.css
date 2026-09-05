@@ -267,15 +267,12 @@
   gap: var(--s-2);
 }
 
-@media (max-width: 767px) {
-  .card-row {
-    flex-wrap: wrap;
-  }
-  .count-picker {
-    flex-wrap: wrap;
-  }
+/* Deck rows carry a title, pills and an action cluster; under ~900px of
+   content they wrap instead of squeezing the title to nothing. */
+@media (max-width: 1023px) {
   .deck-item {
     flex-wrap: wrap;
+    row-gap: var(--s-2);
   }
   .deck-detail-title {
     max-width: 100%;
@@ -284,5 +281,14 @@
   .cards-tab .gen-head {
     flex-wrap: wrap;
     row-gap: var(--s-2);
+  }
+}
+
+@media (max-width: 767px) {
+  .card-row {
+    flex-wrap: wrap;
+  }
+  .count-picker {
+    flex-wrap: wrap;
   }
 }

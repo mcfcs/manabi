@@ -4,8 +4,10 @@
   gap: var(--s-4);
 }
 
-/* Sidebar + reading column. Sidebar sticks on desktop; on mobile it becomes a
-   horizontally-scrollable chip bar above the summary. */
+/* Sidebar + reading column. The sticky jump-nav needs ~900px of content to
+   leave the reading column its 74ch, so it only appears from the tablet-
+   landscape tier (1024); below that it becomes a horizontally-scrollable
+   chip bar above the summary. */
 .summary-layout {
   display: grid;
   grid-template-columns: 190px minmax(0, 1fr);
@@ -69,7 +71,7 @@
   line-height: 1.7;
 }
 
-@media (max-width: 760px) {
+@media (max-width: 1023px) {
   .summary-layout {
     grid-template-columns: 1fr;
     gap: var(--s-3);
@@ -270,6 +272,13 @@
   }
   .key-terms {
     flex-wrap: wrap;
+  }
+  .terms-row {
+    flex-wrap: wrap;
+  }
+  .terms-term,
+  .terms-def {
+    flex: 1 1 100%;
   }
 }
 
