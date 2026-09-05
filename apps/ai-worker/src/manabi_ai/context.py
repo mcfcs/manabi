@@ -178,12 +178,43 @@ _NON_TERM_STARTS = {
 }
 
 
+_NON_TERM_ENDS = {
+    "in",
+    "on",
+    "of",
+    "to",
+    "for",
+    "with",
+    "by",
+    "from",
+    "at",
+    "as",
+    "and",
+    "or",
+    "the",
+    "a",
+    "an",
+    "is",
+    "are",
+    "be",
+    "was",
+    "were",
+    "has",
+    "have",
+    "can",
+    "will",
+    "not",
+}
+
+
 def _clean_term(raw: str) -> str | None:
     words = raw.strip(" .,;:-—–").split()
     while words and words[0].lower() in ("the", "a", "an", "term"):
         words = words[1:]  # "The term polymorphism" -> "polymorphism"
     if not words or words[0].lower() in _NON_TERM_STARTS:
         return None
+    if words[-1].lower() in _NON_TERM_ENDS:
+        return None  # "Prototypes are in" — a clause, not a term
     term = " ".join(words)
     if len(term) < 3 or len(term) > 60:
         return None

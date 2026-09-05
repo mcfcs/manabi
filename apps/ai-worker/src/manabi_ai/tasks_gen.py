@@ -220,9 +220,10 @@ async def generate_summary(context, job_id: int, module_id: int) -> None:
             )
             term_candidates = scan_definition_candidates(chunks)
             term_note = (
-                "\nTerm candidates found in the sources (phrases the text itself defines "
-                "or explains) — include each one the sources define, with its definition: "
-                f"{', '.join(term_candidates)}\n"
+                "\nTerm candidates found in the sources (phrases the text itself defines or "
+                "explains). Make sure each one the sources define appears in key_terms with "
+                "its definition — ON TOP OF every other term you would extract; this list is "
+                f"a floor, never the whole set: {', '.join(term_candidates)}\n"
                 if term_candidates
                 else ""
             )

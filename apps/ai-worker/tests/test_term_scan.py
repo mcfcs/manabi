@@ -66,3 +66,16 @@ def test_count_defined_matches_case_insensitively_and_by_containment():
     produced = [{"term": "encapsulation"}, {"term": "Dynamic Dispatch (late binding)"}]
     assert count_defined(["Encapsulation", "Dynamic dispatch", "Polymorphism"], produced) == 2
     assert count_defined([], produced) == 0
+
+
+def test_clause_fragments_ending_in_function_words_are_rejected():
+    chunks = [
+        _chunk(1, "Prototypes are in: stdio.h and friends.\nLate binding: the same idea."),
+        _chunk(
+            2, "Header files refer to the declarations. Linking is defined as combining objects."
+        ),
+    ]
+    lowered = [t.lower() for t in scan_definition_candidates(chunks)]
+    assert "prototypes are in" not in lowered
+    assert "late binding" in lowered
+    assert "header files" in lowered and "linking" in lowered
