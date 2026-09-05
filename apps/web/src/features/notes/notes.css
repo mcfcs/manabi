@@ -98,11 +98,11 @@
   padding: var(--s-1) var(--s-2);
 }
 
-/* Half-screen ("sideview") windows: below ~1080px the rail + a 190px sections
-   sidebar don't leave the editor a usable column (toolbar wraps into rows,
-   text squeezes) — collapse the sections into a wrapping strip above the
-   editor instead, long before the true mobile breakpoint. */
-@media (max-width: 1080px) {
+/* Half-screen ("sideview") windows and tablet portrait: below 1024 the rail
+   + a 190px sections sidebar don't leave the editor a usable column (toolbar
+   wraps into rows, text squeezes) — collapse the sections into a wrapping
+   strip above the editor instead, long before the true mobile breakpoint. */
+@media (max-width: 1023px) {
   .notes-tab {
     flex-direction: column;
     align-items: stretch;
@@ -242,7 +242,7 @@
   margin-inline: auto;
 }
 
-@media (max-width: 1080px) {
+@media (max-width: 1023px) {
   .note-sheet {
     padding: var(--s-5);
   }

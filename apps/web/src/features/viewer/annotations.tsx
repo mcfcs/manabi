@@ -265,7 +265,7 @@ export function AnnotationEditor({
 }) {
   const [note, setNote] = useState(annotation.note ?? "");
   useEffect(() => setNote(annotation.note ?? ""), [annotation.id, annotation.note]);
-  return (
+  return createPortal(
     <div className="annot-editor">
       <header>
         <Highlighter size={14} strokeWidth={1.5} />
@@ -289,7 +289,8 @@ export function AnnotationEditor({
           Save
         </button>
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 }
 
@@ -310,7 +311,7 @@ export function AnnotationPicker({
 }) {
   const left = Math.max(8, Math.min(x, window.innerWidth - 248));
   const top = Math.min(y + 8, window.innerHeight - 40 - annotations.length * 40);
-  return (
+  return createPortal(
     <>
       <div className="annot-picker-backdrop" onClick={onClose} />
       <div className="annot-picker" style={{ left, top: Math.max(8, top) }}>
@@ -327,7 +328,8 @@ export function AnnotationPicker({
           </button>
         ))}
       </div>
-    </>
+    </>,
+    document.body,
   );
 }
 
@@ -341,7 +343,7 @@ export function AnnotationsPanel({
   onJump: (a: AnnotationOut) => void;
   onClose: () => void;
 }) {
-  return (
+  return createPortal(
     <aside className="annot-panel">
       <header>
         <span>Annotations ({annotations.length})</span>
@@ -364,6 +366,7 @@ export function AnnotationsPanel({
           </span>
         </button>
       ))}
-    </aside>
+    </aside>,
+    document.body,
   );
 }
