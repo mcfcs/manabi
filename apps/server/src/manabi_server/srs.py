@@ -6,7 +6,7 @@ interval capped at 365 days.
 """
 
 from dataclasses import dataclass
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 
 EASE_MIN = 1.3
 EASE_MAX = 2.8
@@ -51,6 +51,33 @@ def apply_rating(state: ReviewState, rating: str, today: date) -> tuple[ReviewSt
     new_state = ReviewState(interval_days=interval, ease=ease, reps=reps, lapses=lapses)
     due = today + timedelta(days=round(interval))
     return new_state, due
+
+
+def snapshot_review(review) -> dict:
+    """JSON-safe copy of a CardReview's scheduling fields, stored on the row
+    before a rating overwrites it so the rating can be undone."""
+    return {
+        "due_date": review.due_date.isoformat(),
+        "interval_days": review.interval_days,
+        "ease": review.ease,
+        "reps": review.reps,
+        "lapses": review.lapses,
+        "last_rating": review.last_rating,
+        "reviewed_at": review.reviewed_at.isoformat() if review.reviewed_at else None,
+    }
+
+
+def restore_review(review, snap: dict) -> None:
+    """Inverse of snapshot_review: write the saved fields back onto the row."""
+    review.due_date = date.fromisoformat(snap["due_date"])
+    review.interval_days = float(snap["interval_days"])
+    review.ease = float(snap["ease"])
+    review.reps = int(snap["reps"])
+    review.lapses = int(snap["lapses"])
+    review.last_rating = snap.get("last_rating")
+    review.reviewed_at = (
+        datetime.fromisoformat(snap["reviewed_at"]) if snap.get("reviewed_at") else None
+    )
 
 
 def preview_intervals(state: ReviewState, today: date) -> dict[str, int]:

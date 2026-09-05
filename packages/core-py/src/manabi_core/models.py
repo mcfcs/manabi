@@ -187,9 +187,7 @@ class Document(Base, TimestampMixin):
     # Per-material AI exclusion: enforced in retrieval SQL, not prompts
     ai_included: Mapped[bool] = mapped_column(nullable=False, default=True)
     # 'full' or 'render_only' (store + view pages, skip text extraction/AI)
-    processing_mode: Mapped[str] = mapped_column(
-        String(16), nullable=False, default="full"
-    )
+    processing_mode: Mapped[str] = mapped_column(String(16), nullable=False, default="full")
     # Two-page-spread handling: 'auto' (detect) | 'single' | 'spread' (force split).
     page_layout: Mapped[str] = mapped_column(String(8), nullable=False, default="auto")
     # What auto-detection concluded on the last extract: 'single' | 'spread' | None.
@@ -795,7 +793,10 @@ class DayMark(Base):
 
     __table_args__ = (
         UniqueConstraint(
-            "date", "course_id", "block_id", name="uq_day_marks_date_course",
+            "date",
+            "course_id",
+            "block_id",
+            name="uq_day_marks_date_course",
             postgresql_nulls_not_distinct=True,
         ),
     )
@@ -903,9 +904,7 @@ class LectureCheckpointResult(Base):
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
 
-    __table_args__ = (
-        Index("ix_checkpoint_results_artifact", "artifact_id", "segment_index"),
-    )
+    __table_args__ = (Index("ix_checkpoint_results_artifact", "artifact_id", "segment_index"),)
 
 
 class CardReview(Base):
@@ -927,6 +926,11 @@ class CardReview(Base):
     lapses: Mapped[int] = mapped_column(nullable=False, default=0)
     last_rating: Mapped[str | None] = mapped_column(String(8))
     reviewed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # Snapshot of the row before the last rating ({"new": true} when the last
+    # rating created it) — one-level undo. Cleared once undone.
+    prev_state: Mapped[dict | None] = mapped_column(JSONB)
+    # Auto-suspended after LEECH_LAPSES lapses; reset from the Leeches panel.
+    is_leech: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
 
     __table_args__ = (Index("ix_card_reviews_due", "due_date"),)
 
@@ -961,6 +965,4 @@ class VoicePreview(Base, TimestampMixin):
     mime: Mapped[str] = mapped_column(String(64), nullable=False)
     duration_ms: Mapped[int] = mapped_column(nullable=False)
 
-    __table_args__ = (
-        UniqueConstraint("variant", "text", name="uq_voice_previews_variant_text"),
-    )
+    __table_args__ = (UniqueConstraint("variant", "text", name="uq_voice_previews_variant_text"),)

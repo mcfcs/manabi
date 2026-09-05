@@ -22,7 +22,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from manabi_server.db import get_db
 from manabi_server.security import get_default_user, require_csrf
-from manabi_server.srs import RATINGS, ReviewState, apply_rating, preview_intervals
+from manabi_server.srs import (
+    RATINGS,
+    ReviewState,
+    apply_rating,
+    preview_intervals,
+    restore_review,
+    snapshot_review,
+)
 from manabi_server.timeutil import now_manila, today_manila
 
 router = APIRouter(prefix="/api/review", tags=["review"])
@@ -160,8 +167,10 @@ async def rate_card(
     state = _state_of(review)
     new_state, due = apply_rating(state, data.rating, today_manila())
     if review is None:
-        review = CardReview(flashcard_id=flashcard_id, due_date=due)
+        review = CardReview(flashcard_id=flashcard_id, due_date=due, prev_state={"new": True})
         db.add(review)
+    else:
+        review.prev_state = snapshot_review(review)
     review.due_date = due
     review.interval_days = new_state.interval_days
     review.ease = new_state.ease
@@ -171,3 +180,41 @@ async def rate_card(
     review.reviewed_at = now_manila()
     await db.commit()
     return {"due_date": due.isoformat(), "interval_days": new_state.interval_days}
+
+
+async def _owned_card_review(db: AsyncSession, user: User, flashcard_id: int) -> CardReview | None:
+    """The card's review row if the card belongs to this user (any status —
+    undo must also reach a card that the rating just suspended)."""
+    row = (
+        await db.execute(
+            select(CardReview)
+            .join(Flashcard, Flashcard.id == CardReview.flashcard_id)
+            .join(Artifact, Artifact.id == Flashcard.artifact_id)
+            .join(Module, Module.id == Artifact.module_id)
+            .join(Course, Course.id == Module.course_id)
+            .where(Course.user_id == user.id, Flashcard.id == flashcard_id)
+        )
+    ).scalar_one_or_none()
+    return row
+
+
+@router.post("/{flashcard_id}/undo", dependencies=[Depends(require_csrf)])
+async def undo_rating(
+    flashcard_id: int,
+    user: User = Depends(get_default_user),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """Revert the last rating (one level). A card whose only rating is undone
+    goes back to never-reviewed."""
+    review = await _owned_card_review(db, user, flashcard_id)
+    if review is None or not review.prev_state:
+        raise HTTPException(status_code=404, detail="Nothing to undo for this card")
+    snap = review.prev_state
+    was_new = bool(snap.get("new"))
+    if was_new:
+        await db.delete(review)
+    else:
+        restore_review(review, snap)
+        review.prev_state = None
+    await db.commit()
+    return {"ok": True, "new": was_new}

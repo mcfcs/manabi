@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Layers } from "lucide-react";
+import { Layers, Undo2 } from "lucide-react";
 import { useEffect, useState } from "react";
 
 import { api } from "../../lib/api";
@@ -44,6 +44,8 @@ export function ReviewPage() {
   const queryClient = useQueryClient();
   const [revealed, setRevealed] = useState(false);
   const [done, setDone] = useState(0);
+  // One-level undo: the card (with its pre-rating previews) we just rated.
+  const [lastRated, setLastRated] = useState<ReviewCard | null>(null);
 
   const queue = useQuery({
     queryKey: ["review-queue"],
@@ -60,6 +62,9 @@ export function ReviewPage() {
     onSuccess: (_r, v) => {
       setRevealed(false);
       setDone((d) => d + 1);
+      const current = queryClient.getQueryData<QueueOut>(["review-queue"]);
+      const rated = current?.due.find((c) => c.flashcard_id === v.id) ?? null;
+      setLastRated(rated);
       queryClient.setQueryData<QueueOut>(["review-queue"], (old) => {
         if (!old) return old;
         const rest = old.due.filter((c) => c.flashcard_id !== v.id);
@@ -72,14 +77,37 @@ export function ReviewPage() {
     },
   });
 
+  const undo = useMutation({
+    mutationFn: (card: ReviewCard) =>
+      api.post<{ ok: boolean }>(`/api/review/${card.flashcard_id}/undo`, {}),
+    onSuccess: (_r, card) => {
+      setRevealed(false);
+      setDone((d) => Math.max(0, d - 1));
+      setLastRated(null);
+      // back to the head of the session, with its pre-rating previews
+      queryClient.setQueryData<QueueOut>(["review-queue"], (old) => {
+        const rest = (old?.due ?? []).filter((c) => c.flashcard_id !== card.flashcard_id);
+        const due = [card, ...rest];
+        return { due, due_count: due.length };
+      });
+      queryClient.invalidateQueries({ queryKey: ["review-due-count"] });
+    },
+    onError: () => setLastRated(null), // nothing to undo server-side anymore
+  });
+
   const card = queue.data?.due[0];
   const remaining = queue.data?.due.length ?? 0;
 
-  // Keyboard: Space/Enter reveals, 1–4 rates. Ignored while typing elsewhere.
+  // Keyboard: Space/Enter reveals, 1–4 rates, u undoes. Ignored while typing.
   useEffect(() => {
-    if (!card) return;
     const onKey = (e: KeyboardEvent) => {
       if (isTypingTarget(e.target) || e.ctrlKey || e.metaKey || e.altKey) return;
+      if (e.key === "u" && lastRated && !undo.isPending) {
+        e.preventDefault();
+        undo.mutate(lastRated);
+        return;
+      }
+      if (!card) return;
       if (!revealed && (e.key === " " || e.key === "Enter")) {
         e.preventDefault();
         setRevealed(true);
@@ -95,15 +123,27 @@ export function ReviewPage() {
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [card, revealed, rate]);
+  }, [card, revealed, rate, lastRated, undo]);
 
   return (
     <div className="review-page">
       <header className="review-head">
         <h1>Review</h1>
-        <span className="review-progress mono">
-          {done} done · {remaining} left
-        </span>
+        <div className="review-head-right">
+          {lastRated && (
+            <button
+              className="btn review-undo"
+              onClick={() => undo.mutate(lastRated)}
+              disabled={undo.isPending}
+              title="Undo last rating (u)"
+            >
+              <Undo2 size={13} strokeWidth={1.75} /> Undo
+            </button>
+          )}
+          <span className="review-progress mono">
+            {done} done · {remaining} left
+          </span>
+        </div>
       </header>
 
       {queue.isLoading && <p className="gen-hint">Loading your queue…</p>}
@@ -173,6 +213,12 @@ export function ReviewPage() {
             ) : (
               <>
                 <kbd>Space</kbd> to reveal
+              </>
+            )}
+            {lastRated && (
+              <>
+                {" "}
+                · <kbd>u</kbd> undo
               </>
             )}
           </p>
