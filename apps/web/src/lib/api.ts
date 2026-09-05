@@ -446,7 +446,13 @@ export interface SummaryOut {
   key_terms: KeyTerm[];
   acronyms: Acronym[];
   people: Person[];
-  coverage: { cited: number; total: number } | null;
+  coverage: {
+    cited: number;
+    total: number;
+    /** v10 summaries: scanned definitional terms and how many key_terms cover them */
+    term_candidates?: number;
+    terms_hit?: number;
+  } | null;
   edited_at: string | null;
   citations: Record<string, CitationOut[]>;
 }

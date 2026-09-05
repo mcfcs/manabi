@@ -35,7 +35,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from manabi_ai import prompts
 from manabi_ai.app import app
 from manabi_ai.config import get_settings
-from manabi_ai.context import batch_chunks, build_context, scan_acronym_candidates
+from manabi_ai.context import (
+    batch_chunks,
+    build_context,
+    count_defined,
+    scan_acronym_candidates,
+    scan_definition_candidates,
+)
 from manabi_ai.db import session_factory
 from manabi_ai.ollama_client import GenerationError, generate_structured
 from manabi_ai.recap import recap_block, should_refresh, turns_to_fold
@@ -212,7 +218,17 @@ async def generate_summary(context, job_id: int, module_id: int) -> None:
                 if candidates
                 else ""
             )
-            base_prompt = prompts.SUMMARY_PROMPT.replace("{acronym_candidates}", candidate_note)
+            term_candidates = scan_definition_candidates(chunks)
+            term_note = (
+                "\nTerm candidates found in the sources (phrases the text itself defines "
+                "or explains) — include each one the sources define, with its definition: "
+                f"{', '.join(term_candidates)}\n"
+                if term_candidates
+                else ""
+            )
+            base_prompt = prompts.SUMMARY_PROMPT.replace(
+                "{acronym_candidates}", candidate_note
+            ).replace("{term_candidates}", term_note)
 
             sections: list[dict] = []
             key_terms: list[dict] = []
@@ -346,7 +362,13 @@ async def generate_summary(context, job_id: int, module_id: int) -> None:
                     "key_terms": key_terms,
                     "acronyms": acronyms,
                     "people": people,
-                    "coverage": {"cited": len(cited_ids), "total": len(chunks)},
+                    "coverage": {
+                        "cited": len(cited_ids),
+                        "total": len(chunks),
+                        # how many scanned term candidates the key_terms define
+                        "term_candidates": len(term_candidates),
+                        "terms_hit": count_defined(term_candidates, key_terms),
+                    },
                 },
                 model_name=settings.generation_model,
                 prompt_version=prompts.PROMPT_VERSION,

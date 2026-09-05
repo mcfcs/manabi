@@ -5,7 +5,7 @@ outside the prompt: schema-constrained decoding, source-id resolution against
 the job's scope, and post-hoc support scoring.
 """
 
-PROMPT_VERSION = "v9"
+PROMPT_VERSION = "v10"  # v10: definitional term candidates injected into SUMMARY_PROMPT
 
 _GROUNDING = """RULES — follow strictly:
 - Use ONLY the numbered SOURCE MATERIAL. Do not add outside knowledge.
@@ -55,7 +55,7 @@ Also produce:
 - "people": named people, characters, authors, or figures the material actually
   discusses, each with a one-line role/description. EMPTY LIST for material not
   about specific people (most technical/scientific material). Invent no one.
-{{acronym_candidates}}
+{{acronym_candidates}}{{term_candidates}}
 Produce JSON matching the schema."""
 
 GAP_PROMPT_SUFFIX = """

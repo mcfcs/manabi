@@ -44,9 +44,31 @@ def build_context(chunks: list[ScopedChunk], notes_text: str | None) -> BuiltCon
 
 _ACRONYM_RE = re.compile(r"\b[A-Z][A-Z0-9]{1,5}s?\b")
 _COMMON_NON_ACRONYMS = {
-    "THE", "AND", "FOR", "NOT", "ARE", "BUT", "ALL", "ANY", "CAN", "ITS",
-    "THIS", "THAT", "WITH", "FROM", "NOTE", "PART", "UNIT", "PAGE", "II",
-    "III", "IV", "VI", "VII", "USA", "OK",
+    "THE",
+    "AND",
+    "FOR",
+    "NOT",
+    "ARE",
+    "BUT",
+    "ALL",
+    "ANY",
+    "CAN",
+    "ITS",
+    "THIS",
+    "THAT",
+    "WITH",
+    "FROM",
+    "NOTE",
+    "PART",
+    "UNIT",
+    "PAGE",
+    "II",
+    "III",
+    "IV",
+    "VI",
+    "VII",
+    "USA",
+    "OK",
 }
 
 
@@ -84,3 +106,122 @@ def batch_chunks(
     if current:
         batches.append(current)
     return batches
+
+
+# ── Key-term candidates ─────────────────────────────────────────────────────
+# Phrases the sources DEFINE: "X is defined as …", "X refers to …", "X means …",
+# and glossary lines "X: …". Injected into the summary prompt next to the
+# acronym candidates so the model at least CONSIDERS every term the material
+# itself defines (the prompt already asks for "every term", but a concrete
+# list is what actually moves recall).
+_DEF_CUE_RE = re.compile(
+    r"(?<![\w-])([A-Z][\w+#-]*(?:[ -][A-Za-z][\w+#-]*){0,4})\s+"
+    r"(?:is defined as|are defined as|refers? to|is called|are called|means|"
+    r"is an? (?:type|kind|form|set|way|process|technique|method|principle|concept|"
+    r"model|measure|approach|language|paradigm|property|function|structure|system)\b)"
+)
+_GLOSSARY_RE = re.compile(r"^\s*([A-Z][\w+#-]*(?:[ -][\w+#-]+){0,4})\s*[:—–]\s+\S", re.MULTILINE)
+_NON_TERM_STARTS = {
+    "the",
+    "a",
+    "an",
+    "this",
+    "that",
+    "these",
+    "those",
+    "it",
+    "its",
+    "there",
+    "here",
+    "which",
+    "what",
+    "who",
+    "each",
+    "every",
+    "such",
+    "one",
+    "he",
+    "she",
+    "they",
+    "we",
+    "you",
+    "i",
+    "also",
+    "another",
+    "some",
+    "any",
+    "all",
+    "both",
+    "in",
+    "on",
+    "at",
+    "for",
+    "as",
+    "if",
+    "when",
+    "where",
+    "how",
+    "why",
+    "term",
+    "word",
+    "note",
+    "example",
+    "figure",
+    "table",
+    "chapter",
+    "section",
+    "page",
+    "step",
+    "part",
+    "lecture",
+    "slide",
+}
+
+
+def _clean_term(raw: str) -> str | None:
+    words = raw.strip(" .,;:-—–").split()
+    while words and words[0].lower() in ("the", "a", "an", "term"):
+        words = words[1:]  # "The term polymorphism" -> "polymorphism"
+    if not words or words[0].lower() in _NON_TERM_STARTS:
+        return None
+    term = " ".join(words)
+    if len(term) < 3 or len(term) > 60:
+        return None
+    if re.fullmatch(r"[A-Z0-9+#-]+s?", term):
+        return None  # acronyms are scan_acronym_candidates' job
+    return term
+
+
+def scan_definition_candidates(chunks: list[ScopedChunk], limit: int = 40) -> list[str]:
+    """Deterministic key-term candidates from definitional cues, most frequent
+    first (ties by first appearance), deduped case-insensitively, keeping the
+    casing of the first appearance."""
+    counts: dict[str, int] = {}
+    first: dict[str, str] = {}
+    order: list[str] = []
+    for chunk in chunks:
+        for regex in (_DEF_CUE_RE, _GLOSSARY_RE):
+            for m in regex.finditer(chunk.text):
+                term = _clean_term(m.group(1))
+                if term is None:
+                    continue
+                key = term.lower()
+                if key not in counts:
+                    counts[key] = 0
+                    first[key] = term
+                    order.append(key)
+                counts[key] += 1
+    ranked = sorted(order, key=lambda k: (-counts[k], order.index(k)))
+    return [first[k] for k in ranked[:limit]]
+
+
+def count_defined(candidates: list[str], key_terms: list[dict]) -> int:
+    """How many candidates the produced key_terms cover (case-insensitive;
+    a key term that contains the candidate, or vice versa, counts)."""
+    produced = [str(t.get("term", "")).strip().lower() for t in key_terms]
+    hit = 0
+    for cand in candidates:
+        c = cand.lower()
+        if any(c == p or c in p or (p and p in c) for p in produced):
+            hit += 1
+    return hit

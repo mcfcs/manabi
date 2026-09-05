@@ -367,7 +367,7 @@ def test_prompt_version_is_current():
     from manabi_ai import prompts
 
     # exact value asserted in test_quiz_types.py — here just guard staleness
-    assert prompts.PROMPT_VERSION >= "v8"
+    assert int(prompts.PROMPT_VERSION.lstrip("v")) >= 8  # numeric: "v10" > "v8"
 
 
 def test_exercise_schemas_make_source_ids_optional():

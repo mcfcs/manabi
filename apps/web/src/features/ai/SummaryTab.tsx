@@ -468,6 +468,9 @@ export function SummaryTab({ moduleId }: { moduleId: string }) {
             >
               cites {summary.data.coverage.cited}/{summary.data.coverage.total}{" "}
               passages
+              {summary.data.coverage.term_candidates
+                ? ` · defines ${summary.data.coverage.terms_hit ?? 0}/${summary.data.coverage.term_candidates} scanned terms`
+                : ""}
             </span>
           )}
           {summary.data.edited_at && (

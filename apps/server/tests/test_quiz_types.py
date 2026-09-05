@@ -12,8 +12,14 @@ from manabi_ai.tasks_gen import _question_answer  # noqa: E402
 from manabi_server.api.artifacts import QUIZ_TYPES  # noqa: E402
 
 ALL_TYPES = (
-    "mcq", "tf", "short", "enumeration", "identification",
-    "essay", "coding", "output",
+    "mcq",
+    "tf",
+    "short",
+    "enumeration",
+    "identification",
+    "essay",
+    "coding",
+    "output",
 )
 
 
@@ -21,9 +27,7 @@ ALL_TYPES = (
 
 
 def test_enumeration_answer_shape_and_discards():
-    ok = _question_answer(
-        {"qtype": "enumeration", "correct_items": [" OSI ", "TCP/IP", "", 3]}
-    )
+    ok = _question_answer({"qtype": "enumeration", "correct_items": [" OSI ", "TCP/IP", "", 3]})
     assert ok == {"kind": "enumeration", "items": ["OSI", "TCP/IP"]}
     # fewer than 2 usable items → discarded
     assert _question_answer({"qtype": "enumeration", "correct_items": ["one"]}) is None
@@ -31,9 +35,10 @@ def test_enumeration_answer_shape_and_discards():
 
 
 def test_identification_answer():
-    assert _question_answer(
-        {"qtype": "identification", "correct_text": "encapsulation"}
-    ) == {"kind": "identification", "text": "encapsulation"}
+    assert _question_answer({"qtype": "identification", "correct_text": "encapsulation"}) == {
+        "kind": "identification",
+        "text": "encapsulation",
+    }
     assert _question_answer({"qtype": "identification"}) is None
 
 
@@ -111,7 +116,7 @@ def test_server_allowlist_matches():
 
 
 def test_prompt_version_current():
-    assert prompts.PROMPT_VERSION == "v9"
+    assert prompts.PROMPT_VERSION == "v10"
 
 
 def test_quiz_prompts_describe_new_types():
@@ -140,22 +145,17 @@ def test_verify_schema_is_flat_all_required():
     """The grammar-safe shape: flat object, every field required."""
     s = prompts.VERIFY_QUESTION_SCHEMA
     assert set(s["required"]) == set(s["properties"].keys())
-    assert all(
-        v["type"] in ("boolean", "string") for v in s["properties"].values()
-    )
+    assert all(v["type"] in ("boolean", "string") for v in s["properties"].values())
 
 
 def test_answer_display_per_kind():
     from manabi_ai.tasks_gen import _answer_display
 
     assert (
-        _answer_display({"kind": "mcq", "correct_option": 1}, ["a", "b", "c", "d"])
-        == "option 1: b"
+        _answer_display({"kind": "mcq", "correct_option": 1}, ["a", "b", "c", "d"]) == "option 1: b"
     )
     assert _answer_display({"kind": "tf", "value": True}, None) == "true"
-    assert (
-        _answer_display({"kind": "enumeration", "items": ["x", "y"]}, None) == "x; y"
-    )
+    assert _answer_display({"kind": "enumeration", "items": ["x", "y"]}, None) == "x; y"
     assert _answer_display({"kind": "essay", "model_answer": "m", "key_points": []}, None) == "m"
     assert _answer_display({"kind": "coding", "solution": "s"}, None) == "s"
     assert _answer_display({"kind": "output", "text": "5 4"}, None) == "5 4"
