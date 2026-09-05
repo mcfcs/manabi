@@ -1,7 +1,7 @@
 .viewer {
   display: flex;
   flex-direction: column;
-  height: calc(100vh - 2 * var(--s-6));
+  height: calc(100dvh - var(--content-pad) - var(--content-pad-bottom));
   max-width: 1100px;
   margin: 0 auto;
   position: relative;
@@ -711,12 +711,6 @@ mark.annot-red, .annot-swatch.annot-red, .annot-item-dot.annot-red {
 .page-total {
   color: var(--ink-faint);
   font-size: 13px;
-}
-
-@media (max-width: 767px) {
-  .viewer {
-    height: calc(100dvh - 2 * var(--s-4) - 64px);
-  }
 }
 
 /* ── Original PDF mode (browser-native viewer: Ctrl+F, text select) ── */

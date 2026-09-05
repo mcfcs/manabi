@@ -35,7 +35,7 @@
 
 @media (min-width: 768px) {
   .assistant-tab {
-    height: calc(100dvh - 2 * var(--s-6));
+    height: calc(100dvh - var(--content-pad) - var(--content-pad-bottom));
   }
   .assistant-tab .chat-main {
     min-height: 0;

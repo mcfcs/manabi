@@ -51,7 +51,20 @@
   --t-fast: 150ms;
   --t-med: 200ms;
 
-  /* Layout */
+  /* Layout — see the breakpoint scale below */
   --rail-width: 216px;
   --touch-target: 44px;
+  --content-pad: var(--s-6); /* .content inset; shell.css overrides per tier */
+  --content-pad-bottom: var(--content-pad); /* phone: bottom nav + safe area */
+  --bottom-nav-h: 0px; /* 64px on phone */
 }
+
+/* Breakpoint scale. Media queries cannot read custom properties, so these are
+   literals — use exactly these values everywhere:
+     phone             max-width: 767px    bottom nav, rail hidden
+     tablet portrait   768–1023px          compact 72px icon rail, feature sidebars collapsed
+     tablet landscape  1024–1279px         compact rail, feature sidebars open
+     desktop           min-width: 1280px   full 216px rail
+   Pinned (fixed-height) layouts must size themselves with
+     calc(100dvh - var(--content-pad) - var(--content-pad-bottom))
+   rather than hard-coding the .content padding or the bottom nav. */

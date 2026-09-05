@@ -71,6 +71,9 @@
   font-weight: 600;
   font-size: 13px;
 }
+.rail-course-short {
+  display: none; /* compact rail only */
+}
 
 .rail-recent {
   padding-top: 4px;
@@ -149,8 +152,10 @@
 
 .content {
   flex: 1;
+  min-width: 0;
   overflow-y: auto;
-  padding: var(--s-6);
+  padding: var(--content-pad);
+  padding-bottom: var(--content-pad-bottom);
 }
 
 .update-toast {
@@ -171,6 +176,87 @@
   font-size: 14px;
 }
 
+/* ── Tablet (768–1279): compact icon rail ───────────────────── */
+
+@media (min-width: 768px) and (max-width: 1279px) {
+  .shell {
+    --rail-width: 72px;
+    --content-pad: var(--s-5);
+  }
+  .rail {
+    padding: var(--s-4) var(--s-2);
+    gap: var(--s-4);
+  }
+  .rail-mark {
+    align-items: center;
+  }
+  .rail-kanji {
+    font-size: 20px;
+  }
+  .rail-name,
+  .rail-kbd,
+  .rail-user,
+  .rail-recent,
+  .rail-empty,
+  .rail-course-code,
+  .rail-activity span,
+  .ai-status-label {
+    display: none;
+  }
+  /* section headings become hairline dividers */
+  .rail-heading {
+    font-size: 0;
+    height: 1px;
+    background: var(--rule);
+    margin: var(--s-2) var(--s-2) var(--s-1);
+    padding: 0;
+  }
+  .rail-links {
+    gap: var(--s-1);
+    overflow-x: hidden;
+  }
+  .rail-link {
+    position: relative;
+    flex-direction: column;
+    gap: 3px;
+    padding: var(--s-2) 2px;
+    font-size: 10px;
+    font-weight: 600;
+    line-height: 1.1;
+    text-align: center;
+  }
+  .rail-link > span {
+    max-width: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .rail-link .due-badge {
+    position: absolute;
+    top: 2px;
+    right: 10px;
+    margin-left: 0;
+  }
+  .rail-course-dot {
+    width: 10px;
+    height: 10px;
+  }
+  .rail-course-short {
+    display: block;
+  }
+  .rail-foot {
+    align-items: center;
+    gap: var(--s-2);
+    padding-top: var(--s-3);
+  }
+  .rail-foot-row {
+    justify-content: center;
+  }
+  .rail-foot-row .rail-user {
+    flex: 0;
+  }
+}
+
 /* ── Mobile ─────────────────────────────────────────────────── */
 
 .bottom-bar {
@@ -178,13 +264,14 @@
 }
 
 @media (max-width: 767px) {
-  .rail {
-    display: none;
+  .shell {
+    --content-pad: var(--s-4);
+    --bottom-nav-h: 64px;
+    --content-pad-bottom: calc(var(--bottom-nav-h) + env(safe-area-inset-bottom));
   }
 
-  .content {
-    padding: var(--s-4);
-    padding-bottom: calc(64px + env(safe-area-inset-bottom));
+  .rail {
+    display: none;
   }
 
   .bottom-bar {
@@ -318,7 +405,7 @@
 
 @media (max-width: 767px) {
   .update-toast {
-    bottom: calc(64px + env(safe-area-inset-bottom) + var(--s-2));
+    bottom: calc(var(--bottom-nav-h) + env(safe-area-inset-bottom) + var(--s-2));
   }
   .bottom-bar {
     z-index: 50;

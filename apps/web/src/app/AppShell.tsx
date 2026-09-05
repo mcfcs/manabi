@@ -39,6 +39,13 @@ function useDueCount(): number {
   return due.data?.count ?? 0;
 }
 
+/** Compact-rail label: the trailing token of a course code
+ * ("CSCI 142i" → "142i", "SocSc 14" → "14"); the dot color + tooltip carry the rest. */
+export function shortCourseCode(code: string): string {
+  const parts = code.trim().split(/\s+/);
+  return (parts.length > 1 ? parts[parts.length - 1] : code).slice(0, 6);
+}
+
 function DueBadge({ count }: { count: number }) {
   if (count === 0) return null;
   return <span className="due-badge">{count}</span>;
@@ -176,6 +183,7 @@ export function AppShell({
             to="/assistant"
             className="rail-link"
             activeProps={{ className: "rail-link active" }}
+            title="Steven — your study assistant"
           >
             <Sparkles size={16} strokeWidth={1.5} />
             <span>Steven</span>
@@ -184,6 +192,7 @@ export function AppShell({
             to="/schedule"
             className="rail-link"
             activeProps={{ className: "rail-link active" }}
+            title="Schedule"
           >
             <CalendarClock size={16} strokeWidth={1.5} />
             <span>Schedule</span>
@@ -192,6 +201,7 @@ export function AppShell({
             to="/calendar"
             className="rail-link"
             activeProps={{ className: "rail-link active" }}
+            title="Calendar"
           >
             <CalendarDays size={16} strokeWidth={1.5} />
             <span>Calendar</span>
@@ -200,6 +210,7 @@ export function AppShell({
             to="/tasks"
             className="rail-link"
             activeProps={{ className: "rail-link active" }}
+            title="Tasks"
           >
             <ListTodo size={16} strokeWidth={1.5} />
             <span>Tasks</span>
@@ -209,12 +220,17 @@ export function AppShell({
             to="/review"
             className="rail-link"
             activeProps={{ className: "rail-link active" }}
+            title="Review due flashcards"
           >
             <Layers size={16} strokeWidth={1.5} />
             <span>Review</span>
             <DueBadge count={reviewDue} />
           </Link>
-          <button className="rail-link rail-search" onClick={() => setSearchOpen(true)}>
+          <button
+            className="rail-link rail-search"
+            onClick={() => setSearchOpen(true)}
+            title="Search (Ctrl/⌘ K)"
+          >
             <Search size={16} strokeWidth={1.5} />
             <span>Search</span>
             <kbd className="rail-kbd">⌘K</kbd>
@@ -228,12 +244,14 @@ export function AppShell({
               params={{ courseId: String(c.id) }}
               className="rail-link rail-course"
               activeProps={{ className: "rail-link rail-course active" }}
+              title={`${c.code} · ${c.name}`}
             >
               <span
                 className="rail-course-dot"
                 style={{ background: c.accent_color ?? "var(--accent-blue)" }}
               />
               <span className="rail-course-code">{c.code}</span>
+              <span className="rail-course-short">{shortCourseCode(c.code)}</span>
             </Link>
           ))}
           {courses.data?.length === 0 && (

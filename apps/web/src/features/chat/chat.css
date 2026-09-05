@@ -387,7 +387,7 @@
    chrome heights. Scoped to .module-page so the floating-panel (popout)
    mount is unaffected. */
 .module-page.module-chat {
-  height: calc(100dvh - 2 * var(--s-6)); /* .content desktop padding */
+  height: calc(100dvh - var(--content-pad) - var(--content-pad-bottom));
   display: flex;
   flex-direction: column;
   min-height: 0;
@@ -416,10 +416,6 @@
   }
   .chat-main {
     min-height: 0;
-  }
-  .module-page.module-chat {
-    /* .content mobile box: s-4 top pad, 64px bottom nav + safe area */
-    height: calc(100dvh - var(--s-4) - 64px - env(safe-area-inset-bottom));
   }
   /* Reclaim vertical space for the conversation: drop the crumb, compact
      the head and tab bar while chatting. */
