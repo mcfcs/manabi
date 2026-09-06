@@ -740,6 +740,9 @@ class AppSettings(Base):
     # Auto-play Steven's voice for chat replies (default off; per-device toggle
     # in the chat UI overrides this for the session).
     chat_autovoice: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    # Steven narrates readings: PDFs are scripted + synthesized after parsing
+    # (never auto-played); the viewer shows a Listen bar.
+    narration_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     # Ollama model for the general "Manabi AI" assistant. NULL = fall back to the
     # worker's effective_chat_model. Does NOT affect per-module chat.
     general_chat_model: Mapped[str | None] = mapped_column(String(128))
@@ -971,3 +974,52 @@ class VoicePreview(Base, TimestampMixin):
     duration_ms: Mapped[int] = mapped_column(nullable=False)
 
     __table_args__ = (UniqueConstraint("variant", "text", name="uq_voice_previews_variant_text"),)
+
+
+class Narration(Base, TimestampMixin):
+    """Steven's reading of one document: status of the recording plus the
+    options the script was built with. Segments hold the audio."""
+
+    __tablename__ = "narrations"
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    document_id: Mapped[int] = mapped_column(
+        BigInteger, ForeignKey("documents.id", ondelete="CASCADE"), nullable=False, unique=True
+    )
+    # scripted → synthesizing → ready | failed
+    status: Mapped[str] = mapped_column(String(16), nullable=False, default="scripted")
+    options: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
+    script_version: Mapped[int] = mapped_column(nullable=False, default=1)
+    error: Mapped[str | None] = mapped_column(Text)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+
+class NarrationSegment(Base):
+    """One spoken paragraph/heading of a narration. `text` is what the reader
+    sees, `spoken_text` what the synthesizer said; audio is filled in per
+    segment as the GPU worker progresses (mono MP3 bytes)."""
+
+    __tablename__ = "narration_segments"
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    narration_id: Mapped[int] = mapped_column(
+        BigInteger, ForeignKey("narrations.id", ondelete="CASCADE"), nullable=False
+    )
+    ord: Mapped[int] = mapped_column(nullable=False)
+    page_no: Mapped[int] = mapped_column(nullable=False)
+    kind: Mapped[str] = mapped_column(
+        String(16), nullable=False
+    )  # title|abstract|heading|paragraph|caption
+    text: Mapped[str] = mapped_column(Text, nullable=False)
+    spoken_text: Mapped[str] = mapped_column(Text, nullable=False)
+    audio: Mapped[bytes | None] = mapped_column(LargeBinary)
+    mime: Mapped[str | None] = mapped_column(String(64))
+    duration_ms: Mapped[int | None] = mapped_column()
+    voice: Mapped[str | None] = mapped_column(String(64))
+
+    __table_args__ = (
+        UniqueConstraint("narration_id", "ord", name="uq_narration_segments_ord"),
+        Index("ix_narration_segments_narration", "narration_id"),
+    )
