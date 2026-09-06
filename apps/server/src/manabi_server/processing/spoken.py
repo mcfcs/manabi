@@ -86,7 +86,8 @@ def _title_case(phrase: str) -> str:
         elif i > 0 and w.lower() in _SMALL_WORDS:
             out.append(w.lower())
         else:
-            out.append(w[:1] + w[1:].lower())
+            # capitalise the first LETTER, so '"DON'T' → '"Don't'
+            out.append(re.sub(r"[A-Za-z]", lambda m: m.group(0).upper(), w.lower(), count=1))
     return " ".join(out)
 
 

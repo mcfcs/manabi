@@ -67,8 +67,9 @@ def paper():
     p.insert_text((50, 320), "Keywords: rules; players; testing", fontsize=9, fontname=BODY)
     p.insert_text((50, 360), "1 INTRODUCTION", fontsize=10, fontname=HEAD)
     p.insert_textbox(pymupdf.Rect(50, 380, 545, 470), LOREM, fontsize=10, fontname=BODY)
+    # footnotes sit above the footer band, in small type, numbered
     p.insert_text(
-        (50, 760),
+        (50, 690),
         "1 A footnote that a narrator would skip, with a citation (Doe, 2004).",
         fontsize=8,
         fontname=BODY,
