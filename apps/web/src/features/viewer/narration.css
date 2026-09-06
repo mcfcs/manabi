@@ -101,7 +101,7 @@
 .narration-prompter.expanded .narration-text {
   display: block;
   -webkit-line-clamp: unset;
-  max-height: 38vh;
+  max-height: 34vh;
   overflow-y: auto;
   padding-right: var(--s-2);
 }
@@ -111,7 +111,7 @@
 
 /* ── Full script panel (above the controls) ─────────────────── */
 .narration-script {
-  max-height: 46vh;
+  max-height: 40vh;
   overflow-y: auto;
   display: flex;
   flex-direction: column;
@@ -179,11 +179,24 @@
   display: none;
 }
 
-/* phone: controls on one row, the prompter below it */
+/* phone: controls + expand + close on one row, the prompter below it */
 @media (max-width: 767px) {
   .narration-row {
     flex-wrap: wrap;
-    row-gap: var(--s-2);
+    gap: var(--s-2);
+  }
+  .narration-controls {
+    gap: 0;
+  }
+  .narration-controls .icon-btn,
+  .narration-expand,
+  .narration-close {
+    width: 34px;
+    height: 34px;
+  }
+  .narration-play {
+    width: 38px;
+    height: 38px;
   }
   .narration-prompter {
     flex-basis: 100%;
@@ -194,5 +207,8 @@
   }
   .narration-text {
     -webkit-line-clamp: 3;
+  }
+  .narration-prompter.expanded .narration-text {
+    max-height: 40vh;
   }
 }

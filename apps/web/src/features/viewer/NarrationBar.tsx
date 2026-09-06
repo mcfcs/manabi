@@ -96,6 +96,19 @@ export function NarrationBar({
   const next = segments[index + 1];
   const waiting = playing && seg && !seg.audio_ready;
 
+  // The expanded paragraph and the full script are mutually exclusive so the
+  // bar never stacks both and swallows the page.
+  function toggleExpanded() {
+    const on = !expanded;
+    setExpanded(on);
+    if (on) setScriptOpen(false);
+  }
+  function toggleScript() {
+    const on = !scriptOpen;
+    setScriptOpen(on);
+    if (on) setExpanded(false);
+  }
+
   // Elapsed = durations of everything before + position inside the current one.
   const elapsedBefore = useMemo(
     () => segments.slice(0, index).reduce((sum, s) => sum + (s.duration_ms ?? 0), 0),
@@ -320,7 +333,7 @@ export function NarrationBar({
               </button>
               <button
                 className={`icon-btn${scriptOpen ? " active" : ""}`}
-                onClick={() => setScriptOpen((v) => !v)}
+                onClick={toggleScript}
                 aria-pressed={scriptOpen}
                 aria-label="Full script"
                 title={scriptOpen ? "Hide the full script" : "Show the full script"}
@@ -331,7 +344,7 @@ export function NarrationBar({
 
             <div
               className={`narration-prompter${expanded ? " expanded" : ""}`}
-              onClick={() => setExpanded((v) => !v)}
+              onClick={toggleExpanded}
               title={expanded ? "Collapse" : "Show the whole paragraph"}
             >
               <span className="narration-meta mono">
@@ -350,7 +363,7 @@ export function NarrationBar({
             </div>
             <button
               className="icon-btn narration-expand"
-              onClick={() => setExpanded((v) => !v)}
+              onClick={toggleExpanded}
               aria-expanded={expanded}
               aria-label={expanded ? "Collapse paragraph" : "Expand paragraph"}
               title={expanded ? "Collapse" : "Show the whole paragraph"}
