@@ -88,3 +88,35 @@ sequential queue jobs, so contention is brief. If an OOM ever appears,
 check `nvidia-smi`, lower Ollama keep_alive, or restart ManabiTTS.
 
 Personal-use note: the cloned voice is for your own single-user studying.
+
+## 8. Narrating readings ("Steven narrates readings")
+
+Settings → Readings → **Steven narrates readings** adds a headphones toggle to
+the PDF viewer. The bar's **Listen** button builds a narration script and
+queues a GPU recording; once the switch is on, every newly parsed PDF is
+scripted and recorded right after parsing so the audio is ready when you
+press play. Nothing ever auto-plays.
+
+What Steven reads: the title and authors, the abstract, headings (as short
+announcements with a longer pause before them) and the body, with in-text
+citations, URLs and bullet glyphs dropped and abbreviations spoken
+(e.g. → "for example", et al. → "and colleagues", 319–337 → "319 to 337").
+What he skips: running headers/footers/page numbers, footnotes, front matter
+(masthead, affiliations, correspondence, keywords) and everything after a
+References/Bibliography heading. The classification is layout-based
+(PyMuPDF font size, face and position — `processing/narration_script.py`);
+preview it for any PDF without synthesising:
+
+```
+uv run --package manabi-server python scripts/narration_dry_run.py file.pdf --skipped
+```
+
+Audio lives in `narration_segments` (one MP3 per paragraph, like
+`lecture_audio`); `POST /api/documents/{id}/narration/prepare` with
+`{"force": true}` re-scripts and re-records after a re-parse. Grants for a
+restricted worker role are applied by migration 0036 when `manabi_gpu` exists;
+otherwise run:
+
+```sql
+GRANT SELECT, UPDATE ON narrations, narration_segments TO manabi_gpu;
+```
