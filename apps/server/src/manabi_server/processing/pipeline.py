@@ -190,8 +190,7 @@ def _ensure_normalized_pdf(doc: Document) -> str:
             return _finish_no_split(src, "spread" if is_spread_detected else "single")
         # Opted in: guarantee a cut on every page (centre where no clean gutter).
         gutters = [
-            g if g is not None else pg.rect.width / 2
-            for g, pg in zip(gutters, src, strict=False)
+            g if g is not None else pg.rect.width / 2 for g, pg in zip(gutters, src, strict=False)
         ]
         doc.detected_layout = "spread"
         out = layout.split_spread_pdf(src, gutters)
@@ -222,6 +221,10 @@ def _stage_structure(db: Session, doc: Document) -> None:
     # names the exact source transformation the parse reads (orig/rot/spread),
     # so different sources never share a cache entry.
     parsed = _docling_parse(source, cache_key=f"{doc.content_hash}-{norm_tag}")
+    # Fold ligatures everywhere and re-read glued pages ("Itisnowwidely…", a
+    # symptom of custom-encoded journal fonts) from PyMuPDF's span layer via
+    # each element's bbox. Post-cache, so cached parses heal on Retry too.
+    parsed["elements"] = _heal_text(parsed["elements"], source, doc)
     parsed["elements"] = _fix_reading_order(
         parsed["elements"], aggressive_columns=doc.detected_layout == "spread"
     )
@@ -277,6 +280,28 @@ def _stage_structure(db: Session, doc: Document) -> None:
     db.commit()
 
 
+def _heal_text(elements: list[dict], source: Path, doc: Document) -> list[dict]:
+    from manabi_server.processing import layout
+    from manabi_server.processing.text_health import heal_elements, pymupdf_clip_text
+
+    if doc.kind != DocumentKind.pdf:
+        return heal_elements(elements, None)
+    try:
+        import pymupdf
+
+        with pymupdf.open(str(source)) as pdf:
+            if not layout.has_native_text(pdf):
+                return heal_elements(elements, None)  # scans: OCR text, no span layer
+            healed = heal_elements(elements, pymupdf_clip_text(pdf))
+    except Exception:  # noqa: BLE001 — healing must never fail a parse
+        log.exception("text healing skipped for doc %s", doc.id)
+        return heal_elements(elements, None)
+    n = sum(1 for e in healed if e.get("healed"))
+    if n:
+        log.info("healed %d glued elements in doc %s", n, doc.id)
+    return healed
+
+
 def _strip_boilerplate(elements: list[dict]) -> list[dict]:
     """Drop repeating header/footer lines (copyright notices, 'Page N', …)
     that appear on a large fraction of pages. Runs before persist, so the
@@ -310,13 +335,15 @@ def _strip_boilerplate(elements: list[dict]) -> list[dict]:
     ]
     log.info(
         "stripped %d boilerplate elements (%d distinct lines across %d pages)",
-        len(elements) - len(kept), len(boilerplate), len(per_page),
+        len(elements) - len(kept),
+        len(boilerplate),
+        len(per_page),
     )
     return kept
 
 
-MARGIN_REPEAT_TEXT_MAX = 60      # running heads / page numbers are short
-MARGIN_REPEAT_PAGE_RATIO = 0.4   # …and appear on a large fraction of pages
+MARGIN_REPEAT_TEXT_MAX = 60  # running heads / page numbers are short
+MARGIN_REPEAT_PAGE_RATIO = 0.4  # …and appear on a large fraction of pages
 
 
 def _strip_margin_repeats(elements: list[dict]) -> list[dict]:
@@ -376,11 +403,7 @@ def _join_drop_caps(elements: list[dict]) -> list[dict]:
     prev_heading = False
     for el in elements:
         text = el.get("text") or ""
-        if (
-            el.get("type") == "paragraph"
-            and prev_heading
-            and len(text) >= _DROP_CAP_MIN_LEN
-        ):
+        if el.get("type") == "paragraph" and prev_heading and len(text) >= _DROP_CAP_MIN_LEN:
             joined = _DROP_CAP_RE.sub(r"\1", text, count=1)
             if joined != text:
                 el["text"] = joined
@@ -426,9 +449,7 @@ def _detect_column_split(boxed: list[dict], content_l: float, content_r: float) 
     return best_mid if left >= 2 and right >= 2 else None
 
 
-def _fix_reading_order(
-    elements: list[dict], aggressive_columns: bool = False
-) -> list[dict]:
+def _fix_reading_order(elements: list[dict], aggressive_columns: bool = False) -> list[dict]:
     """Repair scrambled per-page element order from OCR/layout analysis.
 
     Two-column pages (common in scanned books) are ordered column-by-column,
@@ -488,7 +509,9 @@ def _fix_reading_order(
             )
             log.info(
                 "re-sorted scrambled page %s (%d/%d inversions)",
-                page_no, inversions, pairs,
+                page_no,
+                inversions,
+                pairs,
             )
         fixed.extend(items)
     return fixed
@@ -544,11 +567,7 @@ _PARSE_CACHE_VERSION = 3
 
 
 def _parse_cache_path(cache_key: str) -> Path:
-    return (
-        files.storage_root()
-        / "parse-cache"
-        / f"v{_PARSE_CACHE_VERSION}-{cache_key}.json"
-    )
+    return files.storage_root() / "parse-cache" / f"v{_PARSE_CACHE_VERSION}-{cache_key}.json"
 
 
 def _docling_parse(source: Path, cache_key: str | None = None) -> dict:
@@ -777,9 +796,7 @@ def _stage_chunk(db: Session, doc: Document) -> None:
     db.execute(delete(Chunk).where(Chunk.document_id == doc.id))
 
     page_rows = (
-        db.execute(select(DocumentPage).where(DocumentPage.document_id == doc.id))
-        .scalars()
-        .all()
+        db.execute(select(DocumentPage).where(DocumentPage.document_id == doc.id)).scalars().all()
     )
     element_rows = (
         db.execute(

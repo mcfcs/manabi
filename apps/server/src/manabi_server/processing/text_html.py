@@ -84,6 +84,12 @@ def sanitize(text: str) -> str:
     return _CONTROL_CHARS.sub("", text)
 
 
+def fold_ligatures(text: str) -> str:
+    from manabi_server.processing.text_health import normalize_ligatures
+
+    return normalize_ligatures(text)
+
+
 def collapse_hspace(text: str) -> str:
     """Collapse runs of spaces/tabs to a single space. Newlines are preserved
     so line structure survives; leading/trailing trimming is the caller's job."""
@@ -183,8 +189,14 @@ def _pdf_page_html(page, skip: set[str] | None = None) -> str | None:
             for span in line.get("spans", []):
                 text = span.get("text", "")
                 if not text.strip():
+                    # Some fonts emit every inter-word space as its own span;
+                    # dropping those glued the words ("Itisnowwidely"). Carry
+                    # the space over instead.
+                    if text and spans and not prev_trailing_space:
+                        spans.append(" ")
+                        prev_trailing_space = True
                     continue
-                text = collapse_hspace(text)
+                text = collapse_hspace(fold_ligatures(text))
                 if prev_trailing_space:
                     text = text.lstrip(" ")  # avoid a double space across spans
                 prev_trailing_space = text.endswith(" ")
@@ -264,9 +276,7 @@ def _table_html(table_json: dict) -> str | None:
         rows = table_json.get("data") or []
         if not isinstance(columns, list):
             columns = []
-        if not isinstance(rows, list) or any(
-            not isinstance(r, (list, tuple)) for r in rows
-        ):
+        if not isinstance(rows, list) or any(not isinstance(r, (list, tuple)) for r in rows):
             rows = []
         if not rows and not columns:
             return None
@@ -374,9 +384,7 @@ def build_text_html(db: Session, document_id: int) -> int:
         # Read the normalized (spread-split) PDF so native spans line up with
         # the same logical pages the elements/renders use.
         with fitz.open(parse_source_path(doc)) as pdf:
-            skip = repeated_keys(
-                {no: _pdf_page_line_keys(pdf[no]) for no in range(pdf.page_count)}
-            )
+            skip = repeated_keys({no: _pdf_page_line_keys(pdf[no]) for no in range(pdf.page_count)})
             for page in pages:
                 if (page.text_html or "").startswith(USER_EDITED_MARKER):
                     continue
