@@ -66,9 +66,9 @@ class _FakePage:
         return {"blocks": self._blocks}
 
 
-def _line(*texts):
+def _line(*texts, width=350):
     return {
-        "bbox": [50, 0, 400, 10],
+        "bbox": [50, 0, 50 + width, 10],
         "spans": [{"text": t, "size": 10, "flags": 0, "font": "AdvP41153C"} for t in texts],
     }
 
@@ -81,17 +81,46 @@ def test_native_page_html_keeps_space_spans_and_folds_ligatures():
             {
                 "type": 0,
                 "lines": [
-                    _line("It", " ", "is", " ", "now", " ", "widely"),  # per-word spans
-                    _line("speciﬁcally ", "so"),  # trailing space inside a span
-                    _line(" ", "leading"),  # a space span at line start is dropped
+                    # per-word spans on a full-width (wrapped) line
+                    _line("It", " ", "is", " ", "now", " ", "widely"),
+                    _line("speciﬁcally ", "so", width=120),  # short: paragraph end
+                    _line(" ", "leading", width=90),  # a space span at line start is dropped
                 ],
             }
         ]
     )
     html = _pdf_page_html(page)
-    assert "It is now widely" in html
-    assert "specifically so" in html
-    assert ">leading" in html and "> leading" not in html
+    assert "It is now widely specifically so" in html  # wrapped line flows on
+    assert "<br>leading" in html and "<br> leading" not in html  # short line keeps its break
+
+
+def test_native_page_html_flows_wrapped_prose_and_dehyphenates():
+    from manabi_server.processing.text_html import _pdf_page_html
+
+    page = _FakePage(
+        [
+            {
+                "type": 0,
+                "lines": [
+                    _line("effective social, political and economic organ-"),
+                    _line("izations, across sectors, which can push for a self-"),
+                    _line("generating rule. The end of the paragraph."),
+                ],
+            },
+            {
+                "type": 0,
+                "lines": [  # a list: short lines keep their breaks
+                    _line("1. Rules", width=60),
+                    _line("2. Players", width=70),
+                    _line("3. Outcomes", width=80),
+                ],
+            },
+        ]
+    )
+    html = _pdf_page_html(page)
+    assert "economic organizations, across sectors" in html  # soft hyphen dropped
+    assert "a self-generating rule" in html  # real compound kept
+    assert "1. Rules<br>2. Players<br>3. Outcomes" in html
 
 
 def test_join_lines_dehyphenates_soft_breaks_and_keeps_real_hyphens():

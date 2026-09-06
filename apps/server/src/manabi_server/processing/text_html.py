@@ -159,6 +159,39 @@ def _pdf_page_line_keys(page) -> set[str]:
     return keys
 
 
+# A line at least this share of its block's widest line is a wrapped prose line:
+# it flows into the next line. Shorter lines (headings, list items, the last
+# line of a paragraph, addresses) keep their break.
+FLOW_FILL_RATIO = 0.72
+_TRAILING_HYPHEN = re.compile(r"-((?:</[a-z]+>)*)$")
+
+
+def _flow_lines(entries: list[tuple[str, float, str]]) -> str:
+    """Join wrapped lines of one text block into flowing HTML. `entries` are
+    (line_html, line_width_pt, raw_text). A hyphenated wrap ("organ-" +
+    "izations") is re-joined without the hyphen unless it is a real compound."""
+    from manabi_server.processing.text_health import join_hyphenated
+
+    if len(entries) <= 1:
+        return "".join(h for h, _, _ in entries)
+    max_w = max(w for _, w, _ in entries) or 1.0
+    out = entries[0][0]
+    for i in range(1, len(entries)):
+        prev_html, prev_w, prev_raw = entries[i - 1]
+        html, _, raw = entries[i]
+        full = prev_w >= FLOW_FILL_RATIO * max_w
+        if not full:
+            out += "<br>" + html
+            continue
+        if prev_raw.endswith("-") and raw[:1].islower():
+            keep = join_hyphenated(prev_raw, raw) == prev_raw[:-1] + "-" + raw
+            if not keep:
+                out = _TRAILING_HYPHEN.sub(r"\1", out) + html
+                continue
+        out += " " + html
+    return out
+
+
 def _pdf_page_html(page, skip: set[str] | None = None) -> str | None:
     """Styled HTML from the native text layer; None when the page is scanned.
     Preserves bold/italic and approximates indentation from span x-origins.
@@ -178,7 +211,7 @@ def _pdf_page_html(page, skip: set[str] | None = None) -> str | None:
 
     parts: list[str] = []
     for block in text_blocks:
-        lines: list[str] = []
+        lines: list[tuple[str, float, str]] = []  # (html, width, raw text)
         block_x = None
         for line in block.get("lines", []):
             raw_line = "".join(s.get("text", "") for s in line.get("spans", []))
@@ -209,13 +242,14 @@ def _pdf_page_html(page, skip: set[str] | None = None) -> str | None:
             if spans:
                 if block_x is None:
                     block_x = line["bbox"][0]
-                lines.append("".join(spans))
+                bbox = line.get("bbox") or (0, 0, 0, 0)
+                lines.append(("".join(spans), float(bbox[2]) - float(bbox[0]), raw_line.strip()))
         if lines:
             indent = 0
             if block_x is not None:
                 indent = min(MAX_INDENT, int((block_x - base_x) / INDENT_STEP_PTS))
             style = f' style="margin-left:{indent}em"' if indent > 0 else ""
-            parts.append(f"<p{style}>{'<br>'.join(lines)}</p>")
+            parts.append(f"<p{style}>{_flow_lines(lines)}</p>")
     joined = "".join(parts)
     return joined if joined.strip() else None
 
