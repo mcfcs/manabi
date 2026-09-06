@@ -878,3 +878,52 @@ mark.annot-red, .annot-swatch.annot-red, .annot-item-dot.annot-red {
   display: inline-flex;
   align-items: center;
 }
+
+/* ── Find in extracted text ─────────────────────────────────── */
+.viewer-search {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  padding: var(--s-2) 0;
+  border-bottom: 1px solid var(--rule);
+}
+.viewer-search-icon {
+  color: var(--ink-faint);
+  flex-shrink: 0;
+}
+.viewer-search-input {
+  flex: 1;
+  min-width: 0;
+  min-height: 34px;
+  padding: 0 var(--s-3);
+  border: 1px solid var(--rule);
+  border-radius: var(--radius-sm);
+  background: var(--surface-raised);
+  font: inherit;
+  font-size: 14px;
+  color: var(--ink);
+}
+.viewer-search-input:focus {
+  outline: 2px solid var(--accent-blue-wash);
+  border-color: var(--accent-blue);
+}
+.viewer-search-count {
+  font-size: 12px;
+  color: var(--ink-faint);
+  white-space: nowrap;
+  min-width: 5ch;
+  text-align: right;
+}
+.viewer-text-content mark.search-mark,
+.reader-doc mark.search-mark {
+  background: #fde68a;
+  color: var(--ink);
+  border-radius: 2px;
+  padding: 0 1px;
+}
+.viewer-text-content mark.search-mark.current,
+.reader-doc mark.search-mark.current {
+  background: #f59e0b;
+  color: #1c2434;
+  box-shadow: 0 0 0 2px #f59e0b;
+}

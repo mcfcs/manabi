@@ -19,6 +19,17 @@ export interface AnnotationMark {
 
 const TERM_CLASS = "term-mark";
 const ANNOT_CLASS = "annot";
+const SEARCH_CLASS = "search-mark";
+
+/** In-viewer find: every case-insensitive, non-overlapping occurrence of
+ * `query` is marked; the match with ordinal `current` (0-based, within this
+ * container) also gets the `current` class. */
+export interface SearchSpec {
+  query: string;
+  current?: number | null;
+}
+
+const SEARCH_MIN_CHARS = 2;
 
 // Block-level tags across whose boundary a synthetic space is inserted, so a
 // term/quote never bleeds across a paragraph or line break (matching the
@@ -107,7 +118,9 @@ function buildCharMap(root: HTMLElement): CharMap {
 /** Remove every highlight this module added and stitch the text back together
  * so a re-apply sees clean text nodes. Safe to call on un-highlighted DOM. */
 export function clearHighlights(root: HTMLElement): void {
-  const marks = root.querySelectorAll(`mark.${TERM_CLASS}, mark.${ANNOT_CLASS}`);
+  const marks = root.querySelectorAll(
+    `mark.${TERM_CLASS}, mark.${ANNOT_CLASS}, mark.${SEARCH_CLASS}`,
+  );
   if (!marks.length) return;
   marks.forEach((mark) => {
     const parent = mark.parentNode;
@@ -125,6 +138,7 @@ export function applyHighlights(
   root: HTMLElement,
   terms: string[],
   annots: AnnotationMark[],
+  search?: SearchSpec,
 ): void {
   clearHighlights(root);
   const map = buildCharMap(root);
@@ -132,6 +146,21 @@ export function applyHighlights(
   if (!hay) return;
   const lower = hay.toLowerCase();
   const n = hay.length;
+
+  // Search: substring, case-insensitive, non-overlapping; ordinal per char.
+  const searchAt = new Int32Array(n); // 0 = none, k = match #k (1-based)
+  const needleQ = search ? normalizeQuery(search.query).toLowerCase() : "";
+  if (needleQ.length >= SEARCH_MIN_CHARS) {
+    let from = 0;
+    let ord = 0;
+    for (;;) {
+      const idx = lower.indexOf(needleQ, from);
+      if (idx < 0) break;
+      ord++;
+      for (let i = idx; i < idx + needleQ.length; i++) searchAt[i] = ord;
+      from = idx + needleQ.length;
+    }
+  }
 
   // Per-character coverage. Overlapping annotations are NOT dropped — a char in
   // two highlights records both, so the flattened segments below render the
@@ -171,6 +200,7 @@ export function applyHighlights(
     const a = annotAt[i];
     if (a && a.length)
       return "a" + a.map((x) => x.id).sort((p, q) => p - q).join(",");
+    if (searchAt[i]) return "s" + searchAt[i];
     return termAt[i] ? "t" : "";
   };
 
@@ -178,6 +208,7 @@ export function applyHighlights(
     start: number;
     end: number;
     annots: AnnotationMark[] | null;
+    searchOrd: number; // 0 = not a search match
   }
   const segs: Seg[] = [];
   let i = 0;
@@ -189,7 +220,12 @@ export function applyHighlights(
     }
     let j = i + 1;
     while (j < n && keyAt(j) === k) j++;
-    segs.push({ start: i, end: j, annots: k[0] === "a" ? annotAt[i] : null });
+    segs.push({
+      start: i,
+      end: j,
+      annots: k[0] === "a" ? annotAt[i] : null,
+      searchOrd: k[0] === "s" ? searchAt[i] : 0,
+    });
     i = j;
   }
   if (!segs.length) return;
@@ -214,6 +250,11 @@ export function applyHighlights(
         (multi ? " annot-multi" : "") +
         (s.annots.some((a) => a.hasNote) ? " has-note" : "");
       mark.dataset.annotIds = s.annots.map((a) => a.id).join(",");
+    } else if (s.searchOrd) {
+      const ordinal = s.searchOrd - 1;
+      mark.className =
+        SEARCH_CLASS + (search && search.current === ordinal ? " current" : "");
+      mark.dataset.searchOrd = String(ordinal);
     } else {
       mark.className = TERM_CLASS;
     }
@@ -240,12 +281,33 @@ export function highlightHtml(
   html: string,
   terms: string[],
   annots: AnnotationMark[],
+  search?: SearchSpec,
 ): string {
   if (!html) return html;
   const container = document.createElement("div");
   container.innerHTML = html;
-  applyHighlights(container, terms, annots);
+  applyHighlights(container, terms, annots, search);
   return container.innerHTML;
+}
+
+/** How many times `query` occurs in the visible text of `html` — the same
+ * normalisation and non-overlapping scan the highlighter uses, so ordinals
+ * line up with the `search-mark` elements it produces. */
+export function countSearchMatches(html: string, query: string): number {
+  const q = normalizeQuery(query).toLowerCase();
+  if (!html || q.length < SEARCH_MIN_CHARS) return 0;
+  const container = document.createElement("div");
+  container.innerHTML = html;
+  const lower = buildCharMap(container).text.toLowerCase();
+  let from = 0;
+  let count = 0;
+  for (;;) {
+    const idx = lower.indexOf(q, from);
+    if (idx < 0) break;
+    count++;
+    from = idx + q.length;
+  }
+  return count;
 }
 
 /** React glue: memoized highlighted HTML for dangerouslySetInnerHTML. */
@@ -253,13 +315,18 @@ export function useHighlightedHtml(
   html: string,
   terms: string[] | undefined,
   annots: AnnotationMark[] | undefined,
+  search?: SearchSpec,
 ): string {
   const termKey = (terms ?? []).join("");
   const annotKey = (annots ?? [])
     .map((a) => `${a.id}:${a.color}:${a.hasNote ? 1 : 0}:${a.quote}`)
     .join("");
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  return useMemo(() => highlightHtml(html, terms ?? [], annots ?? []), [html, termKey, annotKey]);
+  const searchKey = search ? `${search.query}\u0000${search.current ?? ""}` : "";
+  return useMemo(
+    () => highlightHtml(html, terms ?? [], annots ?? [], search),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [html, termKey, annotKey, searchKey],
+  );
 }
 
 /** How many of the given terms appear anywhere in the document text. */

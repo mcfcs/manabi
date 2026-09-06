@@ -2,6 +2,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import { Modal } from "../../components/Modal";
 import { NarrationBar } from "./NarrationBar";
+import { ViewerSearch } from "./ViewerSearch";
 import { Link, useNavigate, useParams, useSearch } from "@tanstack/react-router";
 import {
   AArrowDown,
@@ -16,6 +17,7 @@ import {
   GalleryVertical,
   Headphones,
   ScrollText,
+  Search,
   Highlighter,
   LayoutGrid,
   MessageSquareText,
@@ -42,6 +44,8 @@ import {
 import { ChatPanel } from "../chat/ChatPanel";
 import {
   type AnnotationMark,
+  type SearchSpec,
+  countSearchMatches,
   countTermsPresent,
   useHighlightedHtml,
 } from "../../lib/highlight";
@@ -114,11 +118,13 @@ function PageText({
   terms,
   annotations,
   onAnnotClick,
+  search,
 }: {
   page: PageOut;
   terms?: string[];
   annotations?: AnnotationOut[];
   onAnnotClick?: (ids: number[], at: { x: number; y: number }) => void;
+  search?: SearchSpec;
 }) {
   const html = page.text_html ?? "";
   const annotMarks: AnnotationMark[] = (annotations ?? []).map((a) => ({
@@ -127,8 +133,8 @@ function PageText({
     color: a.color,
     hasNote: !!a.note,
   }));
-  // Whole-word terms + cross-tag annotations, baked into the rendered HTML.
-  const marked = useHighlightedHtml(html, terms, annotMarks);
+  // Whole-word terms + cross-tag annotations + find matches, baked into the HTML.
+  const marked = useHighlightedHtml(html, terms, annotMarks, search);
   if (!page.text_html) {
     return <p className="viewer-fallback-hint">No extracted text for this page yet.</p>;
   }
@@ -189,13 +195,15 @@ function ContinuousText({
   terms,
   annots,
   onAnnotClick,
+  search,
 }: {
   html: string;
   terms?: string[];
   annots: AnnotationMark[];
   onAnnotClick: (ids: number[], at: { x: number; y: number }) => void;
+  search?: SearchSpec;
 }) {
-  const marked = useHighlightedHtml(html, terms, annots);
+  const marked = useHighlightedHtml(html, terms, annots, search);
   return (
     <article
       className="reader-doc note-editor-content"
@@ -442,6 +450,85 @@ export function DocumentViewer({
     });
   }
 
+  // ── Find in extracted text ───────────────────────────────────────────
+  // Units = the HTML containers the highlighter renders: one per page in the
+  // per-page views, or the single merged reader document. Match ordinals are
+  // computed with the highlighter's own normalisation, so "n of m" and the
+  // `current` mark always agree.
+  const [searchOpen, setSearchOpen] = useState(false);
+  const [searchQuery, setSearchQuery] = useState("");
+  const [matchIndex, setMatchIndex] = useState(0);
+  const [searchFocusTick, setSearchFocusTick] = useState(0);
+  const continuousView = mode === "read" || (mode === "scroll" && showText && showContinuous);
+  const searchUnits = useMemo(
+    () =>
+      continuousView
+        ? [{ key: 0, html: reader.data?.html ?? "" }]
+        : (doc.data?.pages ?? []).map((p) => ({ key: p.page_no, html: p.text_html ?? "" })),
+    [continuousView, reader.data?.html, doc.data?.pages],
+  );
+  const searchActive = searchOpen && searchQuery.trim().length >= 2;
+  const matchCounts = useMemo(
+    () => (searchActive ? searchUnits.map((u) => countSearchMatches(u.html, searchQuery)) : []),
+    [searchActive, searchUnits, searchQuery],
+  );
+  const totalMatches = matchCounts.reduce((a, b) => a + b, 0);
+  const located = useMemo(() => {
+    let acc = 0;
+    for (let i = 0; i < matchCounts.length; i++) {
+      if (matchIndex < acc + matchCounts[i]) return { key: searchUnits[i].key, ordinal: matchIndex - acc };
+      acc += matchCounts[i];
+    }
+    return null;
+  }, [matchCounts, matchIndex, searchUnits]);
+  const searchFor = (unitKey: number): SearchSpec | undefined =>
+    searchActive
+      ? { query: searchQuery, current: located?.key === unitKey ? located.ordinal : null }
+      : undefined;
+  function openSearch() {
+    setSearchOpen(true);
+    setSearchFocusTick((t) => t + 1);
+    if (!showText) setShowText(true); // matches live in the extracted text
+    if (mode === "grid" || mode === "original") setMode("scroll");
+  }
+  function closeSearch() {
+    setSearchOpen(false);
+    setSearchQuery("");
+    setMatchIndex(0);
+  }
+  useEffect(() => {
+    setMatchIndex(0);
+  }, [searchQuery, continuousView]);
+  // Ctrl/⌘+F opens the in-viewer find (the browser's own find stays in its menu).
+  useEffect(() => {
+    if (inPanel) return;
+    const onKey = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && !e.altKey && e.key.toLowerCase() === "f") {
+        e.preventDefault();
+        openSearch();
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [inPanel, showText, mode]);
+  // Bring the current match on screen: in single-page view first turn to its
+  // page; then scroll the `current` mark into view once it is rendered.
+  useEffect(() => {
+    if (!searchActive || !located) return;
+    if (mode === "single" && located.key !== page) {
+      goTo(located.key);
+      return;
+    }
+    const id = window.requestAnimationFrame(() => {
+      viewerEl
+        ?.querySelector("mark.search-mark.current")
+        ?.scrollIntoView({ block: "center", behavior: "smooth" });
+    });
+    return () => window.cancelAnimationFrame(id);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [searchActive, located?.key, located?.ordinal, page, mode, viewerEl, reader.data?.html]);
+
   useEffect(() => {
     if (mode !== "single") return;
     const onKey = (e: KeyboardEvent) => {
@@ -527,6 +614,14 @@ export function DocumentViewer({
               <MessageSquareText size={17} strokeWidth={1.5} />
             </button>
           )}
+          <button
+            className={`icon-btn${searchOpen ? " active" : ""}`}
+            onClick={() => (searchOpen ? closeSearch() : openSearch())}
+            aria-label="Find in extracted text"
+            title="Find in extracted text (Ctrl/⌘ F)"
+          >
+            <Search size={17} strokeWidth={1.5} />
+          </button>
           {narrationAllowed && (
             <button
               className={`icon-btn${narrationOpen ? " active" : ""}`}
@@ -661,6 +756,19 @@ export function DocumentViewer({
         </div>
       </header>
 
+      {searchOpen && (
+        <ViewerSearch
+          query={searchQuery}
+          onQuery={setSearchQuery}
+          total={totalMatches}
+          index={Math.min(matchIndex, Math.max(0, totalMatches - 1))}
+          onIndex={setMatchIndex}
+          onClose={closeSearch}
+          focusTick={searchFocusTick}
+          ready={!continuousView || !!reader.data}
+        />
+      )}
+
       {showMarks && termsEnabled && termList.length > 0 && (
         <p className="term-legend">
           {countTermsPresent(
@@ -680,6 +788,7 @@ export function DocumentViewer({
               terms={activeTerms}
               annots={allAnnotMarks}
               onAnnotClick={handleAnnotClick}
+              search={searchFor(0)}
             />
           )}
         </div>
@@ -783,6 +892,7 @@ export function DocumentViewer({
                   terms={activeTerms}
                   annots={allAnnotMarks}
                   onAnnotClick={handleAnnotClick}
+                  search={searchFor(0)}
                 />
               )}
             </div>
@@ -827,6 +937,7 @@ export function DocumentViewer({
                       terms={activeTerms}
                       annotations={annotsByPage.get(p.page_no)}
                       onAnnotClick={handleAnnotClick}
+                      search={searchFor(p.page_no)}
                     />
                   </div>
                 )}
@@ -864,6 +975,7 @@ export function DocumentViewer({
                 terms={activeTerms}
                 annotations={annotsByPage.get(page)}
                 onAnnotClick={handleAnnotClick}
+                search={searchFor(page)}
               />
             </div>
           ) : current?.has_render ? (

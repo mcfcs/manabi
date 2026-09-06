@@ -174,3 +174,36 @@ describe("countTermsPresent", () => {
     expect(countTermsPresent("The NPA and IRRI", ["npa", "irri", "absent"])).toBe(2);
   });
 });
+
+
+describe("applyHighlights — search", () => {
+  it("marks every case-insensitive substring match and flags the current one", () => {
+    const el = root("<p>Institutions matter. <b>Institutional</b> change is slow; institutions persist.</p>");
+    applyHighlights(el, [], [], { query: "institution", current: 1 });
+    const marks = [...el.querySelectorAll("mark.search-mark")];
+    expect(marks.map((m) => m.textContent)).toEqual(["Institution", "Institution", "institution"]);
+    expect(marks.map((m) => m.classList.contains("current"))).toEqual([false, true, false]);
+    expect(marks[1].getAttribute("data-search-ord")).toBe("1");
+  });
+
+  it("ignores one-character queries and counts consistently with the marks", async () => {
+    const { countSearchMatches } = await import("./highlight");
+    const html = "<p>a rule is a rule; RULES are rules.</p>";
+    expect(countSearchMatches(html, "a")).toBe(0);
+    expect(countSearchMatches(html, "rule")).toBe(4);
+    const el = root(html);
+    applyHighlights(el, [], [], { query: "rule" });
+    expect(el.querySelectorAll("mark.search-mark")).toHaveLength(4);
+  });
+
+  it("lets an annotation win over a search match, and search over a term", () => {
+    const el = root("<p>signal attenuation grows with distance</p>");
+    const annot: AnnotationMark = { id: 7, quote: "attenuation grows", color: "y", hasNote: false };
+    applyHighlights(el, ["distance"], [annot], { query: "distance", current: 0 });
+    expect(el.querySelectorAll("mark.annot")).toHaveLength(1);
+    expect(el.querySelectorAll("mark.search-mark.current")).toHaveLength(1);
+    expect(el.querySelectorAll("mark.term-mark")).toHaveLength(0);
+    clearHighlights(el);
+    expect(el.querySelectorAll("mark")).toHaveLength(0);
+  });
+});
