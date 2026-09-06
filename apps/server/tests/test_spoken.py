@@ -64,6 +64,14 @@ def test_to_spoken_for_headings_drops_numbering_and_ends_with_a_stop():
     assert to_spoken("REFERENCES", "heading") == "References."
 
 
+def test_display_title_drops_stray_marks_but_keeps_casing():
+    from manabi_server.processing.spoken import clean_display_title
+
+    assert clean_display_title("‘‘DON’T MOURN; ORGANIZE’’y INSTITUTIONS AND") == (
+        '"DON\'T MOURN; ORGANIZE" INSTITUTIONS AND'
+    )
+
+
 def test_to_spoken_paragraph_end_to_end():
     text = (
         "Understood as ‘rules of the game’ (North, 1990), institutions shape—but do not "

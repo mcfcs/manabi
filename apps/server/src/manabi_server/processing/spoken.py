@@ -137,6 +137,15 @@ _DOUBLED_QUOTE = re.compile(r"''|``")
 _STRAY_MARK = re.compile(r"(?<=[\"?!.;:)])\s?[b-hj-zB-HJ-Z](?=\s|$)")
 
 
+def clean_display_title(text: str) -> str:
+    """Display form of a title: fold ligatures, straighten doubled quotes and
+    drop stray footnote-mark letters, but keep the original casing."""
+    s = normalize_ligatures(text).translate(_QUOTES)
+    s = _DOUBLED_QUOTE.sub('"', s)
+    s = _STRAY_MARK.sub("", s.strip())
+    return tidy(s)
+
+
 def to_spoken(text: str, kind: str = "paragraph") -> str:
     """The text a narrator would actually say for one segment."""
     s = normalize_ligatures(text).translate(_QUOTES)

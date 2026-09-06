@@ -21,7 +21,12 @@ import re
 from collections import Counter
 from dataclasses import dataclass, field
 
-from manabi_server.processing.spoken import humanize_names, to_spoken, word_count
+from manabi_server.processing.spoken import (
+    clean_display_title,
+    humanize_names,
+    to_spoken,
+    word_count,
+)
 from manabi_server.processing.text_health import join_lines, normalize_ligatures
 from manabi_server.processing.text_html import repeat_key
 
@@ -432,7 +437,7 @@ def build_script(pdf_doc) -> Script:
         intro = to_spoken(title, "title")
         if authors:
             intro = intro.rstrip(".") + ". By " + authors + "."
-        shown = title + (f" — {authors}" if authors else "")
+        shown = clean_display_title(title) + (f" — {authors}" if authors else "")
         segments.append(Segment(0, 1, "title", shown, intro))
     for b in merged:
         if b.kind not in ("abstract", "heading", "paragraph", "caption"):
