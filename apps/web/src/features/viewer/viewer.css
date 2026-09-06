@@ -58,6 +58,7 @@
   display: grid;
   place-items: center;
   min-height: 0;
+  overflow: hidden; /* a tall page never paints over the bars below it */
   padding: var(--s-4) 0;
 }
 

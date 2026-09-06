@@ -2,6 +2,8 @@
 
 .narration-bar {
   flex: 0 0 auto;
+  position: relative;
+  z-index: 3; /* above a page image that overflows a shrunken stage */
   display: flex;
   flex-direction: column;
   gap: 0;
