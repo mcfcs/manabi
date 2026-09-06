@@ -1,6 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import { Modal } from "../../components/Modal";
+import { NarrationBar } from "./NarrationBar";
 import { Link, useNavigate, useParams, useSearch } from "@tanstack/react-router";
 import {
   AArrowDown,
@@ -13,6 +14,7 @@ import {
   ChevronRight,
   Download,
   GalleryVertical,
+  Headphones,
   ScrollText,
   Highlighter,
   LayoutGrid,
@@ -260,6 +262,22 @@ export function DocumentViewer({
   const [showText, setShowText] = useState(false);
   const [pageRange, setPageRange] = useState(""); // "Ask about pages 1-3, 5"
   const [showMarks, setShowMarks] = useState(false);
+  // Steven narrates: the bar is a per-device preference, gated by the setting.
+  const [narrationOpen, setNarrationOpen] = useState(
+    () => localStorage.getItem("manabi-narration-open") === "1",
+  );
+  function toggleNarration(force?: boolean) {
+    setNarrationOpen((v) => {
+      const next = force ?? !v;
+      localStorage.setItem("manabi-narration-open", next ? "1" : "0");
+      return next;
+    });
+  }
+  const appSettings = useQuery({
+    queryKey: ["settings"],
+    queryFn: () => api.get<{ narration_enabled: boolean }>("/api/settings"),
+    staleTime: 60_000,
+  });
   // Split view text layout: per-page (default — right for slides/PPTX) vs one
   // continuous merged document. Off by default; persisted per device.
   const [showContinuous, setShowContinuous] = useState(
@@ -399,6 +417,11 @@ export function DocumentViewer({
   const total = doc.data?.pages.length ?? 0;
   const current = doc.data?.pages.find((p) => p.page_no === page);
   const isSlides = doc.data?.kind === "pptx";
+  const narrationAllowed =
+    !isSlides &&
+    !inPanel &&
+    appSettings.data?.narration_enabled === true &&
+    doc.data?.extract_status === "ready";
 
   function goTo(n: number) {
     if (n < 1 || n > total) return;
@@ -502,6 +525,16 @@ export function DocumentViewer({
               aria-label="Speaker notes"
             >
               <MessageSquareText size={17} strokeWidth={1.5} />
+            </button>
+          )}
+          {narrationAllowed && (
+            <button
+              className={`icon-btn${narrationOpen ? " active" : ""}`}
+              onClick={() => toggleNarration()}
+              aria-label="Listen with Steven"
+              title="Steven reads this document aloud"
+            >
+              <Headphones size={17} strokeWidth={1.5} />
             </button>
           )}
           <button
@@ -843,6 +876,16 @@ export function DocumentViewer({
             <PageFallback page={current} isSlides={isSlides} />
           ) : null}
         </div>
+      )}
+
+      {narrationAllowed && narrationOpen && (
+        <NarrationBar
+          documentId={documentId}
+          onGoToPage={(p) => {
+            if (p !== page) goTo(p);
+          }}
+          onClose={() => toggleNarration(false)}
+        />
       )}
 
       {showNotes && current?.speaker_notes && mode === "single" && (

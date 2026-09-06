@@ -372,6 +372,22 @@ export function SettingsDialog({ onClose }: { onClose: () => void }) {
           still toggle voice per conversation).
         </p>
 
+        <h3 className="settings-heading">Readings</h3>
+        <label className="event-weekly settings-reminders">
+          <input
+            type="checkbox"
+            checked={s?.narration_enabled ?? false}
+            onChange={(e) => save.mutate({ narration_enabled: e.target.checked })}
+          />
+          Steven narrates readings
+        </label>
+        <p className="settings-hint">
+          Adds a Listen bar to PDF readings. New PDFs are recorded in the
+          background right after parsing so the audio is ready when you press
+          play; nothing plays on its own. Headers, footnotes, citations and the
+          bibliography are skipped.
+        </p>
+
         <label className="field-label">
           General assistant (Manabi AI) model
           <select

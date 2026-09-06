@@ -5,6 +5,7 @@ import {
   Brain,
   BookOpen,
   CheckCircle2,
+  Headphones,
   CloudDownload,
   Columns2,
   FileText,
@@ -44,6 +45,11 @@ function StatusChip({ doc }: { doc: DocumentOut }) {
               title="Looks like a two-page scan — use the layout control to split into single pages if you want"
             >
               <Columns2 size={11} strokeWidth={1.75} /> 2-up?
+            </span>
+          )}
+          {doc.narration_status === "ready" && (
+            <span className="chip-spread" title="Steven has recorded this reading">
+              <Headphones size={11} strokeWidth={1.75} /> narrated
             </span>
           )}
         </span>

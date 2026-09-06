@@ -262,6 +262,8 @@ export interface SettingsOut {
   canvas_last_error: string | null;
   chat_autovoice: boolean;
   general_chat_model: string | null;
+  /** Steven narrates readings: new PDFs are recorded after parsing (never auto-played) */
+  narration_enabled: boolean;
 }
 
 export interface AiModelsOut {
@@ -317,6 +319,33 @@ export interface DocumentOut {
   job_id: number | null;
   progress_pct: number | null;
   progress_note: string | null;
+  /** scripted | synthesizing | ready | failed — null until Steven has a script */
+  narration_status: string | null;
+}
+
+// ── Steven narrates readings ───────────────────────────────────────────
+
+export interface NarrationSegmentOut {
+  id: number;
+  ord: number;
+  page_no: number;
+  kind: "title" | "abstract" | "heading" | "paragraph" | "caption" | string;
+  text: string;
+  audio_ready: boolean;
+  audio_id: number | null;
+  duration_ms: number | null;
+}
+
+export interface NarrationOut {
+  status: string | null;
+  voice_available: boolean;
+  job_active: boolean;
+  job_id: number | null;
+  segment_count: number;
+  ready_count: number;
+  total_ms: number;
+  options: Record<string, unknown>;
+  segments: NarrationSegmentOut[];
 }
 
 export interface ReaderOut {

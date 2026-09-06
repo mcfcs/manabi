@@ -1,0 +1,138 @@
+/* ── Steven narrates: pinned bar at the bottom of the viewer ─────────── */
+
+.narration-bar {
+  flex: 0 0 auto;
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  border-top: 1px solid var(--rule);
+  background: var(--surface-raised);
+  padding: var(--s-2) var(--s-3);
+  font-size: 13px;
+  color: var(--ink-soft);
+}
+.narration-row {
+  display: flex;
+  align-items: center;
+  gap: var(--s-3);
+  min-width: 0;
+}
+.narration-brand {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  background: var(--accent-blue-wash);
+  color: var(--accent-blue-deep);
+  flex-shrink: 0;
+}
+.narration-prepare {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  gap: var(--s-3);
+  min-width: 0;
+  flex-wrap: wrap;
+}
+.narration-hint {
+  color: var(--ink-soft);
+  min-width: 0;
+}
+.narration-controls {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  flex-shrink: 0;
+}
+.narration-controls .icon-btn.active {
+  color: var(--accent-blue-deep);
+  background: var(--accent-blue-wash);
+}
+.narration-play {
+  width: 38px;
+  height: 38px;
+  border-radius: 50%;
+  background: var(--ink);
+  color: var(--paper);
+}
+.narration-play:hover {
+  background: var(--ink);
+  color: var(--paper);
+  opacity: 0.9;
+}
+.narration-speed {
+  min-height: 28px;
+  padding: 0 var(--s-2);
+  font-size: 12px;
+}
+.narration-prompter {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  cursor: pointer;
+}
+.narration-meta {
+  font-size: 11px;
+  color: var(--ink-faint);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.narration-text {
+  margin: 0;
+  font-family: var(--font-reading);
+  font-size: 14px;
+  line-height: 1.45;
+  color: var(--ink);
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.narration-text.is-heading {
+  font-family: var(--font-display);
+  font-weight: 600;
+}
+.narration-close {
+  flex-shrink: 0;
+  font-size: 18px;
+  line-height: 1;
+}
+.narration-progress {
+  height: 2px;
+  margin: var(--s-2) 0 0;
+  background: var(--rule);
+  border-radius: 1px;
+  overflow: hidden;
+}
+.narration-progress span {
+  display: block;
+  height: 100%;
+  background: var(--accent-blue);
+  transition: width var(--t-med) var(--ease);
+}
+.narration-bar audio {
+  display: none;
+}
+
+/* phone: controls on one row, the prompter below it */
+@media (max-width: 767px) {
+  .narration-row {
+    flex-wrap: wrap;
+    row-gap: var(--s-2);
+  }
+  .narration-prompter {
+    flex-basis: 100%;
+    order: 3;
+  }
+  .narration-close {
+    margin-left: auto;
+  }
+  .narration-text {
+    -webkit-line-clamp: 3;
+  }
+}
