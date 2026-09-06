@@ -1,6 +1,9 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
+  ChevronDown,
+  ChevronUp,
   Headphones,
+  ListOrdered,
   Loader2,
   LocateFixed,
   Pause,
@@ -40,7 +43,9 @@ const KIND_LABEL: Record<string, string> = {
 /** Steven reads the document: a pinned player with a teleprompter line,
  * paragraph-level prev/next, speed, page follow and a resume point. Audio
  * comes per segment as the GPU worker records it; playback waits at the
- * first segment that is not ready yet instead of skipping it. */
+ * first segment that is not ready yet instead of skipping it. The teleprompter
+ * expands to the whole paragraph, and a Script panel lists every paragraph
+ * (tap one to jump there). */
 export function NarrationBar({
   documentId,
   onGoToPage,
@@ -78,10 +83,13 @@ export function NarrationBar({
   const [playing, setPlaying] = useState(false);
   const [speed, setSpeed] = useState(1);
   const [follow, setFollow] = useState(true);
+  const [expanded, setExpanded] = useState(false);
+  const [scriptOpen, setScriptOpen] = useState(false);
   const [position, setPosition] = useState(0); // ms into the current segment
   const audioRef = useRef<HTMLAudioElement>(null);
   const gapTimer = useRef<number | null>(null);
   const prefetch = useRef<HTMLAudioElement | null>(null);
+  const currentItemRef = useRef<HTMLButtonElement>(null);
 
   const index = Math.min(current, Math.max(0, segments.length - 1));
   const seg = segments[index];
@@ -108,6 +116,11 @@ export function NarrationBar({
     if (follow && seg) onGoToPage(seg.page_no);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [seg?.id, follow]);
+
+  // Keep the current paragraph in view inside the Script panel.
+  useEffect(() => {
+    if (scriptOpen) currentItemRef.current?.scrollIntoView({ block: "nearest" });
+  }, [scriptOpen, index]);
 
   // Load + play the current segment when it has audio.
   useEffect(() => {
@@ -160,9 +173,12 @@ export function NarrationBar({
     gapTimer.current = window.setTimeout(() => go(index + 1), gap / speed);
   };
 
-  useEffect(() => () => {
-    if (gapTimer.current) window.clearTimeout(gapTimer.current);
-  }, []);
+  useEffect(
+    () => () => {
+      if (gapTimer.current) window.clearTimeout(gapTimer.current);
+    },
+    [],
+  );
 
   // MediaSession: lock-screen / headset controls.
   useEffect(() => {
@@ -192,6 +208,36 @@ export function NarrationBar({
 
   return (
     <div className="narration-bar" role="region" aria-label="Steven narrates">
+      {scriptOpen && !notPrepared && (
+        <div className="narration-script" role="list" aria-label="Full script">
+          {segments.map((s, i) => (
+            <button
+              key={s.id}
+              ref={i === index ? currentItemRef : undefined}
+              role="listitem"
+              className={
+                "narration-script-item" +
+                (i === index ? " current" : "") +
+                (s.audio_ready ? "" : " pending") +
+                (s.kind === "heading" || s.kind === "title" ? " is-heading" : "")
+              }
+              onClick={() => {
+                go(i);
+                setPlaying(true);
+              }}
+              title={s.audio_ready ? "Play from here" : "Not recorded yet"}
+            >
+              <span className="narration-script-meta mono">
+                {i + 1} · p{s.page_no}
+                {KIND_LABEL[s.kind] ? ` · ${KIND_LABEL[s.kind]}` : ""}
+                {s.audio_ready ? "" : " · recording…"}
+              </span>
+              <span className="narration-script-text">{s.text}</span>
+            </button>
+          ))}
+        </div>
+      )}
+
       <div className="narration-row">
         <span className="narration-brand" title="Steven narrates this reading">
           <Headphones size={15} strokeWidth={1.75} />
@@ -272,9 +318,22 @@ export function NarrationBar({
               >
                 <LocateFixed size={16} strokeWidth={1.75} />
               </button>
+              <button
+                className={`icon-btn${scriptOpen ? " active" : ""}`}
+                onClick={() => setScriptOpen((v) => !v)}
+                aria-pressed={scriptOpen}
+                aria-label="Full script"
+                title={scriptOpen ? "Hide the full script" : "Show the full script"}
+              >
+                <ListOrdered size={16} strokeWidth={1.75} />
+              </button>
             </div>
 
-            <div className="narration-prompter" onClick={() => setPlaying((p) => !p)}>
+            <div
+              className={`narration-prompter${expanded ? " expanded" : ""}`}
+              onClick={() => setExpanded((v) => !v)}
+              title={expanded ? "Collapse" : "Show the whole paragraph"}
+            >
               <span className="narration-meta mono">
                 {KIND_LABEL[seg?.kind ?? ""] ? `${KIND_LABEL[seg?.kind ?? ""]} · ` : ""}
                 p{seg?.page_no} · {index + 1}/{segments.length} · {fmt(elapsedBefore + position)}
@@ -289,6 +348,19 @@ export function NarrationBar({
                 {seg?.text}
               </p>
             </div>
+            <button
+              className="icon-btn narration-expand"
+              onClick={() => setExpanded((v) => !v)}
+              aria-expanded={expanded}
+              aria-label={expanded ? "Collapse paragraph" : "Expand paragraph"}
+              title={expanded ? "Collapse" : "Show the whole paragraph"}
+            >
+              {expanded ? (
+                <ChevronDown size={16} strokeWidth={1.75} />
+              ) : (
+                <ChevronUp size={16} strokeWidth={1.75} />
+              )}
+            </button>
           </>
         )}
 

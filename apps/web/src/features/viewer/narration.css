@@ -97,6 +97,66 @@
   font-family: var(--font-display);
   font-weight: 600;
 }
+/* expanded: the whole paragraph, scrollable, capped so the page stays visible */
+.narration-prompter.expanded .narration-text {
+  display: block;
+  -webkit-line-clamp: unset;
+  max-height: 38vh;
+  overflow-y: auto;
+  padding-right: var(--s-2);
+}
+.narration-expand {
+  flex-shrink: 0;
+}
+
+/* ── Full script panel (above the controls) ─────────────────── */
+.narration-script {
+  max-height: 46vh;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin: 0 0 var(--s-2);
+  padding: 0 0 var(--s-2);
+  border-bottom: 1px solid var(--rule);
+}
+.narration-script-item {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  text-align: left;
+  border: none;
+  border-left: 2px solid transparent;
+  border-radius: var(--radius-sm);
+  background: none;
+  padding: var(--s-1) var(--s-2);
+  font: inherit;
+  color: var(--ink);
+  cursor: pointer;
+}
+.narration-script-item:hover {
+  background: var(--surface);
+}
+.narration-script-item.current {
+  background: var(--accent-blue-wash);
+  border-left-color: var(--accent-blue);
+}
+.narration-script-item.pending {
+  color: var(--ink-faint);
+}
+.narration-script-item.is-heading .narration-script-text {
+  font-family: var(--font-display);
+  font-weight: 600;
+}
+.narration-script-meta {
+  font-size: 10.5px;
+  color: var(--ink-faint);
+}
+.narration-script-text {
+  font-family: var(--font-reading);
+  font-size: 13.5px;
+  line-height: 1.45;
+}
 .narration-close {
   flex-shrink: 0;
   font-size: 18px;
