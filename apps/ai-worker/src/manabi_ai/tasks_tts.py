@@ -15,6 +15,8 @@ from manabi_core.models import (
     Job,
     JobStatus,
     LectureAudio,
+    Narration,
+    NarrationSegment,
     SpeechClip,
 )
 from procrastinate.exceptions import JobAborted
@@ -35,9 +37,7 @@ def _chat_text_for_tts(text: str) -> str:
     return re.sub(r"\s+", " ", text).strip()
 
 
-@app.task(
-    name="manabi_ai.tasks.synthesize_lecture", queue="gpu", retry=1, pass_context=True
-)
+@app.task(name="manabi_ai.tasks.synthesize_lecture", queue="gpu", retry=1, pass_context=True)
 async def synthesize_lecture(context, job_id: int, artifact_id: int) -> None:
     settings = get_settings()
     async with session_factory()() as db:
@@ -62,9 +62,7 @@ async def synthesize_lecture(context, job_id: int, artifact_id: int) -> None:
                     )
                 ).scalars()
             }
-            todo = [
-                (i, s) for i, s in enumerate(segments) if i not in existing
-            ]
+            todo = [(i, s) for i, s in enumerate(segments) if i not in existing]
             for done, (i, seg) in enumerate(todo):
                 if context is not None and context.should_abort():
                     # Segments already committed stay valid; the task resumes
@@ -117,15 +115,11 @@ async def speak_text(job_id: int, message_id: int) -> None:
             if not settings.tts_enabled:
                 raise RuntimeError("TTS is not configured on this worker")
             existing = (
-                await db.execute(
-                    select(SpeechClip).where(SpeechClip.chat_message_id == message_id)
-                )
+                await db.execute(select(SpeechClip).where(SpeechClip.chat_message_id == message_id))
             ).scalar_one_or_none()
             if existing is None:
                 message = (
-                    await db.execute(
-                        select(ChatMessage).where(ChatMessage.id == message_id)
-                    )
+                    await db.execute(select(ChatMessage).where(ChatMessage.id == message_id))
                 ).scalar_one()
                 audio, duration = await synthesize(_chat_text_for_tts(message.content))
                 db.add(
@@ -194,6 +188,87 @@ async def voice_preview(job_id: int, text: str, variant: str) -> None:
         except Exception as exc:  # noqa: BLE001
             log.exception("voice preview failed")
             await db.rollback()
+            job.status = JobStatus.failed
+            job.error = f"{type(exc).__name__}: {str(exc)[:400]}"
+            job.finished_at = datetime.now(UTC)
+            await db.commit()
+
+
+@app.task(name="manabi_ai.tasks.narrate_document", queue="gpu", retry=1, pass_context=True)
+async def narrate_document(context, job_id: int, narration_id: int) -> None:
+    """Steven reads a document: synthesize every segment of the narration
+    script that has no audio yet. Idempotent per segment (a re-run or a
+    second job after a cancel only fills the gaps) and committed per segment,
+    so the viewer can start playing while later paragraphs render."""
+    settings = get_settings()
+    async with session_factory()() as db:
+        job = (await db.execute(select(Job).where(Job.id == job_id))).scalar_one()
+        job.status = JobStatus.running
+        job.started_at = datetime.now(UTC)
+        await db.commit()
+        narration = (
+            await db.execute(select(Narration).where(Narration.id == narration_id))
+        ).scalar_one_or_none()
+        try:
+            if not settings.tts_enabled:
+                raise RuntimeError("TTS is not configured on this worker")
+            if narration is None:
+                raise RuntimeError("narration row is gone")
+            narration.status = "synthesizing"
+            await db.commit()
+            todo = (
+                (
+                    await db.execute(
+                        select(NarrationSegment)
+                        .where(
+                            NarrationSegment.narration_id == narration_id,
+                            NarrationSegment.audio.is_(None),
+                        )
+                        .order_by(NarrationSegment.ord)
+                    )
+                )
+                .scalars()
+                .all()
+            )
+            total = (
+                await db.execute(
+                    select(NarrationSegment.id).where(NarrationSegment.narration_id == narration_id)
+                )
+            ).all()
+            for done, seg in enumerate(todo):
+                if context is not None and context.should_abort():
+                    job.status = JobStatus.cancelled
+                    job.progress_note = "Cancelled"
+                    job.finished_at = datetime.now(UTC)
+                    narration.status = "scripted"  # partial audio stays usable
+                    await db.commit()
+                    raise JobAborted()
+                job.progress_pct = int(100 * done / max(len(todo), 1))
+                job.progress_note = f"Recording paragraph {seg.ord + 1}/{len(total)}"
+                await db.commit()
+                text = (seg.spoken_text or "").strip()
+                if not text:
+                    continue
+                audio, duration = await synthesize(text)
+                seg.audio = audio
+                seg.mime = "audio/mpeg"
+                seg.duration_ms = duration
+                seg.voice = settings.tts_voice
+                await db.commit()  # per-segment: playable immediately
+            narration.status = "ready"
+            job.status = JobStatus.succeeded
+            job.progress_pct = 100
+            job.progress_note = "Narration ready"
+            job.finished_at = datetime.now(UTC)
+            await db.commit()
+        except JobAborted:
+            raise  # cancelled — do not fail/retry
+        except Exception as exc:  # noqa: BLE001
+            log.exception("document narration failed")
+            await db.rollback()
+            if narration is not None:
+                narration.status = "failed"
+                narration.error = f"{type(exc).__name__}: {str(exc)[:400]}"
             job.status = JobStatus.failed
             job.error = f"{type(exc).__name__}: {str(exc)[:400]}"
             job.finished_at = datetime.now(UTC)
