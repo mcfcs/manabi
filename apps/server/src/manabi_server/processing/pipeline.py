@@ -111,6 +111,12 @@ def run_pipeline(db: Session, document_id: int, job_id: int | None) -> None:
             job.progress_pct = 100
             job.progress_note = "Ready"
         db.commit()
+        # Steven narrates readings: when the switch is on and a voice is
+        # available, script the PDF now and queue the recording so the audio
+        # is ready by the time Listen is pressed (never auto-played).
+        from manabi_server.services.narration import prepare_narration_sync
+
+        prepare_narration_sync(db, doc)
     except Exception as exc:
         db.rollback()
         log.exception("pipeline failed for document %s", document_id)

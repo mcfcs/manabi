@@ -29,6 +29,7 @@ class SettingsOut(BaseModel):
     canvas_last_error: str | None
     chat_autovoice: bool
     general_chat_model: str | None  # Ollama model for the general assistant
+    narration_enabled: bool  # Steven narrates readings (auto-recorded after parsing)
 
 
 class SettingsPatch(BaseModel):
@@ -38,6 +39,7 @@ class SettingsPatch(BaseModel):
     class_reminders: bool | None = None
     chat_autovoice: bool | None = None
     general_chat_model: str | None = None  # "" clears (→ default model)
+    narration_enabled: bool | None = None
 
 
 async def get_app_settings(db: AsyncSession) -> AppSettings:
@@ -63,6 +65,7 @@ def _out(row: AppSettings) -> SettingsOut:
         canvas_last_error=row.canvas_last_error,
         chat_autovoice=row.chat_autovoice,
         general_chat_model=row.general_chat_model,
+        narration_enabled=row.narration_enabled,
     )
 
 
@@ -72,9 +75,7 @@ async def read_settings(db: AsyncSession = Depends(get_db)) -> SettingsOut:
 
 
 @router.patch("", dependencies=[Depends(require_csrf)])
-async def patch_settings(
-    data: SettingsPatch, db: AsyncSession = Depends(get_db)
-) -> SettingsOut:
+async def patch_settings(data: SettingsPatch, db: AsyncSession = Depends(get_db)) -> SettingsOut:
     row = await get_app_settings(db)
     if data.semester_start is not None:
         row.semester_start = data.semester_start
@@ -84,6 +85,8 @@ async def patch_settings(
         row.class_reminders = data.class_reminders
     if data.chat_autovoice is not None:
         row.chat_autovoice = data.chat_autovoice
+    if data.narration_enabled is not None:
+        row.narration_enabled = data.narration_enabled
     if data.general_chat_model is not None:
         row.general_chat_model = data.general_chat_model.strip() or None
     if data.gcal_ics_url is not None:

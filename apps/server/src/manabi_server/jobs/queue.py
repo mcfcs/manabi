@@ -30,6 +30,7 @@ TEACH_MODULE_TASK = "manabi_ai.tasks.teach_module"  # gpu
 SYNTHESIZE_LECTURE_TASK = "manabi_ai.tasks.synthesize_lecture"  # gpu
 SPEAK_TEXT_TASK = "manabi_ai.tasks.speak_text"  # gpu
 VOICE_PREVIEW_TASK = "manabi_ai.tasks.voice_preview"  # gpu
+NARRATE_DOCUMENT_TASK = "manabi_ai.tasks.narrate_document"  # gpu
 PROCESS_DOCUMENT_TASK = "manabi_server.tasks.process_document"  # cpu queue (app server)
 SCORE_SUPPORT_TASK = "manabi_server.tasks.score_support"  # cpu (needs local embed model)
 EXTRACT_TEXT_HTML_TASK = "manabi_server.tasks.extract_text_html"  # cpu (backfill)
@@ -42,25 +43,22 @@ def _get_open_app() -> procrastinate.App:
     global _app
     with _lock:
         if _app is None:
-            conninfo = get_settings().database_url_sync.replace(
-                "postgresql+psycopg", "postgresql"
-            )
-            app = procrastinate.App(
-                connector=procrastinate.SyncPsycopgConnector(conninfo=conninfo)
-            )
+            conninfo = get_settings().database_url_sync.replace("postgresql+psycopg", "postgresql")
+            app = procrastinate.App(connector=procrastinate.SyncPsycopgConnector(conninfo=conninfo))
             app.open()
             _app = app
     return _app
 
 
+def defer_task_sync(task_name: str, queue: str, **task_kwargs) -> int:
+    """Defer from sync code (the CPU worker chaining a GPU job after a parse)."""
+    app = _get_open_app()
+    return app.configure_task(task_name, queue=queue).defer(**task_kwargs)
+
+
 async def defer_task(task_name: str, queue: str, **task_kwargs) -> int:
     """Defer a Procrastinate job; returns the procrastinate job id."""
-
-    def _defer() -> int:
-        app = _get_open_app()
-        return app.configure_task(task_name, queue=queue).defer(**task_kwargs)
-
-    return await asyncio.to_thread(_defer)
+    return await asyncio.to_thread(defer_task_sync, task_name, queue, **task_kwargs)
 
 
 async def cancel_task(procrastinate_job_id: int) -> bool:

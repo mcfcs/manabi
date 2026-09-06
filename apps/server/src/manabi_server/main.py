@@ -28,6 +28,7 @@ from manabi_server.api import (
     jobs,
     links,
     modules,
+    narration,
     notes,
     push,
     review,
@@ -83,6 +84,7 @@ async def redirect_tailnet_http_to_https(request, call_next):
         return RedirectResponse(target, status_code=308)
     return await call_next(request)
 
+
 app.include_router(health.router)
 app.include_router(user.router)
 app.include_router(jobs.router)
@@ -105,6 +107,7 @@ app.include_router(review.router)
 app.include_router(search.router)
 app.include_router(stats.router)
 app.include_router(voice.router)
+app.include_router(narration.router)
 app.include_router(settings_api.router)
 
 # Serve the built SPA (apps/web/dist) so one process on 0.0.0.0:56690 covers
@@ -136,6 +139,4 @@ if (_web_dist / "index.html").is_file():
             # top-level files (icons, manifest) may change between builds
             return FileResponse(candidate, headers={"Cache-Control": "no-cache"})
         # index.html must ALWAYS revalidate or users get a stale app shell
-        return FileResponse(
-            _web_dist / "index.html", headers={"Cache-Control": "no-cache"}
-        )
+        return FileResponse(_web_dist / "index.html", headers={"Cache-Control": "no-cache"})

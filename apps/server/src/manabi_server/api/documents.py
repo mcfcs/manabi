@@ -59,6 +59,7 @@ class DocumentOut(BaseModel):
     job_id: int | None = None
     progress_pct: int | None = None
     progress_note: str | None = None
+    narration_status: str | None = None  # scripted | synthesizing | ready | failed
 
 
 class DocumentDetail(DocumentOut):
@@ -69,6 +70,7 @@ def _doc_out(
     doc: Document,
     job_id: int | None = None,
     progress: tuple[int | None, str | None] | None = None,
+    narration_status: str | None = None,
 ) -> DocumentOut:
     return DocumentOut(
         id=doc.id,
@@ -85,6 +87,7 @@ def _doc_out(
         job_id=job_id,
         progress_pct=progress[0] if progress else None,
         progress_note=progress[1] if progress else None,
+        narration_status=narration_status,
     )
 
 
@@ -145,9 +148,7 @@ async def ingest_bytes(
     if len(content) > MAX_UPLOAD_BYTES:
         raise HTTPException(status_code=413, detail="File exceeds the 100 MB limit")
     if not content.startswith(MAGIC[kind]):
-        raise HTTPException(
-            status_code=422, detail=f"Content does not look like a {ext.upper()}"
-        )
+        raise HTTPException(status_code=422, detail=f"Content does not look like a {ext.upper()}")
     content_hash = hashlib.sha256(content).hexdigest()
     existing = (
         await db.execute(
@@ -202,9 +203,7 @@ async def list_documents(
     )
     # Latest job progress for docs still in the pipeline
     in_flight = [
-        d.id
-        for d in docs
-        if d.extract_status in (ExtractStatus.pending, ExtractStatus.processing)
+        d.id for d in docs if d.extract_status in (ExtractStatus.pending, ExtractStatus.processing)
     ]
     progress: dict[int, tuple[int | None, str | None]] = {}
     if in_flight:
@@ -237,7 +236,21 @@ async def list_documents(
                 ahead = position.get(doc_id, 0)
                 note = f"Queued — {ahead} ahead" if ahead else "Queued — next up"
             progress[doc_id] = (pct, note)
-    return [_doc_out(d, progress=progress.get(d.id)) for d in docs]
+    from manabi_core.models import Narration
+
+    narration_status = dict(
+        (
+            await db.execute(
+                select(Narration.document_id, Narration.status).where(
+                    Narration.document_id.in_([d.id for d in docs] or [0])
+                )
+            )
+        ).all()
+    )
+    return [
+        _doc_out(d, progress=progress.get(d.id), narration_status=narration_status.get(d.id))
+        for d in docs
+    ]
 
 
 @router.post("/modules/{module_id}/documents", dependencies=[Depends(require_csrf)])
@@ -305,9 +318,7 @@ async def document_detail(
     )
 
 
-async def _page_file(
-    db: AsyncSession, doc: Document, page_no: int, thumb: bool
-) -> FileResponse:
+async def _page_file(db: AsyncSession, doc: Document, page_no: int, thumb: bool) -> FileResponse:
     page = (
         await db.execute(
             select(DocumentPage).where(
@@ -473,9 +484,7 @@ async def chunk_regions(
     return await _regions_for_elements(db, list(chunk.element_ids))
 
 
-async def _regions_for_elements(
-    db: AsyncSession, element_ids: list[int]
-) -> list["RegionOut"]:
+async def _regions_for_elements(db: AsyncSession, element_ids: list[int]) -> list["RegionOut"]:
     if not element_ids:
         return []
     from manabi_core.models import DocElement
@@ -597,9 +606,7 @@ async def list_annotations(
     ]
 
 
-@router.post(
-    "/documents/{document_id}/annotations", dependencies=[Depends(require_csrf)]
-)
+@router.post("/documents/{document_id}/annotations", dependencies=[Depends(require_csrf)])
 async def create_annotation(
     data: AnnotationIn,
     doc: Document = Depends(_get_owned_document),
@@ -704,9 +711,7 @@ async def edit_page_text(
         raise HTTPException(status_code=404, detail="Page not found")
 
     paragraphs = [p.strip() for p in data.text.split("\n\n") if p.strip()]
-    body = "".join(
-        f"<p>{html_mod.escape(p).replace(chr(10), '<br>')}</p>" for p in paragraphs
-    )
+    body = "".join(f"<p>{html_mod.escape(p).replace(chr(10), '<br>')}</p>" for p in paragraphs)
     page.text_html = f"<!--user-edited-->{body}"
     await db.commit()
     return {"ok": True}
@@ -727,9 +732,7 @@ async def patch_document(
     Enforced at the retrieval SQL layer (manabi_core.retrieval), not in prompts.
     """
     doc.ai_included = data.ai_included
-    module = (
-        await db.execute(select(Module).where(Module.id == doc.module_id))
-    ).scalar_one()
+    module = (await db.execute(select(Module).where(Module.id == doc.module_id))).scalar_one()
     module.content_version += 1  # existing artifacts become stale/incomplete
     await db.commit()
     return _doc_out(doc)
@@ -741,9 +744,7 @@ async def delete_document(
 ) -> dict:
     # Soft delete: recoverable until a future purge job; excluded everywhere now.
     doc.deleted_at = datetime.now(UTC)
-    module = (
-        await db.execute(select(Module).where(Module.id == doc.module_id))
-    ).scalar_one()
+    module = (await db.execute(select(Module).where(Module.id == doc.module_id))).scalar_one()
     module.content_version += 1
     await db.commit()
     return {"ok": True}
