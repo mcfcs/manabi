@@ -185,7 +185,7 @@ async def sync_canvas_tasks(db: AsyncSession, user: User) -> dict:
 
 
 async def _sync_canvas_tasks_inner(db: AsyncSession, user: User) -> dict:
-    from manabi_server.api.canvas import _canvas_get
+    from manabi_server.api.canvas import _canvas_get_all
 
     courses = [
         c
@@ -205,7 +205,7 @@ async def _sync_canvas_tasks_inner(db: AsyncSession, user: User) -> dict:
     for course in courses:
         assignments: dict[int, dict] = {}
         for bucket in ("upcoming", "overdue"):
-            data = await _canvas_get(
+            data = await _canvas_get_all(
                 f"/courses/{course.canvas_course_id}/assignments", {"bucket": bucket}
             )
             for a in data:

@@ -737,8 +737,18 @@ async def sync_canvas_scores(
             continue  # deleted in Canvas — leave the row and its score alone
         earned, possible = _canvas_score(a)
         title = str(a.get("name") or item.title)[:255]
-        if (item.earned, item.possible, item.title) != (earned, possible, title):
+        if (item.earned, item.possible, item.title, item.percent) != (
+            earned,
+            possible,
+            title,
+            None,
+        ):
             item.earned, item.possible, item.title = earned, possible, title
+            # A Canvas-linked row is a points row. Leaving a percent behind
+            # makes it both at once - which _validated_score would reject - and
+            # item_points prefers the percent, so the fresh score is ignored and
+            # the sync reports success while the grade never moves.
+            item.percent = None
             updated += 1
         if earned is None:
             ungraded += 1

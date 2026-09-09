@@ -51,6 +51,16 @@ def _canvas_config() -> tuple[str, str]:
     return settings.canvas_base_url.rstrip("/"), settings.canvas_access_token
 
 
+class CanvasAuthError(HTTPException):
+    """Canvas rejected the token. Distinct from a per-tab 403 so _safe_get_all
+    can swallow the latter and never the former."""
+
+    def __init__(self) -> None:
+        super().__init__(
+            status_code=502, detail="Canvas rejected the token — it may have expired"
+        )
+
+
 async def _canvas_get(path: str, params: dict | None = None) -> list | dict:
     base, token = _canvas_config()
     async with httpx.AsyncClient(timeout=30) as client:
@@ -60,9 +70,7 @@ async def _canvas_get(path: str, params: dict | None = None) -> list | dict:
             headers={"Authorization": f"Bearer {token}"},
         )
     if r.status_code == 401:
-        raise HTTPException(
-            status_code=502, detail="Canvas rejected the token — it may have expired"
-        )
+        raise CanvasAuthError()
     if r.status_code >= 400:
         raise HTTPException(
             status_code=502, detail=f"Canvas error {r.status_code}: {r.text[:150]}"
@@ -72,7 +80,7 @@ async def _canvas_get(path: str, params: dict | None = None) -> list | dict:
 
 @router.get("/courses")
 async def canvas_courses() -> list[CanvasCourse]:
-    data = await _canvas_get(
+    data = await _canvas_get_all(
         "/courses", {"enrollment_state": "active", "state[]": "available"}
     )
     return [
@@ -127,7 +135,7 @@ async def fetch_announcements(
         return []
     by_context = {f"course_{c.canvas_course_id}": c for c in courses}
 
-    data = await _canvas_get(
+    data = await _canvas_get_all(
         "/announcements",
         {
             "context_codes[]": list(by_context.keys()),
@@ -177,7 +185,7 @@ IMPORTABLE_TYPES = (
 
 @router.get("/courses/{canvas_course_id}/files")
 async def canvas_files(canvas_course_id: int) -> list[CanvasFile]:
-    data = await _canvas_get(
+    data = await _canvas_get_all(
         f"/courses/{canvas_course_id}/files",
         {"sort": "updated_at", "order": "desc"},
     )
@@ -259,9 +267,7 @@ async def _canvas_get_all(path: str, params: dict | None = None) -> list:
                 url, params=p, headers={"Authorization": f"Bearer {token}"}
             )
             if r.status_code == 401:
-                raise HTTPException(
-                    status_code=502, detail="Canvas rejected the token — it may have expired"
-                )
+                raise CanvasAuthError()
             if r.status_code >= 400:
                 raise HTTPException(
                     status_code=502, detail=f"Canvas error {r.status_code}: {r.text[:150]}"
@@ -336,6 +342,8 @@ async def _safe_get_all(path: str, params: dict | None = None) -> list:
     section must not fail the whole sync."""
     try:
         return await _canvas_get_all(path, params)
+    except CanvasAuthError:
+        raise  # an expired token is not "this tab is empty"
     except HTTPException:
         return []
 

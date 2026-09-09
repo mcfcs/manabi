@@ -466,7 +466,16 @@ async def export_ics(
         await db.execute(
             select(ScheduleBlock, Course)
             .join(Course, Course.id == ScheduleBlock.course_id)
-            .where(Course.user_id == user.id, Course.archived_at.is_(None))
+            .where(
+                Course.user_id == user.id,
+                Course.archived_at.is_(None),
+                # TBA blocks are explicitly allowed (api/schedule.py) and have
+                # no day or time to build a recurring event from — including
+                # one made the whole export 500.
+                ScheduleBlock.day_of_week.is_not(None),
+                ScheduleBlock.start_minute.is_not(None),
+                ScheduleBlock.end_minute.is_not(None),
+            )
         )
     ).all()
     events = (

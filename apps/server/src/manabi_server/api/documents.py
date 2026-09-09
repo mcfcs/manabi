@@ -112,6 +112,28 @@ async def _get_owned_document(
 
 
 async def _enqueue_processing(db: AsyncSession, user_id: int, doc: Document) -> Job:
+    """Queue a parse, unless one is already queued or running for this document.
+
+    Without the guard (which api/artifacts.py has had all along) a double-click
+    on Retry, or a layout change during a parse, races two _stage_structure
+    runs at concurrency=2 into the uq_document_pages_doc_page unique index and
+    lands the document in `failed` with a raw Postgres error.
+    """
+    existing = (
+        await db.execute(
+            select(Job)
+            .where(
+                Job.document_id == doc.id,
+                Job.job_type == "process_document",
+                Job.status.in_([JobStatus.queued, JobStatus.running]),
+            )
+            .order_by(Job.id.desc())
+            .limit(1)
+        )
+    ).scalar_one_or_none()
+    if existing is not None:
+        return existing
+
     job = Job(
         user_id=user_id,
         job_type="process_document",

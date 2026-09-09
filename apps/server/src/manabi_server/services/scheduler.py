@@ -171,7 +171,12 @@ async def _tick(sessionmaker) -> None:
                 await db.execute(
                     select(ScheduleBlock, Course)
                     .join(Course, Course.id == ScheduleBlock.course_id)
-                    .where(ScheduleBlock.day_of_week == now.weekday())
+                    .where(
+                        ScheduleBlock.day_of_week == now.weekday(),
+                        # A day without a time is TBA; comparing against NULL
+                        # below would throw and silence class reminders for good.
+                        ScheduleBlock.start_minute.is_not(None),
+                    )
                 )
             ).all()
             in_semester = (

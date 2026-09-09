@@ -15,6 +15,14 @@ _QUERY_INSTRUCT = (
 BATCH_SIZE = 16
 
 
+class EmbeddingUnavailable(RuntimeError):
+    """The embedding model did not answer with usable vectors. Raised instead of
+    letting callers index into an empty list: every chat message, every
+    instruction-steered generation and "define this term" call embed_texts(...)[0],
+    so a model that is not pulled surfaced as a bare IndexError and a 500 with
+    nothing pointing at Ollama."""
+
+
 def embed_texts(texts: list[str], *, is_query: bool = False) -> list[list[float]]:
     settings = get_settings()
     inputs = [(_QUERY_INSTRUCT + t) if is_query else t for t in texts]
@@ -31,7 +39,14 @@ def embed_texts(texts: list[str], *, is_query: bool = False) -> list[list[float]
                 },
             )
             r.raise_for_status()
-            vectors.extend(r.json()["embeddings"])
+            got = r.json().get("embeddings") or []
+            if len(got) != len(batch):
+                raise EmbeddingUnavailable(
+                    f"embedding model {settings.embedding_model!r} returned "
+                    f"{len(got)} vector(s) for {len(batch)} input(s) — is it pulled "
+                    f"on {settings.embedding_ollama_url}?"
+                )
+            vectors.extend(got)
     return vectors
 
 
