@@ -1,9 +1,10 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { Link } from "@tanstack/react-router";
 import {
   ChevronDown,
   ChevronRight,
   CloudDownload,
-  GraduationCap,
+  ExternalLink,
   Loader2,
   Plus,
   SlidersHorizontal,
@@ -22,11 +23,13 @@ import { CanvasLinkPicker } from "./CanvasLinkPicker";
 import { GradeValue } from "./GradeValue";
 import { fmtPercent, fmtScore, targetSentence, weightWarning } from "./grades";
 import { SchemeEditor } from "./SchemeEditor";
-import "./grades.css";
 
-/** The course's syllabus breakdown: weighted sections, their scores, the
- * current standing and what the untouched weight still has to earn. */
-export function GradesSection({ courseId }: { courseId: string }) {
+/**
+ * One course's grading breakdown, edited in place. Lives inside the Grades
+ * page (grades deliberately never appear on the course page). The course's
+ * own row carries the headline percentage, so this body starts at the detail.
+ */
+export function CourseGradesEditor({ courseId }: { courseId: string }) {
   const queryClient = useQueryClient();
   const [open, setOpen] = useState<Set<number>>(new Set());
   const [addingComponent, setAddingComponent] = useState(false);
@@ -74,7 +77,15 @@ export function GradesSection({ courseId }: { courseId: string }) {
   });
 
   const g = grades.data;
-  if (!g) return null;
+  if (!g) {
+    return (
+      <div className="grades-editor">
+        <p className="gen-hint">
+          <Loader2 size={13} className="spin" /> Loading…
+        </p>
+      </div>
+    );
+  }
 
   const empty = g.components.length === 0;
   const warning = weightWarning(g.total_weight);
@@ -87,49 +98,16 @@ export function GradesSection({ courseId }: { courseId: string }) {
   }
 
   return (
-    <section className="grades-section">
-      <div className="module-section-head">
-        <h2>
-          <GraduationCap size={18} strokeWidth={1.75} /> Grades
-        </h2>
-        <div className="grades-head-actions">
-          {g.canvas_course_id && !empty && (
-            <button
-              className="btn"
-              onClick={() => sync.mutate()}
-              disabled={sync.isPending}
-              title="Refresh linked Canvas scores"
-            >
-              {sync.isPending ? (
-                <Loader2 size={14} className="spin" />
-              ) : (
-                <CloudDownload size={14} strokeWidth={1.75} />
-              )}{" "}
-              Sync grades
-            </button>
-          )}
-          <button className="btn" onClick={() => setEditingScheme(true)}>
-            <SlidersHorizontal size={14} strokeWidth={1.75} />{" "}
-            {g.cutoffs ? "Scheme" : "Set scheme"}
-          </button>
-        </div>
-      </div>
-
+    <div className="grades-editor">
       {empty ? (
-        <div className="home-empty grades-empty">
-          <p>
-            Add the sections from this course's syllabus — Participation 10%, Quizzes 30% and so
-            on. Only sections with a grade count toward your standing, so an untouched one never
-            drags it down.
-          </p>
-        </div>
+        <p className="grades-editor-hint">
+          Add the sections from this course's syllabus — Participation 10%, Quizzes 30% and so
+          on. Only sections with a grade count toward your standing, so an untouched one never
+          drags it down.
+        </p>
       ) : (
-        <div className="grades-standing">
-          <div className="grades-standing-figure">
-            <GradeValue className="grades-percent">{fmtPercent(g.percent)}</GradeValue>
-            {g.letter && <GradeValue className="grades-letter">{g.letter}</GradeValue>}
-          </div>
-          <div className="grades-standing-meta">
+        <>
+          <div className="grades-editor-meta">
             {g.percent == null ? (
               <span>Nothing graded yet.</span>
             ) : (
@@ -138,11 +116,7 @@ export function GradesSection({ courseId }: { courseId: string }) {
                 {remaining > 0 ? ` · ${fmtPercent(remaining)} still to come` : " · all graded"}
               </span>
             )}
-            {!g.cutoffs && (
-              <span className="grades-need-scheme">
-                Set the scheme to see a letter.
-              </span>
-            )}
+            {!g.cutoffs && <span className="grades-need-scheme">Set the scheme to see a letter.</span>}
           </div>
           <div className="grades-weightbar" aria-hidden>
             {g.components.map((c) => (
@@ -154,7 +128,7 @@ export function GradesSection({ courseId }: { courseId: string }) {
               />
             ))}
           </div>
-        </div>
+        </>
       )}
 
       {nextTarget && g.cutoffs && (
@@ -219,9 +193,38 @@ export function GradesSection({ courseId }: { courseId: string }) {
           </div>
         </form>
       ) : (
-        <button className="btn grades-add-btn" onClick={() => setAddingComponent(true)}>
-          <Plus size={15} strokeWidth={2} /> Add a section
-        </button>
+        <div className="grades-editor-actions">
+          <button className="btn" onClick={() => setAddingComponent(true)}>
+            <Plus size={15} strokeWidth={2} /> Add a section
+          </button>
+          <button className="btn" onClick={() => setEditingScheme(true)}>
+            <SlidersHorizontal size={14} strokeWidth={1.75} />{" "}
+            {g.cutoffs ? "Scheme" : "Set scheme"}
+          </button>
+          {g.canvas_course_id && !empty && (
+            <button
+              className="btn"
+              onClick={() => sync.mutate()}
+              disabled={sync.isPending}
+              title="Refresh linked Canvas scores"
+            >
+              {sync.isPending ? (
+                <Loader2 size={14} className="spin" />
+              ) : (
+                <CloudDownload size={14} strokeWidth={1.75} />
+              )}{" "}
+              Sync grades
+            </button>
+          )}
+          <Link
+            to="/courses/$courseId"
+            params={{ courseId }}
+            className="btn grades-open-course"
+            title="Open the course"
+          >
+            <ExternalLink size={14} strokeWidth={1.75} /> Course
+          </Link>
+        </div>
       )}
 
       {error && <p className="error-text">{error}</p>}
@@ -235,7 +238,7 @@ export function GradesSection({ courseId }: { courseId: string }) {
           onClose={() => setLinkingTo(null)}
         />
       )}
-    </section>
+    </div>
   );
 }
 

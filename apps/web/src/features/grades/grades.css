@@ -11,55 +11,23 @@
   filter: blur(6px);
 }
 
-/* ── Course-page section ──────────────────────────────────────────────── */
+/* ── The per-course editor, inside an expanded row ────────────────────── */
 
-.grades-section {
+.grades-editor {
   display: flex;
   flex-direction: column;
   gap: var(--s-3);
-  margin-bottom: var(--s-6);
+  padding: var(--s-3) var(--s-4) var(--s-4);
+  border-top: 1px solid var(--rule);
 }
-.grades-section .module-section-head h2 {
-  display: flex;
-  align-items: center;
-  gap: var(--s-2);
+.grades-editor-hint,
+.grades-page-hint {
+  margin: 0;
+  font-size: 13px;
+  color: var(--ink-soft);
+  max-width: 62ch;
 }
-.grades-head-actions {
-  display: flex;
-  gap: var(--s-2);
-}
-.grades-empty p {
-  max-width: 60ch;
-}
-
-.grades-standing {
-  display: flex;
-  flex-direction: column;
-  gap: var(--s-2);
-  padding: var(--s-3) var(--s-4);
-  border: 1px solid var(--rule);
-  border-radius: var(--radius);
-  background: var(--surface-raised);
-}
-.grades-standing-figure {
-  display: flex;
-  align-items: baseline;
-  gap: var(--s-3);
-}
-.grades-percent {
-  font-family: var(--font-ui);
-  font-size: 30px;
-  font-weight: 650;
-  line-height: 1;
-  color: var(--ink);
-}
-.grades-letter {
-  font-family: var(--font-display);
-  font-size: 22px;
-  font-weight: 600;
-  color: var(--accent-blue-deep);
-}
-.grades-standing-meta {
+.grades-editor-meta {
   display: flex;
   flex-wrap: wrap;
   gap: var(--s-3);
@@ -68,6 +36,15 @@
 }
 .grades-need-scheme {
   color: var(--stale);
+}
+.grades-editor-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--s-2);
+  align-items: center;
+}
+.grades-open-course {
+  margin-left: auto;
 }
 
 /* weight bar: one segment per section, faded while ungraded */
@@ -389,20 +366,35 @@
   flex-direction: column;
   gap: var(--s-2);
 }
+.grades-course {
+  border: 1px solid var(--rule);
+  border-radius: var(--radius);
+  background: var(--surface-raised);
+  overflow: hidden;
+}
+.grades-course.expanded {
+  border-color: var(--accent-blue);
+}
 .grades-course-row {
   display: flex;
   align-items: center;
   gap: var(--s-3);
+  width: 100%;
   padding: var(--s-3);
-  border: 1px solid var(--rule);
-  border-radius: var(--radius);
-  background: var(--surface-raised);
+  border: none;
+  background: none;
+  font: inherit;
   color: var(--ink);
+  text-align: left;
+  cursor: pointer;
   min-height: var(--touch-target);
 }
 .grades-course-row:hover {
-  text-decoration: none;
   background: var(--surface);
+}
+.grades-course-chevron {
+  flex-shrink: 0;
+  color: var(--ink-faint);
 }
 .grades-course-dot {
   width: 10px;
@@ -447,10 +439,6 @@
 /* ── Phone + tablet portrait ──────────────────────────────────────────── */
 
 @media (max-width: 1023px) {
-  .grades-section .module-section-head {
-    flex-wrap: wrap;
-    row-gap: var(--s-2);
-  }
   .grade-component-count {
     display: none; /* the percent and weight carry the row */
   }
@@ -460,11 +448,14 @@
 }
 
 @media (max-width: 767px) {
-  .grades-percent {
-    font-size: 26px;
-  }
   .grades-qpi-value {
     font-size: 32px;
+  }
+  .grades-editor {
+    padding: var(--s-3);
+  }
+  .grades-open-course {
+    margin-left: 0;
   }
   .grade-component-head {
     gap: var(--s-2);
