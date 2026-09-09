@@ -497,11 +497,14 @@ async def _answer_in_flight(db: AsyncSession, thread_id: int) -> Job | None:
     """A chat_answer / daily_briefing job already generating for this thread."""
     return (
         await db.execute(
-            select(Job).where(
+            select(Job)
+            .where(
                 Job.job_type.in_(["chat_answer", "daily_briefing"]),
                 Job.payload["thread_id"].as_string() == str(thread_id),
                 Job.status.in_([JobStatus.queued, JobStatus.running]),
             )
+            .order_by(Job.id.desc())
+            .limit(1)
         )
     ).scalar_one_or_none()
 

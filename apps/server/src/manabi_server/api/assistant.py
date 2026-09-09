@@ -106,11 +106,14 @@ class BriefingOut(BaseModel):
 async def _briefing_in_flight(db: AsyncSession, thread_id: int) -> Job | None:
     return (
         await db.execute(
-            select(Job).where(
+            select(Job)
+            .where(
                 Job.job_type == "daily_briefing",
                 Job.payload["thread_id"].as_string() == str(thread_id),
                 Job.status.in_([JobStatus.queued, JobStatus.running]),
             )
+            .order_by(Job.id.desc())
+            .limit(1)
         )
     ).scalar_one_or_none()
 
@@ -131,13 +134,19 @@ async def ensure_daily_briefing(
     settings = await get_app_settings(db)
     title = f"{today.strftime('%b')} {today.day} — Morning briefing"
 
+    # Oldest-first + limit 1: home and the assistant both POST on load, so a
+    # race can leave two threads for the day. Always settle on the first one
+    # rather than raising MultipleResultsFound for the rest of the day.
     thread = (
         await db.execute(
-            select(ChatThread).where(
+            select(ChatThread)
+            .where(
                 ChatThread.user_id == user.id,
                 ChatThread.module_id.is_(None),
                 ChatThread.title == title,
             )
+            .order_by(ChatThread.id)
+            .limit(1)
         )
     ).scalar_one_or_none()
 

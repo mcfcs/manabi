@@ -79,7 +79,10 @@ class PrepareOut(BaseModel):
 async def _active_job(db: AsyncSession, document_id: int) -> Job | None:
     return (
         await db.execute(
-            select(Job).where(*active_narration_job_filter(document_id)).order_by(Job.id.desc())
+            select(Job)
+            .where(*active_narration_job_filter(document_id))
+            .order_by(Job.id.desc())
+            .limit(1)
         )
     ).scalar_one_or_none()
 

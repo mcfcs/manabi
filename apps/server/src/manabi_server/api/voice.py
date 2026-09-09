@@ -45,12 +45,15 @@ async def request_preview(
         return {"ready": True, "id": existing}
     in_flight = (
         await db.execute(
-            select(Job).where(
+            select(Job)
+            .where(
                 Job.job_type == "voice_preview",
                 Job.status.in_([JobStatus.queued, JobStatus.running]),
                 Job.payload["variant"].as_string() == data.variant,
                 Job.payload["text"].as_string() == text,
             )
+            .order_by(Job.id.desc())
+            .limit(1)
         )
     ).scalar_one_or_none()
     if in_flight is not None:

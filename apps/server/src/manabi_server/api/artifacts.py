@@ -1873,11 +1873,14 @@ async def generate_lecture_audio(
 
     existing = (
         await db.execute(
-            select(Job).where(
+            select(Job)
+            .where(
                 Job.module_id == artifact.module_id,
                 Job.job_type == "synthesize_lecture",
                 Job.status.in_([JobStatus.queued, JobStatus.running]),
             )
+            .order_by(Job.id.desc())
+            .limit(1)
         )
     ).scalar_one_or_none()
     if existing is not None:
