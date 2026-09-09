@@ -44,15 +44,20 @@ def build_for_document(doc: Document) -> Script:
 
 
 def segment_rows(script: Script) -> list[dict]:
+    """Rows for the segments worth recording. A segment whose spoken form holds
+    no letter or digit is silence — it would only earn a 400 from the voice
+    server — so it never reaches the queue. `ord` is re-numbered so the sequence
+    stays gapless for the player."""
+    kept = [s for s in script.segments if any(c.isalnum() for c in (s.spoken_text or ""))]
     return [
         {
-            "ord": s.ord,
+            "ord": i,
             "page_no": s.page_no,
             "kind": s.kind,
             "text": s.text,
             "spoken_text": s.spoken_text,
         }
-        for s in script.segments
+        for i, s in enumerate(kept)
     ]
 
 

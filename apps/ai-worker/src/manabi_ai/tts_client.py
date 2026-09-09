@@ -66,11 +66,20 @@ def _normalize_for_tts(text: str) -> str:
     return t.strip()
 
 
+def _speakable(text: str) -> bool:
+    """Does this fragment contain anything a voice can actually say? A paragraph
+    that opens mid-sentence ("… but for low-resource languages") normalizes to
+    ". but for …" and then splits into a bare "." — which GPT-SoVITS rejects with
+    a 400 that fails the whole recording. Punctuation-only fragments are silence,
+    so drop them rather than asking the model to voice them."""
+    return any(ch.isalnum() for ch in text)
+
+
 def split_sentences(text: str, group_chars: int = GROUP_CHARS) -> list[str]:
     """One TTS fragment per sentence. GPT-SoVITS is most reliable synthesizing a
     single utterance at a time — combining several sentences into one request is
     what made it gasp through and skip the earlier ones. Over-long sentences are
-    hard-wrapped on spaces; empty pieces are dropped."""
+    hard-wrapped on spaces; pieces with nothing to say are dropped."""
     text = _normalize_for_tts(text)
     out: list[str] = []
     for s in _SENT_END.split(text):
@@ -79,10 +88,10 @@ def split_sentences(text: str, group_chars: int = GROUP_CHARS) -> list[str]:
             cut = s.rfind(" ", 0, group_chars)
             cut = cut if cut > 0 else group_chars
             head = s[:cut].strip()
-            if head:
+            if _speakable(head):
                 out.append(head)
             s = s[cut:].strip()
-        if s:
+        if _speakable(s):
             out.append(s)
     return out
 
