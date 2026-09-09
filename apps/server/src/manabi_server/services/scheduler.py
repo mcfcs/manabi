@@ -9,6 +9,7 @@ Per tick:
   2. Google ICS re-poll when older than 30 minutes.
   2a. Canvas task sync when last success is older than 10 minutes.
   2b. Canvas announcement poll (~30 min, daytime).
+  2c. Reap jobs whose Procrastinate task is already over (they block features).
   3. Optional class-starting-soon pushes (app_settings.class_reminders).
 """
 
@@ -21,6 +22,7 @@ from sqlalchemy import select
 
 from manabi_server.config import get_settings
 from manabi_server.services.gcal import fetch_gcal
+from manabi_server.services.job_reaper import reap_dead_jobs
 from manabi_server.services.push import send_to_all
 from manabi_server.timeutil import now_manila, today_manila
 
@@ -143,6 +145,14 @@ async def _tick(sessionmaker) -> None:
                             await db.commit()
             except Exception:  # noqa: BLE001 — canvas down must not kill ticks
                 log.exception("announcement poll failed")
+
+        # 2c. reap jobs whose task is already over — they block their feature
+        try:
+            reaped = await reap_dead_jobs(db)
+            if reaped:
+                log.info("reaped %d dead job(s): %s", len(reaped), reaped)
+        except Exception:  # noqa: BLE001 — cleanup must never kill the tick
+            log.exception("job reap failed")
 
         # 3. class reminders (10–15 min ahead; 5-min tick → fires once)
         if app is not None and app.class_reminders:
