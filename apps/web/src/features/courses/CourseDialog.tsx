@@ -39,6 +39,7 @@ export function CourseDialog({
   const [term, setTerm] = useState(course?.term ?? "");
   const [instructor, setInstructor] = useState(course?.instructor ?? "");
   const [meetingUrl, setMeetingUrl] = useState(course?.meeting_url ?? "");
+  const [units, setUnits] = useState(String(course?.units ?? 3));
   const [accent, setAccent] = useState(course?.accent_color ?? ACCENTS[1]);
   const [confirming, setConfirming] = useState<DeleteConsequences | null>(null);
   const [cover, setCover] = useState(course?.cover_image_url ?? null);
@@ -139,6 +140,7 @@ export function CourseDialog({
       instructor: instructor || null,
       meeting_url: meetingUrl.trim() || null,
       accent_color: accent,
+      units: Number(units) > 0 ? Number(units) : 3,
       canvas_course_id: effectiveCanvasId,
     });
   }
@@ -217,6 +219,23 @@ export function CourseDialog({
               onChange={(e) => setInstructor(e.target.value)}
             />
           </div>
+        </div>
+        <div>
+          <label className="field-label" htmlFor="course-units">
+            Units
+          </label>
+          <input
+            id="course-units"
+            className="input"
+            type="number"
+            inputMode="decimal"
+            min="0"
+            max="12"
+            step="0.5"
+            value={units}
+            onChange={(e) => setUnits(e.target.value)}
+          />
+          <p className="settings-hint">How much this course weighs in the term QPI.</p>
         </div>
         <div>
           <label className="field-label" htmlFor="course-meet">

@@ -1,0 +1,476 @@
+/* ── Hidden figures: blurred, never removed, so nothing shifts ────────── */
+
+.grade-value.blurred {
+  filter: blur(6px);
+  cursor: pointer;
+  user-select: none;
+  border-radius: var(--radius-sm);
+}
+.grade-value.blurred:focus-visible {
+  outline: 2px solid var(--accent-blue);
+  filter: blur(6px);
+}
+
+/* ── Course-page section ──────────────────────────────────────────────── */
+
+.grades-section {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-3);
+  margin-bottom: var(--s-6);
+}
+.grades-section .module-section-head h2 {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+}
+.grades-head-actions {
+  display: flex;
+  gap: var(--s-2);
+}
+.grades-empty p {
+  max-width: 60ch;
+}
+
+.grades-standing {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-2);
+  padding: var(--s-3) var(--s-4);
+  border: 1px solid var(--rule);
+  border-radius: var(--radius);
+  background: var(--surface-raised);
+}
+.grades-standing-figure {
+  display: flex;
+  align-items: baseline;
+  gap: var(--s-3);
+}
+.grades-percent {
+  font-family: var(--font-ui);
+  font-size: 30px;
+  font-weight: 650;
+  line-height: 1;
+  color: var(--ink);
+}
+.grades-letter {
+  font-family: var(--font-display);
+  font-size: 22px;
+  font-weight: 600;
+  color: var(--accent-blue-deep);
+}
+.grades-standing-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--s-3);
+  font-size: 12.5px;
+  color: var(--ink-faint);
+}
+.grades-need-scheme {
+  color: var(--stale);
+}
+
+/* weight bar: one segment per section, faded while ungraded */
+.grades-weightbar {
+  display: flex;
+  gap: 2px;
+  height: 6px;
+  margin-top: 2px;
+}
+.grades-weightbar-part {
+  background: var(--accent-blue);
+  border-radius: 3px;
+  min-width: 4px;
+}
+.grades-weightbar-part.pending {
+  background: var(--rule);
+}
+
+.grades-target {
+  margin: 0;
+  font-size: 13px;
+  color: var(--ink-soft);
+}
+.grades-warning {
+  margin: 0;
+  font-size: 12.5px;
+  color: var(--stale);
+}
+
+/* ── Components ───────────────────────────────────────────────────────── */
+
+.grades-components {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-2);
+}
+.grade-component {
+  border: 1px solid var(--rule);
+  border-radius: var(--radius);
+  background: var(--surface-raised);
+  overflow: hidden;
+}
+.grade-component-head {
+  display: flex;
+  align-items: center;
+  gap: var(--s-3);
+  width: 100%;
+  padding: var(--s-3);
+  border: none;
+  background: none;
+  font: inherit;
+  color: var(--ink);
+  text-align: left;
+  cursor: pointer;
+  min-height: var(--touch-target);
+}
+.grade-component-head:hover {
+  background: var(--surface);
+}
+.grade-component-name {
+  flex: 1;
+  min-width: 0;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.grade-component-weight {
+  font-size: 12px;
+  color: var(--ink-faint);
+  flex-shrink: 0;
+}
+.grade-component-percent {
+  font-weight: 650;
+  font-size: 15px;
+  flex-shrink: 0;
+  min-width: 5ch;
+  text-align: right;
+}
+.grade-component-count {
+  font-size: 11.5px;
+  color: var(--ink-faint);
+  flex-shrink: 0;
+  min-width: 9ch;
+  text-align: right;
+}
+
+.grade-component-body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-2);
+  padding: 0 var(--s-3) var(--s-3);
+  border-top: 1px solid var(--rule);
+  padding-top: var(--s-3);
+}
+.grade-component-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--s-2);
+  align-items: center;
+}
+.grade-component-actions .icon-btn {
+  margin-left: auto;
+}
+
+/* ── Score rows ───────────────────────────────────────────────────────── */
+
+.grade-item {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  padding: var(--s-1) 0;
+  border-bottom: 1px solid var(--rule);
+}
+.grade-item:last-of-type {
+  border-bottom: none;
+}
+.grade-item.pending .grade-item-title,
+.grade-item.pending .grade-item-score {
+  color: var(--ink-faint);
+}
+.grade-item-title {
+  flex: 1;
+  min-width: 0;
+  font-size: 13.5px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.grade-item-canvas {
+  flex-shrink: 0;
+  font-size: 10px;
+}
+.grade-item-score {
+  flex-shrink: 0;
+  font-size: 12.5px;
+}
+.grade-item-del {
+  flex-shrink: 0;
+  opacity: 0;
+}
+.grade-item:hover .grade-item-del,
+.grade-item-del:focus-visible {
+  opacity: 1;
+}
+
+/* ── Add forms ────────────────────────────────────────────────────────── */
+
+.grades-add,
+.grade-item-form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-2);
+  padding: var(--s-3);
+  border: 1px dashed var(--rule);
+  border-radius: var(--radius);
+}
+.grades-add-weight,
+.grade-item-form-nums {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  font-size: 13px;
+  color: var(--ink-soft);
+}
+.grades-add-weight .input,
+.grade-item-form-nums .input {
+  width: 90px;
+}
+.grade-item-form-sep {
+  color: var(--ink-faint);
+}
+.grade-item-mode {
+  min-height: 32px;
+  padding: 0 var(--s-3);
+  font-size: 12px;
+}
+.grade-item-mode.active {
+  background: var(--accent-blue-wash);
+  color: var(--accent-blue-deep);
+  border-color: var(--accent-blue);
+}
+.grades-add-actions {
+  display: flex;
+  gap: var(--s-2);
+}
+.grades-add-btn {
+  align-self: flex-start;
+}
+
+/* ── Scheme editor ────────────────────────────────────────────────────── */
+
+.scheme-rows {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-2);
+}
+.scheme-row {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  font-size: 13px;
+  color: var(--ink-soft);
+}
+.scheme-letter {
+  font-family: var(--font-display);
+  font-size: 17px;
+  font-weight: 600;
+  color: var(--ink);
+  min-width: 2.5ch;
+}
+.scheme-from {
+  min-width: 5ch;
+}
+.scheme-input {
+  width: 92px;
+}
+.scheme-implicit {
+  color: var(--ink-faint);
+}
+.scheme-upto {
+  font-size: 12px;
+  color: var(--ink-faint);
+}
+.scheme-row-f {
+  padding-top: var(--s-1);
+  border-top: 1px solid var(--rule);
+}
+
+/* ── Canvas picker ────────────────────────────────────────────────────── */
+
+.link-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  max-height: 46vh;
+  overflow-y: auto;
+}
+.link-row {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+}
+.link-row.linked {
+  opacity: 0.55;
+}
+.link-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.link-score {
+  flex-shrink: 0;
+  font-size: 12px;
+  color: var(--ink-faint);
+}
+
+/* ── /grades page ─────────────────────────────────────────────────────── */
+
+.grades-page {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-4);
+  max-width: 760px;
+  margin: 0 auto;
+}
+.grades-page-head {
+  display: flex;
+  align-items: baseline;
+  gap: var(--s-3);
+}
+.grades-page-head h1 {
+  font-family: var(--font-display);
+  font-size: 26px;
+  margin: 0;
+}
+.grades-hidden-badge {
+  color: var(--ink-faint);
+}
+
+.grades-qpi {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-2);
+  padding: var(--s-4);
+  border: 1px solid var(--rule);
+  border-radius: var(--radius);
+  background: var(--surface-raised);
+}
+.grades-qpi-figure {
+  display: flex;
+  align-items: baseline;
+  gap: var(--s-3);
+}
+.grades-qpi-value {
+  font-family: var(--font-ui);
+  font-size: 38px;
+  font-weight: 650;
+  line-height: 1;
+  color: var(--ink);
+}
+.grades-qpi-label {
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--ink-faint);
+}
+.grades-qpi-meta {
+  margin: 0;
+  font-size: 13px;
+  color: var(--ink-soft);
+  max-width: 56ch;
+}
+
+.grades-course-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-2);
+}
+.grades-course-row {
+  display: flex;
+  align-items: center;
+  gap: var(--s-3);
+  padding: var(--s-3);
+  border: 1px solid var(--rule);
+  border-radius: var(--radius);
+  background: var(--surface-raised);
+  color: var(--ink);
+  min-height: var(--touch-target);
+}
+.grades-course-row:hover {
+  text-decoration: none;
+  background: var(--surface);
+}
+.grades-course-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+.grades-course-text {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+.grades-course-code {
+  font-weight: 600;
+}
+.grades-course-meta {
+  font-size: 12px;
+  color: var(--ink-faint);
+}
+.grades-course-percent {
+  font-weight: 650;
+  flex-shrink: 0;
+}
+.grades-course-letter {
+  font-family: var(--font-display);
+  font-size: 19px;
+  font-weight: 600;
+  color: var(--accent-blue-deep);
+  flex-shrink: 0;
+  min-width: 3ch;
+  text-align: right;
+}
+.grades-course-letter.empty {
+  font-family: var(--font-ui);
+  font-size: 12px;
+  font-weight: 400;
+  color: var(--ink-faint);
+}
+
+/* ── Phone + tablet portrait ──────────────────────────────────────────── */
+
+@media (max-width: 1023px) {
+  .grades-section .module-section-head {
+    flex-wrap: wrap;
+    row-gap: var(--s-2);
+  }
+  .grade-component-count {
+    display: none; /* the percent and weight carry the row */
+  }
+  .grade-item-del {
+    opacity: 1; /* no hover on touch */
+  }
+}
+
+@media (max-width: 767px) {
+  .grades-percent {
+    font-size: 26px;
+  }
+  .grades-qpi-value {
+    font-size: 32px;
+  }
+  .grade-component-head {
+    gap: var(--s-2);
+  }
+  .grades-add-weight .input,
+  .grade-item-form-nums .input {
+    width: 76px;
+  }
+}

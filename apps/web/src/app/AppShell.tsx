@@ -3,6 +3,7 @@ import { Link, useRouterState } from "@tanstack/react-router";
 import {
   CalendarClock,
   CalendarDays,
+  GraduationCap,
   Home,
   Layers,
   ListTodo,
@@ -226,6 +227,15 @@ export function AppShell({
             <span>Review</span>
             <DueBadge count={reviewDue} />
           </Link>
+          <Link
+            to="/grades"
+            className="rail-link"
+            activeProps={{ className: "rail-link active" }}
+            title="Grades and term QPI"
+          >
+            <GraduationCap size={16} strokeWidth={1.5} />
+            <span>Grades</span>
+          </Link>
           <button
             className="rail-link rail-search"
             onClick={() => setSearchOpen(true)}
@@ -366,6 +376,14 @@ export function AppShell({
             >
               <CalendarClock size={17} strokeWidth={1.5} />
               Schedule
+            </Link>
+            <Link
+              to="/grades"
+              className="more-sheet-item"
+              onClick={() => setMoreOpen(false)}
+            >
+              <GraduationCap size={17} strokeWidth={1.5} />
+              Grades
             </Link>
             <button
               className="more-sheet-item"

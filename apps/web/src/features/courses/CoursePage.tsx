@@ -22,6 +22,7 @@ import { CanvasFilesModal } from "./CanvasFilesModal";
 import { CanvasSyncModal } from "./CanvasSyncModal";
 import { CourseDialog } from "./CourseDialog";
 import { CourseFiles } from "./CourseFiles";
+import { GradesSection } from "../grades/GradesSection";
 import { CourseLinks } from "./CourseLinks";
 import {
   api,
@@ -324,6 +325,8 @@ export function CoursePage() {
       <CourseLinks courseId={courseId} />
 
       <CourseFiles courseId={courseId} />
+
+      <GradesSection courseId={courseId} />
 
       <section className="module-section">
         <div className="module-section-head">

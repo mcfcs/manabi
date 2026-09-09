@@ -97,6 +97,92 @@ export interface CourseOut {
   canvas_course_id: number | null;
   meeting_url: string | null;
   cover_image_url: string | null;
+  /** credit units — this course's weight in the term QPI */
+  units: number;
+}
+
+// ── Grades: syllabus weights, scores, letters and QPI ──────────────────
+
+export interface GradeItemOut {
+  id: number;
+  title: string;
+  earned: number | null;
+  possible: number | null;
+  /** a straight-percentage row, instead of points */
+  percent: number | null;
+  canvas_assignment_id: number | null;
+  /** false = shown, but left out of the average until it is scored */
+  graded: boolean;
+  value_percent: number | null;
+}
+
+export interface GradeComponentOut {
+  id: number;
+  name: string;
+  weight: number;
+  position: number;
+  percent: number | null;
+  graded_count: number;
+  item_count: number;
+  items: GradeItemOut[];
+}
+
+export interface GradeTargetOut {
+  letter: string;
+  cutoff: number;
+  /** average the ungraded weight must earn to reach this letter */
+  needed: number;
+  reachable: boolean;
+}
+
+export interface CourseGradesOut {
+  course_id: number;
+  code: string;
+  name: string;
+  accent_color: string | null;
+  units: number;
+  canvas_course_id: number | null;
+  /** null until the cutoffs are taken from the syllabus */
+  cutoffs: Record<string, number> | null;
+  default_cutoffs: Record<string, number>;
+  percent: number | null;
+  letter: string | null;
+  counted_weight: number;
+  total_weight: number;
+  components: GradeComponentOut[];
+  targets: GradeTargetOut[];
+}
+
+export interface CourseGradeSummaryOut {
+  course_id: number;
+  code: string;
+  name: string;
+  accent_color: string | null;
+  units: number;
+  percent: number | null;
+  letter: string | null;
+  quality_points: number | null;
+  counted_weight: number;
+  total_weight: number;
+  component_count: number;
+  has_cutoffs: boolean;
+}
+
+export interface GradesOverviewOut {
+  qpi: number | null;
+  graded_units: number;
+  total_units: number;
+  courses: CourseGradeSummaryOut[];
+}
+
+export interface CanvasAssignmentOut {
+  canvas_assignment_id: number;
+  name: string;
+  points_possible: number | null;
+  score: number | null;
+  graded: boolean;
+  already_linked: boolean;
+  linked_component: string | null;
 }
 
 // ── Increment 9: schedule / calendar / tasks / settings ─────────────────
@@ -262,6 +348,8 @@ export interface SettingsOut {
   canvas_last_error: string | null;
   chat_autovoice: boolean;
   general_chat_model: string | null;
+  /** Blur every grade figure until it is clicked */
+  grades_hidden: boolean;
   /** Steven narrates readings: new PDFs are recorded after parsing (never auto-played) */
   narration_enabled: boolean;
 }

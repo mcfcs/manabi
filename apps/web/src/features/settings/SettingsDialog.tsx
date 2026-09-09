@@ -372,6 +372,20 @@ export function SettingsDialog({ onClose }: { onClose: () => void }) {
           still toggle voice per conversation).
         </p>
 
+        <h3 className="settings-heading">Grades</h3>
+        <label className="event-weekly settings-reminders">
+          <input
+            type="checkbox"
+            checked={s?.grades_hidden ?? false}
+            onChange={(e) => save.mutate({ grades_hidden: e.target.checked })}
+          />
+          Hide grades
+        </label>
+        <p className="settings-hint">
+          Blurs every percentage, letter and the QPI wherever they appear. Click a blurred
+          figure to reveal just that one; it hides itself again on the next visit.
+        </p>
+
         <h3 className="settings-heading">Readings</h3>
         <label className="event-weekly settings-reminders">
           <input
