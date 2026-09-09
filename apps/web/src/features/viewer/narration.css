@@ -214,3 +214,40 @@
     max-height: 40vh;
   }
 }
+
+/* ── A recording that stopped part-way: say so, and offer the gap-fill ──── */
+
+.narration-failed {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  padding: var(--s-2) var(--s-3);
+  border-bottom: 1px solid var(--rule);
+  background: var(--surface);
+  color: var(--stale);
+  font-size: 12.5px;
+}
+.narration-failed svg {
+  flex-shrink: 0;
+}
+.narration-failed-text {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.narration-failed .btn {
+  flex-shrink: 0;
+}
+
+@media (max-width: 767px) {
+  .narration-failed {
+    flex-wrap: wrap;
+  }
+  .narration-failed-text {
+    white-space: normal;
+    flex-basis: 100%;
+    order: 3;
+  }
+}

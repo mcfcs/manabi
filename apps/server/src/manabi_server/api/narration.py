@@ -55,7 +55,8 @@ class NarrationSegmentOut(BaseModel):
 
 
 class NarrationOut(BaseModel):
-    status: str | None  # None = not prepared yet
+    status: str | None  # None = not prepared yet | scripted | synthesizing | ready | failed
+    error: str | None = None  # why it failed, so the viewer can offer a retry
     voice_available: bool
     job_active: bool
     job_id: int | None
@@ -144,6 +145,7 @@ async def get_narration(
     ready = [s for s in segments if s.audio_ready]
     return NarrationOut(
         status=narration.status,
+        error=narration.error,
         voice_available=voice,
         job_active=job is not None,
         job_id=job.id if job else None,
@@ -175,7 +177,12 @@ async def prepare_narration(
     narration = (
         await db.execute(select(Narration).where(Narration.document_id == doc.id))
     ).scalar_one_or_none()
-    if active is not None and not force:
+    if active is not None and force:
+        raise HTTPException(
+            status_code=409,
+            detail="A recording is already running — cancel it before re-scripting",
+        )
+    if active is not None:
         count = (
             (
                 await db.execute(

@@ -1,5 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
+  AlertTriangle,
   ChevronDown,
   ChevronUp,
   Headphones,
@@ -19,6 +20,13 @@ import "./narration.css";
 const SPEEDS = [0.9, 1, 1.25, 1.5];
 const GAP_MS = 450; // between paragraphs
 const GAP_HEADING_MS = 900; // before a heading / the title
+
+/** Worker errors arrive as a whole traceback-ish blob; the first line is the
+ * part worth putting in a one-line strip. */
+function firstLine(err: string): string {
+  const line = err.split(/\r?\n/)[0].trim();
+  return line.length > 140 ? `${line.slice(0, 137)}…` : line;
+}
 
 function fmt(ms: number): string {
   const s = Math.max(0, Math.round(ms / 1000));
@@ -218,6 +226,10 @@ export function NarrationBar({
 
   const notPrepared = data.status == null || data.segment_count === 0;
   const recording = data.job_active;
+  // A failed recording keeps whatever it managed to record, so the player still
+  // renders below - but it stalls at the first gap unless you can retry.
+  const failed = data.status === "failed" && !recording;
+  const missing = data.segment_count - data.ready_count;
 
   return (
     <div className="narration-bar" role="region" aria-label="Steven narrates">
@@ -248,6 +260,28 @@ export function NarrationBar({
               <span className="narration-script-text">{s.text}</span>
             </button>
           ))}
+        </div>
+      )}
+
+      {failed && (
+        <div className="narration-failed" role="status">
+          <AlertTriangle size={14} strokeWidth={1.75} />
+          <span className="narration-failed-text">
+            Recording stopped with {missing} paragraph{missing === 1 ? "" : "s"} left.
+            {data.error ? ` ${firstLine(data.error)}` : ""}
+          </span>
+          <button
+            className="btn btn-sm"
+            onClick={() => prepare.mutate(false)}
+            disabled={prepare.isPending || !data.voice_available}
+            title={
+              data.voice_available
+                ? "Record the paragraphs that are still missing"
+                : "Steven's voice is offline right now"
+            }
+          >
+            {prepare.isPending ? <Loader2 size={13} className="spin" /> : null} Retry
+          </button>
         </div>
       )}
 

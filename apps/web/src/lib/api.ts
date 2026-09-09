@@ -425,7 +425,8 @@ export interface NarrationSegmentOut {
 }
 
 export interface NarrationOut {
-  status: string | null;
+  status: string | null; // null | scripted | synthesizing | ready | failed
+  error: string | null;
   voice_available: boolean;
   job_active: boolean;
   job_id: number | null;
