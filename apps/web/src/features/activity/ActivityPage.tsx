@@ -151,14 +151,24 @@ export function ActivityPage() {
                   </span>
                 ) : null}
               </span>
-              {j.error && <span className="activity-error">{j.error.split(/\r?\n/)[0]}</span>}
+              {/* A succeeded run can still carry an error string from an
+                  attempt that was retried — only report one that actually
+                  ended badly. */}
+              {j.error && (j.status === "failed" || j.status === "cancelled") && (
+                <span className="activity-error">{j.error.split(/\r?\n/)[0]}</span>
+              )}
               {!j.error && j.progress_note && LIVE.has(j.status) && (
                 <span className="activity-note">{j.progress_note}</span>
               )}
             </span>
 
             <span className="activity-meta mono">
-              {took(j) && <span className="activity-took">{took(j)}</span>}
+              {took(j) && (
+                <>
+                  <span className="activity-took">{took(j)}</span>
+                  <span aria-hidden>·</span>
+                </>
+              )}
               {when(j.created_at)}
             </span>
 
