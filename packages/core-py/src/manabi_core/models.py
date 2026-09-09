@@ -1089,3 +1089,53 @@ class NarrationSegment(Base):
         UniqueConstraint("narration_id", "ord", name="uq_narration_segments_ord"),
         Index("ix_narration_segments_narration", "narration_id"),
     )
+
+
+class AIFeedbackKind(enum.StrEnum):
+    question_regenerated = "question_regenerated"  # user rejected a quiz question
+    answer_disputed = "answer_disputed"  # user challenged a stored answer
+    card_edited = "card_edited"  # user rewrote a generated flashcard
+
+
+class AIFeedback(Base, TimestampMixin):
+    """A judgement the owner made about generated output, with the output that
+    was rejected kept alongside what replaced it.
+
+    Every one of these signals used to be destroyed at the moment it was
+    created: regenerating a quiz question overwrote the question in place and
+    deleted its citations, a dispute verdict landed in `jobs.result` with no
+    reference back to the question, and `flashcards.edited` was a bare boolean
+    with no record of the text it replaced. They are the only labels in the
+    system that say "the model got this wrong", and they are not
+    reconstructible after the fact — hence recording them now, well before
+    anything consumes them.
+
+    `rejected` / `preferred` are deliberately loose JSON: the shape differs per
+    kind, and this table is an append-only log, not something the app reads
+    back to render a screen.
+    """
+
+    __tablename__ = "ai_feedback"
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    kind: Mapped[AIFeedbackKind] = mapped_column(
+        Enum(AIFeedbackKind, name="ai_feedback_kind"), nullable=False
+    )
+    # Ownership follows the artifact up to its course, as everywhere else.
+    artifact_id: Mapped[int | None] = mapped_column(
+        BigInteger, ForeignKey("artifacts.id", ondelete="CASCADE")
+    )
+    question_id: Mapped[int | None] = mapped_column(
+        BigInteger, ForeignKey("quiz_questions.id", ondelete="SET NULL")
+    )
+    flashcard_id: Mapped[int | None] = mapped_column(
+        BigInteger, ForeignKey("flashcards.id", ondelete="SET NULL")
+    )
+    rejected: Mapped[dict | None] = mapped_column(JSONB)
+    preferred: Mapped[dict | None] = mapped_column(JSONB)
+    # The generation config that produced the rejected output, so a later
+    # comparison can attribute it. Artifact stores only model + prompt version.
+    model_name: Mapped[str | None] = mapped_column(String(128))
+    prompt_version: Mapped[str | None] = mapped_column(String(32))
+
+    __table_args__ = (Index("ix_ai_feedback_kind_created", "kind", "created_at"),)

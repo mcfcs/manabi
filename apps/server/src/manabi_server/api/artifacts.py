@@ -12,6 +12,8 @@ from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Response
 from manabi_core.models import (
+    AIFeedback,
+    AIFeedbackKind,
     Artifact,
     ArtifactType,
     Citation,
@@ -1111,6 +1113,24 @@ async def patch_card(
     card: Flashcard = Depends(_get_owned_card),
     db: AsyncSession = Depends(get_db),
 ) -> dict:
+    rewrote = (data.front is not None and data.front != card.front) or (
+        data.back is not None and data.back != card.back
+    )
+    if rewrote:
+        # `edited` alone says a card was rewritten but not what it replaced,
+        # and the original is overwritten a line below. Keep the pair.
+        db.add(
+            AIFeedback(
+                kind=AIFeedbackKind.card_edited,
+                artifact_id=card.artifact_id,
+                flashcard_id=card.id,
+                rejected={"front": card.front, "back": card.back},
+                preferred={
+                    "front": data.front if data.front is not None else card.front,
+                    "back": data.back if data.back is not None else card.back,
+                },
+            )
+        )
     if data.front is not None:
         card.front = data.front
         card.edited = True

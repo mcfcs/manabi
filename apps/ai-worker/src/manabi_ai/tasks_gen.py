@@ -11,6 +11,8 @@ import re
 from datetime import UTC, datetime
 
 from manabi_core.models import (
+    AIFeedback,
+    AIFeedbackKind,
     Artifact,
     ArtifactType,
     Citation,
@@ -1069,14 +1071,28 @@ async def verify_question(job_id: int, question_id: int, user_answer: str = "") 
             job.progress_pct = 100
             job.progress_note = "Done"
             job.preview = None
-            job.result = {
-                "verdict": {
-                    "stored_answer_correct": bool(result.get("stored_answer_correct")),
-                    "user_answer_correct": bool(result.get("user_answer_correct")),
-                    "explanation": (result.get("verdict") or "").strip(),
-                    "corrected_answer": (result.get("corrected_answer") or "").strip(),
-                }
+            verdict = {
+                "stored_answer_correct": bool(result.get("stored_answer_correct")),
+                "user_answer_correct": bool(result.get("user_answer_correct")),
+                "explanation": (result.get("verdict") or "").strip(),
+                "corrected_answer": (result.get("corrected_answer") or "").strip(),
             }
+            job.result = {"verdict": verdict}
+            # A dispute is the richest label here: an explicit challenge plus an
+            # adjudication. It used to live only in jobs.result, with no way
+            # back to the question it was about.
+            if not verdict["stored_answer_correct"]:
+                db.add(
+                    AIFeedback(
+                        kind=AIFeedbackKind.answer_disputed,
+                        artifact_id=question.artifact_id,
+                        question_id=question.id,
+                        rejected={"prompt": question.prompt, "answer": question.answer},
+                        preferred={"answer": verdict["corrected_answer"] or None, **verdict},
+                        model_name=settings.effective_chat_model,
+                        prompt_version=prompts.PROMPT_VERSION,
+                    )
+                )
             job.finished_at = datetime.now(UTC)
             await db.commit()
         except (GenerationError, Exception) as exc:  # noqa: BLE001
@@ -1166,6 +1182,33 @@ async def regenerate_question(job_id: int, question_id: int) -> None:
                     break
             if new_item is None:
                 raise GenerationError("Could not generate a valid replacement question")
+
+            # Log what is about to be overwritten. The replacement happens in
+            # place, so without this the rejected question - the clearest
+            # "this one was wrong" label the app produces - is simply gone.
+            db.add(
+                AIFeedback(
+                    kind=AIFeedbackKind.question_regenerated,
+                    artifact_id=artifact.id,
+                    question_id=question.id,
+                    rejected={
+                        "prompt": question.prompt,
+                        "qtype": str(question.qtype),
+                        "options": question.options,
+                        "answer": question.answer,
+                        "explanation": question.explanation,
+                    },
+                    preferred={
+                        "prompt": new_item["prompt"],
+                        "qtype": str(question.qtype),
+                        "options": new_item.get("options"),
+                        "answer": _question_answer(new_item),
+                        "explanation": new_item.get("explanation"),
+                    },
+                    model_name=artifact.model_name,
+                    prompt_version=prompts.PROMPT_VERSION,
+                )
+            )
 
             # Replace in place — same ord keeps the citation item_ref stable.
             question.prompt = new_item["prompt"]
