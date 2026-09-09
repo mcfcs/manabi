@@ -83,6 +83,11 @@ class Course(Base, TimestampMixin):
     canvas_course_id: Mapped[int | None] = mapped_column(BigInteger)
     meeting_url: Mapped[str | None] = mapped_column(String(512))  # gmeet/zoom
     cover_image_path: Mapped[str | None] = mapped_column(String(1024))  # cosmetic card cover
+    # Credit units — the weight this course carries in the term QPI.
+    units: Mapped[float] = mapped_column(Float, nullable=False, default=3.0)
+    # This course's letter scheme: {"A": 93, "B+": 87, ...} for the six graded
+    # letters (F is implicit, below D). NULL until taken from the syllabus.
+    grade_cutoffs: Mapped[dict | None] = mapped_column(JSONB)
 
     modules: Mapped[list["Module"]] = relationship(
         back_populates="course", order_by="Module.position"
@@ -722,6 +727,65 @@ class CutEntry(Base, TimestampMixin):
     __table_args__ = (Index("ix_cut_entries_course_id", "course_id"),)
 
 
+class GradeComponent(Base, TimestampMixin):
+    """One weighted section of a course's syllabus breakdown ("Quizzes 30%").
+
+    Weights are the syllabus', not Canvas's — Canvas group weights are unset on
+    most courses. A component with nothing graded is left out of the standing
+    and the rest are renormalised (manabi_server.grades)."""
+
+    __tablename__ = "grade_components"
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    course_id: Mapped[int] = mapped_column(
+        BigInteger, ForeignKey("courses.id", ondelete="CASCADE"), nullable=False
+    )
+    name: Mapped[str] = mapped_column(String(64), nullable=False)
+    weight: Mapped[float] = mapped_column(Float, nullable=False)  # percent of the final grade
+    position: Mapped[int] = mapped_column(nullable=False, default=0)
+
+    items: Mapped[list["GradeItem"]] = relationship(
+        back_populates="component",
+        order_by="GradeItem.position, GradeItem.id",
+        cascade="all, delete-orphan",
+    )
+
+    __table_args__ = (Index("ix_grade_components_course", "course_id"),)
+
+
+class GradeItem(Base, TimestampMixin):
+    """One score inside a component: points (earned/possible) or a straight
+    percent. `earned is None` on a points row means it is not graded yet, so it
+    is shown but excluded from the average. Optionally mirrors a Canvas
+    assignment, whose score is refreshed on sync."""
+
+    __tablename__ = "grade_items"
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    component_id: Mapped[int] = mapped_column(
+        BigInteger, ForeignKey("grade_components.id", ondelete="CASCADE"), nullable=False
+    )
+    title: Mapped[str] = mapped_column(String(255), nullable=False)
+    earned: Mapped[float | None] = mapped_column(Float)
+    possible: Mapped[float | None] = mapped_column(Float)
+    percent: Mapped[float | None] = mapped_column(Float)  # instead of points
+    canvas_assignment_id: Mapped[int | None] = mapped_column(BigInteger)
+    position: Mapped[int] = mapped_column(nullable=False, default=0)
+
+    component: Mapped["GradeComponent"] = relationship(back_populates="items")
+
+    __table_args__ = (
+        Index("ix_grade_items_component", "component_id"),
+        Index(
+            "uq_grade_items_canvas",
+            "component_id",
+            "canvas_assignment_id",
+            unique=True,
+            postgresql_where=text("canvas_assignment_id IS NOT NULL"),
+        ),
+    )
+
+
 class AppSettings(Base):
     """Single-row app configuration (id always 1)."""
 
@@ -749,6 +813,8 @@ class AppSettings(Base):
     # Manila date of the most recent daily briefing produced (Steven's "good day"
     # digest). NULL = never. Gates once-per-day generation on assistant open.
     last_briefing_date: Mapped[date | None] = mapped_column(Date)
+    # Hide every grade figure behind a blur (click to reveal). Default off.
+    grades_hidden: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
 
 
 class CalendarEvent(Base, TimestampMixin):
