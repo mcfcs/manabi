@@ -25,6 +25,7 @@ import { Announcements } from "./Announcements";
 import { CourseDialog } from "./CourseDialog";
 import { HomeWidgets } from "./HomeWidgets";
 import { StevenLetter } from "./StevenLetter";
+import { TodayPanel } from "./TodayPanel";
 import "./home.css";
 
 function CourseCard({
@@ -162,6 +163,7 @@ export function HomePage() {
   return (
     <div className="home">
       <StevenLetter />
+      <TodayPanel />
       <header className="home-head">
         <h1>Your Courses</h1>
         <button
