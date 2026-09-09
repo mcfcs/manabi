@@ -30,6 +30,7 @@ class SettingsOut(BaseModel):
     chat_autovoice: bool
     general_chat_model: str | None  # Ollama model for the general assistant
     narration_enabled: bool  # Steven narrates readings (auto-recorded after parsing)
+    grades_hidden: bool  # blur every grade figure until clicked
 
 
 class SettingsPatch(BaseModel):
@@ -40,6 +41,7 @@ class SettingsPatch(BaseModel):
     chat_autovoice: bool | None = None
     general_chat_model: str | None = None  # "" clears (→ default model)
     narration_enabled: bool | None = None
+    grades_hidden: bool | None = None
 
 
 async def get_app_settings(db: AsyncSession) -> AppSettings:
@@ -66,6 +68,7 @@ def _out(row: AppSettings) -> SettingsOut:
         chat_autovoice=row.chat_autovoice,
         general_chat_model=row.general_chat_model,
         narration_enabled=row.narration_enabled,
+        grades_hidden=row.grades_hidden,
     )
 
 
@@ -87,6 +90,8 @@ async def patch_settings(data: SettingsPatch, db: AsyncSession = Depends(get_db)
         row.chat_autovoice = data.chat_autovoice
     if data.narration_enabled is not None:
         row.narration_enabled = data.narration_enabled
+    if data.grades_hidden is not None:
+        row.grades_hidden = data.grades_hidden
     if data.general_chat_model is not None:
         row.general_chat_model = data.general_chat_model.strip() or None
     if data.gcal_ics_url is not None:

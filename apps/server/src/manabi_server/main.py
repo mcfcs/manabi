@@ -24,6 +24,7 @@ from manabi_server.api import (
     courses,
     cuts,
     documents,
+    grades,
     health,
     jobs,
     links,
@@ -104,6 +105,7 @@ app.include_router(calendar.router)
 app.include_router(tasks.router)
 app.include_router(push.router)
 app.include_router(review.router)
+app.include_router(grades.router)
 app.include_router(search.router)
 app.include_router(stats.router)
 app.include_router(voice.router)

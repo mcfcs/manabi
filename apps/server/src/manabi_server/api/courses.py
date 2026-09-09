@@ -29,6 +29,7 @@ class CourseIn(BaseModel):
     accent_color: str | None = None
     meeting_url: str | None = None
     canvas_course_id: int | None = None
+    units: float | None = None  # credit units; QPI weight
 
 
 class CoursePatch(BaseModel):
@@ -40,6 +41,7 @@ class CoursePatch(BaseModel):
     accent_color: str | None = None
     meeting_url: str | None = None
     canvas_course_id: int | None = None
+    units: float | None = None
 
 
 class CourseOut(BaseModel):
@@ -58,6 +60,7 @@ class CourseOut(BaseModel):
     canvas_course_id: int | None = None
     meeting_url: str | None = None
     cover_image_url: str | None = None
+    units: float = 3.0  # credit units; QPI weight
 
 
 class ReorderIn(BaseModel):
@@ -89,6 +92,7 @@ def _course_out(
         canvas_url=canvas_course_url(course.canvas_course_id),
         canvas_course_id=course.canvas_course_id,
         meeting_url=course.meeting_url,
+        units=course.units,
         cover_image_url=(
             f"/api/courses/{course.id}/cover/{course.cover_image_path.rsplit('/', 1)[-1]}"
             if course.cover_image_path
@@ -207,7 +211,10 @@ async def create_course(
             select(func.coalesce(func.max(Course.position), -1)).where(Course.user_id == user.id)
         )
     ).scalar_one()
-    course = Course(user_id=user.id, position=max_pos + 1, **data.model_dump())
+    fields = data.model_dump()
+    if fields.get("units") is None:
+        fields.pop("units", None)  # let the column default (3) stand
+    course = Course(user_id=user.id, position=max_pos + 1, **fields)
     db.add(course)
     await _commit_course(db, user, data.canvas_course_id)
     return _course_out(course, 0)
