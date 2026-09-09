@@ -424,6 +424,23 @@ export interface NarrationSegmentOut {
   duration_ms: number | null;
 }
 
+export interface JobListItem {
+  id: number;
+  job_type: string;
+  queue: string;
+  status: string; // queued | running | succeeded | failed | cancelled
+  progress_note: string | null;
+  error: string | null;
+  created_at: string;
+  started_at: string | null;
+  finished_at: string | null;
+  module_id: number | null;
+  module_title: string | null;
+  course_id: number | null;
+  document_id: number | null;
+  document_title: string | null;
+}
+
 export interface NarrationOut {
   status: string | null; // null | scripted | synthesizing | ready | failed
   error: string | null;

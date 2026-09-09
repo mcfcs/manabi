@@ -1,0 +1,127 @@
+.activity-page {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-3);
+  max-width: 820px;
+  margin: 0 auto;
+}
+.activity-head {
+  display: flex;
+  align-items: baseline;
+  gap: var(--s-3);
+  flex-wrap: wrap;
+}
+.activity-head h1 {
+  font-family: var(--font-display);
+  font-size: 26px;
+  margin: 0;
+}
+.activity-filters {
+  display: flex;
+  gap: var(--s-1);
+  margin-left: auto;
+}
+.activity-filters .btn.active {
+  background: var(--accent-blue-wash);
+  color: var(--accent-blue-deep);
+  border-color: var(--accent-blue);
+}
+.activity-hint {
+  margin: 0;
+  font-size: 13px;
+  color: var(--ink-soft);
+  max-width: 62ch;
+}
+
+.activity-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--rule);
+  border-radius: var(--radius);
+  background: var(--surface-raised);
+  overflow: hidden;
+}
+.activity-row {
+  display: flex;
+  align-items: center;
+  gap: var(--s-3);
+  padding: var(--s-3);
+  border-bottom: 1px solid var(--rule);
+  min-height: var(--touch-target);
+}
+.activity-row:last-child {
+  border-bottom: none;
+}
+.activity-icon {
+  flex-shrink: 0;
+  display: flex;
+  color: var(--ink-faint);
+}
+.activity-row.is-failed .activity-icon {
+  color: var(--stale);
+}
+.activity-row.is-succeeded .activity-icon {
+  color: var(--accent-blue);
+}
+
+.activity-text {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+.activity-title {
+  font-size: 13.5px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.activity-where {
+  color: var(--ink-faint);
+}
+.activity-error,
+.activity-note {
+  font-size: 12px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.activity-error {
+  color: var(--stale);
+}
+.activity-note {
+  color: var(--ink-faint);
+}
+
+.activity-meta {
+  flex-shrink: 0;
+  display: flex;
+  gap: var(--s-2);
+  font-size: 11.5px;
+  color: var(--ink-faint);
+}
+
+@media (max-width: 767px) {
+  .activity-filters {
+    margin-left: 0;
+    flex-basis: 100%;
+  }
+  .activity-row {
+    flex-wrap: wrap;
+  }
+  .activity-text {
+    flex-basis: calc(100% - 2rem);
+  }
+  .activity-title,
+  .activity-error,
+  .activity-note {
+    white-space: normal;
+  }
+  .activity-meta {
+    margin-left: calc(14px + var(--s-3));
+  }
+}

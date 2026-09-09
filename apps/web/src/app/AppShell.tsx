@@ -59,11 +59,17 @@ function AiStatus() {
     refetchInterval: 30_000,
   });
   const online = health.data?.ai_node.online === true;
+  // Doubles as the way into the run history — a failed generation used to
+  // leave no trace anywhere once you navigated away.
   return (
-    <div className="ai-status" title={online ? "AI node online" : "AI node offline"}>
+    <Link
+      to="/activity"
+      className="ai-status"
+      title={`${online ? "AI node online" : "AI node offline"} — see recent activity`}
+    >
       <span className={online ? "status-dot online" : "status-dot"} />
       <span className="ai-status-label">AI</span>
-    </div>
+    </Link>
   );
 }
 

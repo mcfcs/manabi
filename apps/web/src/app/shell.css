@@ -148,6 +148,14 @@
   gap: var(--s-2);
   font-size: 12px;
   color: var(--ink-soft);
+  border-radius: var(--radius-sm);
+  padding: 2px 4px;
+  margin: -2px -4px;
+}
+.ai-status:hover {
+  background: var(--surface);
+  color: var(--ink);
+  text-decoration: none;
 }
 
 .content {

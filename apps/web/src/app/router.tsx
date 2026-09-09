@@ -12,6 +12,7 @@ import { HomePage } from "../features/courses/HomePage";
 import { ModuleWorkspace } from "../features/modules/ModuleWorkspace";
 import { SchedulePage } from "../features/schedule/SchedulePage";
 import { ReviewPage } from "../features/review/ReviewPage";
+import { ActivityPage } from "../features/activity/ActivityPage";
 import { GradesPage } from "../features/grades/GradesPage";
 import { TasksPage } from "../features/tasks/TasksPage";
 import { DocumentViewer } from "../features/viewer/DocumentViewer";
@@ -134,6 +135,12 @@ const gradesRoute = createRoute({
   component: GradesPage,
 });
 
+const activityRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "/activity",
+  component: ActivityPage,
+});
+
 const assistantRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "/assistant",
@@ -150,6 +157,7 @@ const routeTree = rootRoute.addChildren([
   tasksRoute,
   reviewRoute,
   gradesRoute,
+  activityRoute,
   assistantRoute,
 ]);
 

@@ -1,7 +1,8 @@
 from datetime import UTC, datetime
+from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException
-from manabi_core.models import Job, JobQueue, JobStatus, User
+from fastapi import APIRouter, Depends, HTTPException, Query
+from manabi_core.models import Document, Job, JobQueue, JobStatus, Module, User
 from pydantic import BaseModel
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -59,8 +60,6 @@ async def global_active_jobs(
 ) -> list[dict]:
     """All in-flight AI jobs with module context — powers the sidebar
     activity indicator."""
-    from manabi_core.models import Module
-
     rows = (
         await db.execute(
             select(Job, Module.title, Module.course_id)
@@ -84,6 +83,69 @@ async def global_active_jobs(
             "course_id": course_id,
         }
         for j, title, course_id in rows
+    ]
+
+
+class JobListItem(BaseModel):
+    """A run, for the activity list. `preview` is deliberately absent: it is the
+    rolling tail of a model's output and can be large."""
+
+    id: int
+    job_type: str
+    queue: JobQueue
+    status: JobStatus
+    progress_note: str | None
+    error: str | None
+    created_at: datetime
+    started_at: datetime | None
+    finished_at: datetime | None
+    module_id: int | None
+    module_title: str | None
+    course_id: int | None
+    document_id: int | None
+    document_title: str | None
+
+
+@router.get("")
+async def list_jobs(
+    status: Annotated[list[JobStatus] | None, Query()] = None,
+    limit: Annotated[int, Query(ge=1, le=200)] = 50,
+    user: User = Depends(get_default_user),
+    db: AsyncSession = Depends(get_db),
+) -> list[JobListItem]:
+    """Recent runs, newest first. Without this a generation that failed while
+    you were on another page left no trace anywhere: /active only ever shows
+    queued|running, and the per-tab failure banners key off a job id held in
+    component state, which a reload throws away."""
+    q = (
+        select(Job, Module.title, Module.course_id, Document.filename)
+        .outerjoin(Module, Module.id == Job.module_id)
+        .outerjoin(Document, Document.id == Job.document_id)
+        .where(Job.user_id == user.id)
+        .order_by(Job.id.desc())
+        .limit(limit)
+    )
+    if status:
+        q = q.where(Job.status.in_(status))
+    rows = (await db.execute(q)).all()
+    return [
+        JobListItem(
+            id=j.id,
+            job_type=j.job_type,
+            queue=j.queue,
+            status=j.status,
+            progress_note=j.progress_note,
+            error=j.error,
+            created_at=j.created_at,
+            started_at=j.started_at,
+            finished_at=j.finished_at,
+            module_id=j.module_id,
+            module_title=title,
+            course_id=course_id,
+            document_id=j.document_id,
+            document_title=filename,
+        )
+        for j, title, course_id, filename in rows
     ]
 
 

@@ -19,7 +19,7 @@ called outside the `try` in every worker task, so a failure there leaves the row
 untouched with `error = NULL`.
 """
 
-from datetime import timedelta
+from datetime import UTC, datetime, timedelta
 
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -40,7 +40,7 @@ SET status      = 'failed',
     error       = COALESCE(j.error, :msg),
     finished_at = COALESCE(j.finished_at, now())
 WHERE j.status IN ('queued', 'running')
-  AND j.created_at < now() - CAST(:min_age AS interval)
+  AND j.created_at < :cutoff
   AND (
         j.procrastinate_job_id IS NULL
      OR NOT EXISTS (
@@ -71,9 +71,12 @@ async def reap_dead_jobs(db: AsyncSession) -> list[int]:
     rows = (
         await db.execute(
             text(_SQL),
+            # The cutoff is computed here rather than as `now() - :interval`:
+            # bound that way Postgres resolves the subtraction against the
+            # timestamptz-minus-timestamptz overload and the comparison fails.
             {
                 "msg": REAPED_ERROR,
-                "min_age": f"{int(MIN_AGE.total_seconds())} seconds",
+                "cutoff": datetime.now(UTC) - MIN_AGE,
                 "terminal": list(TERMINAL),
             },
         )
