@@ -41,10 +41,12 @@ def test_course_out_carries_id_and_derived_url():
         canvas_course_id=67328,
         meeting_url=None,
         cover_image_path=None,
+        units=3.0,
     )
     out = _course_out(course, module_count=2)
     assert isinstance(out, CourseOut)
     assert out.canvas_course_id == 67328
+    assert out.units == 3.0
     assert out.canvas_url is not None and out.canvas_url.endswith("/courses/67328")
     course.canvas_course_id = None
     unlinked = _course_out(course, module_count=2)
