@@ -66,6 +66,14 @@ never adds or removes a row, so re-syncing is idempotent. An assignment can only
 be linked once per course; a second attempt is refused with a 409 so nothing is
 double counted. An assignment deleted in Canvas leaves its row untouched.
 
+## Where it lives
+
+Grades appear on the **Grades page only** — never on a course page, so opening a
+course never puts a mark in front of you. Each row on `/grades` shows a course's
+standing and expands into its editor: sections, scores, the scheme and the
+Canvas picker. One course is open at a time, and the editor links back to the
+course itself.
+
 ## Hiding
 
 Settings → Grades → **Hide grades** blurs every percentage, letter and the QPI
