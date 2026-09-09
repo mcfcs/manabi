@@ -286,12 +286,21 @@ async def delete_course(
             },
         )
 
+    # Same as the module path: the cascade removes document rows without
+    # touching a single file, so note what they own first.
+    doomed = (
+        await db.execute(
+            select(Document.id, Document.storage_path).where(Document.module_id.in_(module_ids))
+        )
+    ).all() if module_ids else []
+
     # Modules FK is RESTRICT by design — deletion is always this explicit path.
     if module_ids:
         await db.execute(delete(Module).where(Module.id.in_(module_ids)))
     await db.delete(course)
     await db.commit()
     files.delete_course_files(course.id)
+    files.delete_files_for_documents(doomed)
     return {"ok": True}
 
 

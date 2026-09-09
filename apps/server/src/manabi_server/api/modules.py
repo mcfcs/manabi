@@ -6,6 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from manabi_server.db import get_db
 from manabi_server.security import get_default_user, require_csrf
+from manabi_server.storage import files
 
 router = APIRouter(prefix="/api", tags=["modules"])
 
@@ -413,6 +414,14 @@ async def delete_module(
                 "notes": 1 if module.id in noted else 0,
             },
         )
+    # The cascade drops the document rows in the database and tells the
+    # filesystem nothing, so collect what they own before it runs.
+    doomed = (
+        await db.execute(
+            select(Document.id, Document.storage_path).where(Document.module_id == module.id)
+        )
+    ).all()
     await db.delete(module)  # documents/chunks/notes cascade via FK
     await db.commit()
+    files.delete_files_for_documents(doomed)
     return {"ok": True}

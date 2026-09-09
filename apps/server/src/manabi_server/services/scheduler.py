@@ -10,6 +10,7 @@ Per tick:
   2a. Canvas task sync when last success is older than 10 minutes.
   2b. Canvas announcement poll (~30 min, daytime).
   2c. Reap jobs whose Procrastinate task is already over (they block features).
+  2d. Purge documents soft-deleted longer ago than the retention window.
   3. Optional class-starting-soon pushes (app_settings.class_reminders).
 """
 
@@ -21,6 +22,7 @@ from manabi_core.models import AppSettings, Course, ScheduleBlock, StudyTask
 from sqlalchemy import select
 
 from manabi_server.config import get_settings
+from manabi_server.services.doc_purge import purge_deleted_documents
 from manabi_server.services.gcal import fetch_gcal
 from manabi_server.services.job_reaper import reap_dead_jobs
 from manabi_server.services.push import send_to_all
@@ -153,6 +155,14 @@ async def _tick(sessionmaker) -> None:
                 log.info("reaped %d dead job(s): %s", len(reaped), reaped)
         except Exception:  # noqa: BLE001 — cleanup must never kill the tick
             log.exception("job reap failed")
+
+        # 2d. purge long-deleted documents (and the files nothing else frees)
+        try:
+            purged = await purge_deleted_documents(db)
+            if purged:
+                log.info("purged %d soft-deleted document(s)", purged)
+        except Exception:  # noqa: BLE001 — cleanup must never kill the tick
+            log.exception("document purge failed")
 
         # 3. class reminders (10–15 min ahead; 5-min tick → fires once)
         if app is not None and app.class_reminders:
