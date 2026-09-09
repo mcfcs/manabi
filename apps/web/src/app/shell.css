@@ -442,3 +442,33 @@
     padding: var(--s-1) var(--s-2);
   }
 }
+
+/* ── A write failed: say so once, centrally ───────────────────────────────
+   Fixed to the body, above the bottom nav on phones. */
+
+.error-toast {
+  position: fixed;
+  left: 50%;
+  transform: translateX(-50%);
+  bottom: calc(var(--bottom-nav-h, 0px) + var(--s-4));
+  z-index: 90;
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  max-width: min(560px, calc(100vw - 2 * var(--s-4)));
+  padding: var(--s-2) var(--s-3);
+  border: 1px solid var(--stale);
+  border-radius: var(--radius);
+  background: var(--surface-raised);
+  color: var(--ink);
+  box-shadow: var(--shadow-lg, 0 6px 24px rgb(0 0 0 / 0.18));
+  font-size: 13px;
+}
+.error-toast > svg {
+  flex-shrink: 0;
+  color: var(--stale);
+}
+.error-toast-text {
+  flex: 1;
+  min-width: 0;
+}

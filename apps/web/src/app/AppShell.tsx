@@ -1,6 +1,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { Link, useRouterState } from "@tanstack/react-router";
 import {
+  AlertTriangle,
   CalendarClock,
   CalendarDays,
   GraduationCap,
@@ -12,6 +13,7 @@ import {
   Search,
   Settings2,
   Sparkles,
+  X,
 } from "lucide-react";
 import { type ReactNode, useEffect, useState } from "react";
 
@@ -108,6 +110,30 @@ function Activity() {
         {first.module_title ? ` · ${first.module_title.slice(0, 16)}` : ""}
       </span>
     </Link>
+  );
+}
+
+/** Central report for a failed write — see the MutationCache in main.tsx. */
+function ErrorToast() {
+  const [msg, setMsg] = useState<string | null>(null);
+  useEffect(() => {
+    const show = (e: Event) => {
+      setMsg((e as CustomEvent<string>).detail);
+      window.clearTimeout((show as unknown as { t?: number }).t);
+      (show as unknown as { t?: number }).t = window.setTimeout(() => setMsg(null), 9000);
+    };
+    window.addEventListener("manabi-error", show);
+    return () => window.removeEventListener("manabi-error", show);
+  }, []);
+  if (!msg) return null;
+  return (
+    <div className="error-toast" role="alert">
+      <AlertTriangle size={15} strokeWidth={1.75} />
+      <span className="error-toast-text">{msg}</span>
+      <button className="icon-btn" onClick={() => setMsg(null)} aria-label="Dismiss">
+        <X size={14} strokeWidth={1.75} />
+      </button>
+    </div>
   );
 }
 
@@ -314,6 +340,7 @@ export function AppShell({
       </nav>
 
       <main className="content">{children}</main>
+      <ErrorToast />
       <UpdateToast />
       {settingsOpen && <SettingsDialog onClose={() => setSettingsOpen(false)} />}
       {searchOpen && <SearchPalette onClose={() => setSearchOpen(false)} />}
