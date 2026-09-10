@@ -527,3 +527,134 @@ a.course-file-name:hover {
   border-radius: 999px;
   padding: 1px 6px;
 }
+
+/* ── This course at a glance: meetings, tasks, attendance ─────────────────
+   Each of these otherwise lived only on an all-courses page elsewhere.
+   Grades deliberately stay off the course page — see docs/grades.md. */
+
+.course-glance {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: var(--s-3);
+  margin-bottom: var(--s-5);
+}
+.glance-card {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-2);
+  padding: var(--s-3);
+  border: 1px solid var(--rule);
+  border-radius: var(--radius);
+  background: var(--surface-raised);
+  min-width: 0;
+}
+.glance-head {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  margin: 0;
+  font-family: var(--font-ui);
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--ink-faint);
+}
+.glance-head > svg {
+  flex-shrink: 0;
+}
+.glance-more {
+  margin-left: auto;
+  font-size: 10.5px;
+  text-transform: none;
+  letter-spacing: 0;
+  color: var(--ink-faint);
+}
+.glance-empty {
+  margin: 0;
+  font-size: 12.5px;
+  color: var(--ink-faint);
+}
+.glance-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+.glance-list li {
+  display: flex;
+  align-items: baseline;
+  gap: var(--s-2);
+  min-width: 0;
+  font-size: 13px;
+}
+.glance-when {
+  flex-shrink: 0;
+  width: 6.5ch;
+  font-size: 11px;
+  color: var(--ink-faint);
+}
+.glance-when.urgent {
+  color: var(--stale);
+}
+.glance-main {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.glance-join {
+  flex-shrink: 0;
+  color: var(--ink-faint);
+}
+
+.glance-cuts {
+  margin: 0;
+  font-size: 14px;
+}
+.glance-cuts b {
+  font-size: 22px;
+  font-weight: 650;
+  line-height: 1;
+}
+.glance-cuts.near b {
+  color: var(--stale);
+}
+.glance-cuts.at-risk b {
+  color: var(--accent-red, var(--stale));
+}
+.glance-warn {
+  margin: 0;
+  font-size: 12px;
+  color: var(--stale);
+}
+.glance-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--s-1);
+}
+.glance-log {
+  align-self: flex-start;
+  margin-top: auto;
+}
+
+@media (max-width: 1023px) {
+  .course-glance {
+    grid-template-columns: 1fr 1fr;
+  }
+  .course-glance .glance-card:last-child {
+    grid-column: 1 / -1;
+  }
+}
+@media (max-width: 767px) {
+  .course-glance {
+    grid-template-columns: 1fr;
+    gap: var(--s-2);
+  }
+  .course-glance .glance-card:last-child {
+    grid-column: auto;
+  }
+}

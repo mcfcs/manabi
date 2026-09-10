@@ -394,6 +394,10 @@
   font-size: 13px;
   color: var(--ink-faint);
 }
+.cuts-total.at-risk {
+  color: var(--stale);
+  font-weight: 650;
+}
 .cuts-total.used {
   color: var(--ink);
   font-weight: 600;

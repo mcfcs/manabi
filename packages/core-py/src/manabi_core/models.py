@@ -85,6 +85,9 @@ class Course(Base, TimestampMixin):
     cover_image_path: Mapped[str | None] = mapped_column(String(1024))  # cosmetic card cover
     # Credit units — the weight this course carries in the term QPI.
     units: Mapped[float] = mapped_column(Float, nullable=False, default=3.0)
+    # Absences allowed before the course is at risk. NULL = not recorded, which
+    # reads differently from an allowance of zero.
+    cut_allowance: Mapped[float | None] = mapped_column(Float)
     # This course's letter scheme: {"A": 93, "B+": 87, ...} for the six graded
     # letters (F is implicit, below D). NULL until taken from the syllabus.
     grade_cutoffs: Mapped[dict | None] = mapped_column(JSONB)

@@ -30,6 +30,7 @@ class CourseIn(BaseModel):
     meeting_url: str | None = None
     canvas_course_id: int | None = None
     units: float | None = None  # credit units; QPI weight
+    cut_allowance: float | None = None  # absences allowed before the course is at risk
 
 
 class CoursePatch(BaseModel):
@@ -42,6 +43,7 @@ class CoursePatch(BaseModel):
     meeting_url: str | None = None
     canvas_course_id: int | None = None
     units: float | None = None
+    cut_allowance: float | None = None
 
 
 class CourseOut(BaseModel):
@@ -61,6 +63,7 @@ class CourseOut(BaseModel):
     meeting_url: str | None = None
     cover_image_url: str | None = None
     units: float = 3.0  # credit units; QPI weight
+    cut_allowance: float | None = None
 
 
 class ReorderIn(BaseModel):
@@ -93,6 +96,7 @@ def _course_out(
         canvas_course_id=course.canvas_course_id,
         meeting_url=course.meeting_url,
         units=course.units,
+        cut_allowance=course.cut_allowance,
         cover_image_url=(
             f"/api/courses/{course.id}/cover/{course.cover_image_path.rsplit('/', 1)[-1]}"
             if course.cover_image_path

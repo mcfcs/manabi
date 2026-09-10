@@ -40,6 +40,9 @@ export function CourseDialog({
   const [instructor, setInstructor] = useState(course?.instructor ?? "");
   const [meetingUrl, setMeetingUrl] = useState(course?.meeting_url ?? "");
   const [units, setUnits] = useState(String(course?.units ?? 3));
+  const [cutAllowance, setCutAllowance] = useState(
+    course?.cut_allowance == null ? "" : String(course.cut_allowance),
+  );
   const [accent, setAccent] = useState(course?.accent_color ?? ACCENTS[1]);
   const [confirming, setConfirming] = useState<DeleteConsequences | null>(null);
   const [cover, setCover] = useState(course?.cover_image_url ?? null);
@@ -141,6 +144,8 @@ export function CourseDialog({
       meeting_url: meetingUrl.trim() || null,
       accent_color: accent,
       units: Number(units) > 0 ? Number(units) : 3,
+      // Blank means "not recorded" — distinct from an allowance of zero.
+      cut_allowance: cutAllowance.trim() === "" ? null : Number(cutAllowance),
       canvas_course_id: effectiveCanvasId,
     });
   }
@@ -236,6 +241,27 @@ export function CourseDialog({
             onChange={(e) => setUnits(e.target.value)}
           />
           <p className="settings-hint">How much this course weighs in the term QPI.</p>
+        </div>
+        <div>
+          <label className="field-label" htmlFor="course-cuts">
+            Allowed absences (optional)
+          </label>
+          <input
+            id="course-cuts"
+            className="input"
+            type="number"
+            inputMode="decimal"
+            min="0"
+            max="30"
+            step="0.5"
+            value={cutAllowance}
+            onChange={(e) => setCutAllowance(e.target.value)}
+            placeholder="—"
+          />
+          <p className="settings-hint">
+            What the syllabus allows before this course is at risk. Leave blank if you would
+            rather not track it; a late counts as half.
+          </p>
         </div>
         <div>
           <label className="field-label" htmlFor="course-meet">

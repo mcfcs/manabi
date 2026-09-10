@@ -117,8 +117,20 @@ function CutsSection() {
                     style={{ background: c.accent_color ?? "var(--accent-blue)" }}
                   />
                   <span className="cuts-code">{c.code}</span>
-                  <span className={`cuts-total${c.total > 0 ? " used" : ""}`}>
-                    {fmtCuts(c.total)} cut{c.total === 1 ? "" : "s"} used
+                  <span
+                    className={`cuts-total${
+                      c.allowance != null && c.total >= c.allowance
+                        ? " at-risk"
+                        : c.total > 0
+                          ? " used"
+                          : ""
+                    }`}
+                  >
+                    {/* Without the allowance this number had no scale: three
+                        cuts is fine in one course and terminal in another. */}
+                    {c.allowance != null
+                      ? `${fmtCuts(c.total)} of ${fmtCuts(c.allowance)} cuts`
+                      : `${fmtCuts(c.total)} cut${c.total === 1 ? "" : "s"} used`}
                   </span>
                   {c.entries.length > 0 && (
                     <span className="cuts-count-hint">

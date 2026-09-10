@@ -42,6 +42,7 @@ def test_course_out_carries_id_and_derived_url():
         meeting_url=None,
         cover_image_path=None,
         units=3.0,
+        cut_allowance=None,
     )
     out = _course_out(course, module_count=2)
     assert isinstance(out, CourseOut)

@@ -23,6 +23,7 @@ import { CanvasFilesModal } from "./CanvasFilesModal";
 import { CanvasSyncModal } from "./CanvasSyncModal";
 import { CourseDialog } from "./CourseDialog";
 import { CourseFiles } from "./CourseFiles";
+import { CourseGlance } from "./CourseGlance";
 import { CourseLinks } from "./CourseLinks";
 import {
   api,
@@ -344,6 +345,8 @@ export function CoursePage() {
           <Trash2 size={16} strokeWidth={1.5} />
         </button>
       </header>
+
+      <CourseGlance courseId={Number(courseId)} />
 
       <Announcements courseId={Number(courseId)} />
 

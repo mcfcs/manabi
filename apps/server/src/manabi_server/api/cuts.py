@@ -40,6 +40,7 @@ class CourseCutsOut(BaseModel):
     name: str | None
     accent_color: str | None
     total: float  # cuts used (a late counts 0.5)
+    allowance: float | None  # allowed before the course is at risk; None = unrecorded
     entries: list[CutOut]  # newest first
 
 
@@ -95,6 +96,7 @@ async def list_cuts(
             name=c.name,
             accent_color=c.accent_color,
             total=cuts_used([e.kind for e in by_course.get(c.id, [])]),
+            allowance=c.cut_allowance,
             entries=[_cut_out(e) for e in by_course.get(c.id, [])],
         )
         for c in courses

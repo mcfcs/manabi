@@ -99,6 +99,7 @@ export interface CourseOut {
   cover_image_url: string | null;
   /** credit units — this course's weight in the term QPI */
   units: number;
+  cut_allowance: number | null;
 }
 
 // ── Grades: syllabus weights, scores, letters and QPI ──────────────────
@@ -228,6 +229,7 @@ export interface CourseCutsOut {
   name: string | null;
   accent_color: string | null;
   total: number; // cuts used — a late counts 0.5
+  allowance: number | null; // allowed before the course is at risk; null = unrecorded
   entries: CutOut[]; // newest first
 }
 
