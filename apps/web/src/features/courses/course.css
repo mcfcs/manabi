@@ -513,3 +513,17 @@ a.course-file-name:hover {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+
+/* ── Start a session scoped to this course ─────────────────────────────── */
+
+.course-review-btn {
+  flex-shrink: 0;
+}
+.course-review-count {
+  font-size: 11px;
+  font-weight: 650;
+  color: var(--accent-blue-deep);
+  background: var(--accent-blue-wash);
+  border-radius: 999px;
+  padding: 1px 6px;
+}

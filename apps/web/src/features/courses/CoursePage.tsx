@@ -7,6 +7,7 @@ import {
   CloudDownload,
   ExternalLink,
   FileText,
+  Layers,
   Link2,
   Pencil,
   Plus,
@@ -29,6 +30,7 @@ import {
   type CourseOut,
   type DeleteConsequences,
   type ModuleOut,
+  type ReviewScopeOut,
 } from "../../lib/api";
 import "./course.css";
 
@@ -175,6 +177,29 @@ function ModuleRow({
   );
 }
 
+/** Start a session narrowed to this course. Review was otherwise only
+ * reachable as one undifferentiated pile of every deck at once. */
+function ReviewThisCourse({ courseId }: { courseId: number }) {
+  const scopes = useQuery({
+    queryKey: ["review-scopes"],
+    queryFn: () => api.get<ReviewScopeOut[]>("/api/review/scopes"),
+    staleTime: 60_000,
+  });
+  const mine = scopes.data?.find((s) => s.course_id === courseId);
+  if (!mine || mine.total === 0) return null;
+  return (
+    <Link
+      to="/review"
+      search={{ course: courseId }}
+      className="btn course-review-btn"
+      title={`${mine.due} due of ${mine.total} cards in this course`}
+    >
+      <Layers size={15} strokeWidth={1.75} /> Review
+      {mine.due > 0 && <span className="course-review-count">{mine.due}</span>}
+    </Link>
+  );
+}
+
 export function CoursePage() {
   const { courseId } = useParams({ from: "/courses/$courseId" });
   const navigate = useNavigate();
@@ -262,6 +287,7 @@ export function CoursePage() {
           <h1>{course ? `${course.code} · ${course.name}` : "…"}</h1>
           {course?.term && <p className="course-head-meta">{course.term}</p>}
         </div>
+        {course && <ReviewThisCourse courseId={course.id} />}
         {course?.meeting_url && (
           <a
             className="icon-btn"

@@ -424,6 +424,14 @@ export interface NarrationSegmentOut {
   duration_ms: number | null;
 }
 
+export interface ReviewScopeOut {
+  course_id: number;
+  code: string;
+  accent_color: string | null;
+  due: number;
+  total: number;
+}
+
 export interface JobListItem {
   id: number;
   job_type: string;

@@ -127,6 +127,13 @@ const reviewRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "/review",
   component: ReviewPage,
+  validateSearch: (
+    search: Record<string, unknown>,
+  ): { course?: number; cram?: boolean } => ({
+    ...(Number(search.course) >= 1 ? { course: Number(search.course) } : {}),
+    // cram only means anything inside a scope; the server rejects it otherwise
+    ...(search.cram === true || search.cram === "true" ? { cram: true } : {}),
+  }),
 });
 
 const gradesRoute = createRoute({

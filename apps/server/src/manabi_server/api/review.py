@@ -49,6 +49,7 @@ class ReviewCardOut(BaseModel):
     back: str
     module_id: int
     module_title: str
+    course_id: int | None
     course_code: str | None
     accent_color: str | None
     reps: int
@@ -84,24 +85,40 @@ def _review_deck_cards():
 async def review_queue(
     limit: int = 60,
     new_offset: int = 0,
+    course_id: int | None = None,
+    module_id: int | None = None,
+    cram: bool = False,
     user: User = Depends(get_default_user),
     db: AsyncSession = Depends(get_db),
 ) -> QueueOut:
     """Today's session: overdue reviews (most overdue, weakest first), then up
     to NEW_CARDS_PER_LOAD never-reviewed cards, both interleaved across
-    modules. `new_offset` pages through the held-back new cards."""
-    today = today_manila()
-    rows = (
-        await db.execute(
-            _review_deck_cards()
-            .join(CardReview, CardReview.flashcard_id == Flashcard.id, isouter=True)
-            .add_columns(CardReview)
-            .where(
-                Course.user_id == user.id,
-                (CardReview.id.is_(None)) | (CardReview.due_date <= today),
-            )
+    modules. `new_offset` pages through the held-back new cards.
+
+    `course_id` / `module_id` narrow the session to one course or module.
+    `cram` additionally drops the due-date filter and the new-card cap, for
+    working through everything in a scope before an exam; it requires a scope,
+    because cramming every deck at once is not a session anyone wants. Ratings
+    schedule normally either way — answering a card early still moves it.
+    """
+    if cram and course_id is None and module_id is None:
+        raise HTTPException(
+            status_code=422, detail="Cramming needs a course or module to work through"
         )
-    ).all()
+    today = today_manila()
+    q = (
+        _review_deck_cards()
+        .join(CardReview, CardReview.flashcard_id == Flashcard.id, isouter=True)
+        .add_columns(CardReview)
+        .where(Course.user_id == user.id)
+    )
+    if not cram:
+        q = q.where((CardReview.id.is_(None)) | (CardReview.due_date <= today))
+    if course_id is not None:
+        q = q.where(Course.id == course_id)
+    if module_id is not None:
+        q = q.where(Module.id == module_id)
+    rows = (await db.execute(q)).all()
     by_id = {f.id: (f, m, c, r) for f, m, c, r in rows}
     ordered, new_total = order_queue(
         (
@@ -113,7 +130,8 @@ async def review_queue(
             )
             for f, m, c, r in rows
         ),
-        new_cap=NEW_CARDS_PER_LOAD,
+        # A scoped cram is a deliberate act, not a daily drip: no new-card cap.
+        new_cap=10**6 if cram else NEW_CARDS_PER_LOAD,
         new_offset=new_offset,
     )
     shown = ordered[: max(1, min(limit, 200))]
@@ -148,6 +166,7 @@ def _card_out(
         back=card.back,
         module_id=module.id,
         module_title=module.title,
+        course_id=course.id,
         course_code=course.code,
         accent_color=course.accent_color,
         reps=state.reps,
@@ -155,6 +174,50 @@ def _card_out(
         interval_days=state.interval_days,
         previews=preview_intervals(state, today),
     )
+
+
+class ScopeOut(BaseModel):
+    """One course's share of the deck, for choosing what to work through."""
+
+    course_id: int
+    code: str
+    accent_color: str | None
+    due: int  # cards a normal session would draw from
+    total: int  # every active card, i.e. what a cram would cover
+
+
+@router.get("/scopes")
+async def review_scopes(
+    user: User = Depends(get_default_user), db: AsyncSession = Depends(get_db)
+) -> list[ScopeOut]:
+    """Per-course counts so a session can be narrowed before an exam. The rail
+    badge is a single number across everything, which says nothing about which
+    course is behind."""
+    today = today_manila()
+    rows = (
+        await db.execute(
+            _review_deck_cards()
+            .join(CardReview, CardReview.flashcard_id == Flashcard.id, isouter=True)
+            .add_columns(CardReview.id, CardReview.due_date)
+            .where(Course.user_id == user.id)
+        )
+    ).all()
+    by_course: dict[int, ScopeOut] = {}
+    for _card, _module, course, review_id, due_date in rows:
+        row = by_course.setdefault(
+            course.id,
+            ScopeOut(
+                course_id=course.id,
+                code=course.code,
+                accent_color=course.accent_color,
+                due=0,
+                total=0,
+            ),
+        )
+        row.total += 1
+        if review_id is None or (due_date is not None and due_date <= today):
+            row.due += 1
+    return sorted(by_course.values(), key=lambda r: (-r.due, r.code))
 
 
 @router.get("/due-count")

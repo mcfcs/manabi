@@ -1,8 +1,9 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { Link, useNavigate, useSearch } from "@tanstack/react-router";
 import { Layers, Undo2 } from "lucide-react";
 import { useEffect, useState } from "react";
 
-import { api } from "../../lib/api";
+import { api, type ReviewScopeOut } from "../../lib/api";
 import { formatDays } from "./formatDays";
 import { LeechesPanel } from "./LeechesPanel";
 import { ReviewStats } from "./ReviewStats";
@@ -14,6 +15,7 @@ interface ReviewCard {
   back: string;
   module_id: number;
   module_title: string;
+  course_id: number | null;
   course_code: string | null;
   accent_color: string | null;
   reps: number;
@@ -39,6 +41,62 @@ const RATINGS = [
   { key: "easy", label: "Easy", cls: "easy", hotkey: "4" },
 ];
 
+function ScopeBar({
+  scopes,
+  courseId,
+  cram,
+  onPick,
+}: {
+  scopes: ReviewScopeOut[];
+  courseId?: number;
+  cram: boolean;
+  onPick: (course: number | undefined, cram: boolean) => void;
+}) {
+  if (scopes.length === 0) return null;
+  const picked = scopes.find((s) => s.course_id === courseId);
+  return (
+    <div className="review-scopes" role="group" aria-label="What to review">
+      <button
+        className={`btn btn-sm${courseId == null ? " active" : ""}`}
+        onClick={() => onPick(undefined, false)}
+        aria-pressed={courseId == null}
+      >
+        Everything
+      </button>
+      {scopes.map((s) => (
+        <button
+          key={s.course_id}
+          className={`btn btn-sm${s.course_id === courseId ? " active" : ""}`}
+          onClick={() => onPick(s.course_id, false)}
+          aria-pressed={s.course_id === courseId}
+          title={`${s.due} due of ${s.total} cards`}
+        >
+          <span
+            className="review-scope-dot"
+            style={{ background: s.accent_color ?? "var(--rule)" }}
+          />
+          {s.code}
+          <span className="review-scope-count">{s.due}</span>
+        </button>
+      ))}
+      {picked && (
+        <button
+          className={`btn btn-sm review-cram${cram ? " active" : ""}`}
+          onClick={() => onPick(picked.course_id, !cram)}
+          aria-pressed={cram}
+          title={
+            cram
+              ? "Back to what is actually due"
+              : `Work through all ${picked.total} cards, not just the ${picked.due} due`
+          }
+        >
+          Cram all {picked.total}
+        </button>
+      )}
+    </div>
+  );
+}
+
 function isTypingTarget(t: EventTarget | null): boolean {
   if (!(t instanceof HTMLElement)) return false;
   return (
@@ -48,15 +106,32 @@ function isTypingTarget(t: EventTarget | null): boolean {
 
 export function ReviewPage() {
   const queryClient = useQueryClient();
+  const { course: courseId, cram = false } = useSearch({ from: "/review" });
+  const navigate = useNavigate();
+  // One key for the whole session, so the local splices as you rate keep
+  // hitting the same cache entry the scoped fetch wrote.
+  const queueKey = ["review-queue", courseId ?? 0, cram] as const;
   const [revealed, setRevealed] = useState(false);
   const [done, setDone] = useState(0);
   // One-level undo: the card (with its pre-rating previews) we just rated.
   const [lastRated, setLastRated] = useState<ReviewCard | null>(null);
   const [leechNotice, setLeechNotice] = useState<string | null>(null);
 
+  const scopes = useQuery({
+    queryKey: ["review-scopes"],
+    queryFn: () => api.get<ReviewScopeOut[]>("/api/review/scopes"),
+    staleTime: 60_000,
+  });
+
   const queue = useQuery({
-    queryKey: ["review-queue"],
-    queryFn: () => api.get<QueueOut>("/api/review/queue"),
+    queryKey: queueKey,
+    queryFn: () => {
+      const p = new URLSearchParams();
+      if (courseId) p.set("course_id", String(courseId));
+      if (courseId && cram) p.set("cram", "true");
+      const qs = p.toString();
+      return api.get<QueueOut>(`/api/review/queue${qs ? `?${qs}` : ""}`);
+    },
     staleTime: Infinity, // stable session queue; we splice locally as we rate
   });
 
@@ -69,7 +144,7 @@ export function ReviewPage() {
     onSuccess: (r, v) => {
       setRevealed(false);
       setDone((d) => d + 1);
-      const current = queryClient.getQueryData<QueueOut>(["review-queue"]);
+      const current = queryClient.getQueryData<QueueOut>(queueKey);
       const rated = current?.due.find((c) => c.flashcard_id === v.id) ?? null;
       setLastRated(rated);
       if (r.leech) {
@@ -80,7 +155,7 @@ export function ReviewPage() {
       } else {
         setLeechNotice(null);
       }
-      queryClient.setQueryData<QueueOut>(["review-queue"], (old) => {
+      queryClient.setQueryData<QueueOut>(queueKey, (old) => {
         if (!old) return old;
         const rest = old.due.filter((c) => c.flashcard_id !== v.id);
         // "again" cards return to the end of today's session
@@ -103,8 +178,10 @@ export function ReviewPage() {
       setLeechNotice(null);
       queryClient.invalidateQueries({ queryKey: ["review-leeches"] });
       // back to the head of the session, with its pre-rating previews
-      queryClient.setQueryData<QueueOut>(["review-queue"], (old) => {
-        const rest = (old?.due ?? []).filter((c) => c.flashcard_id !== card.flashcard_id);
+      queryClient.setQueryData<QueueOut>(queueKey, (old) => {
+        const rest = (old?.due ?? []).filter(
+          (c) => c.flashcard_id !== card.flashcard_id,
+        );
         const due = [card, ...rest];
         return {
           new_total: 0,
@@ -122,12 +199,17 @@ export function ReviewPage() {
   });
 
   // New cards beyond the per-page cap stay on the server until asked for.
-  const loadedNew = (queue.data?.new_offset ?? 0) + (queue.data?.new_shown ?? 0);
+  const loadedNew =
+    (queue.data?.new_offset ?? 0) + (queue.data?.new_shown ?? 0);
   const heldBack = Math.max(0, (queue.data?.new_total ?? 0) - loadedNew);
   const loadMore = useMutation({
-    mutationFn: () => api.get<QueueOut>(`/api/review/queue?new_offset=${loadedNew}`),
+    mutationFn: () => {
+      const p = new URLSearchParams({ new_offset: String(loadedNew) });
+      if (courseId) p.set("course_id", String(courseId));
+      return api.get<QueueOut>(`/api/review/queue?${p}`);
+    },
     onSuccess: (page) => {
-      queryClient.setQueryData<QueueOut>(["review-queue"], (old) => {
+      queryClient.setQueryData<QueueOut>(queueKey, (old) => {
         const seen = new Set((old?.due ?? []).map((c) => c.flashcard_id));
         const fresh = page.due.filter((c) => !seen.has(c.flashcard_id));
         return {
@@ -145,7 +227,8 @@ export function ReviewPage() {
   // Keyboard: Space/Enter reveals, 1–4 rates, u undoes. Ignored while typing.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (isTypingTarget(e.target) || e.ctrlKey || e.metaKey || e.altKey) return;
+      if (isTypingTarget(e.target) || e.ctrlKey || e.metaKey || e.altKey)
+        return;
       if (e.key === "u" && lastRated && !undo.isPending) {
         e.preventDefault();
         undo.mutate(lastRated);
@@ -191,7 +274,24 @@ export function ReviewPage() {
         </div>
       </header>
 
-      <ReviewStats />
+      <ScopeBar
+        scopes={scopes.data ?? []}
+        courseId={courseId}
+        cram={cram}
+        onPick={(next, nextCram) =>
+          navigate({
+            to: "/review",
+            search: {
+              ...(next ? { course: next } : {}),
+              ...(next && nextCram ? { cram: true as const } : {}),
+            },
+          })
+        }
+      />
+
+      {/* The stats describe the whole rotation; showing "120 due now" beside a
+          20-card CSCI 60 session reads as a contradiction. */}
+      {courseId == null && <ReviewStats />}
 
       {leechNotice && <p className="review-notice">{leechNotice}</p>}
 
@@ -211,15 +311,16 @@ export function ReviewPage() {
           {heldBack > 0 && (
             <>
               <p>
-                {heldBack} new card{heldBack === 1 ? " is" : "s are"} held back so a
-                fresh deck can't flood one session.
+                {heldBack} new card{heldBack === 1 ? " is" : "s are"} held back
+                so a fresh deck can't flood one session.
               </p>
               <button
                 className="btn btn-primary"
                 onClick={() => loadMore.mutate()}
                 disabled={loadMore.isPending}
               >
-                Load {Math.min(20, heldBack)} more new card{Math.min(20, heldBack) === 1 ? "" : "s"}
+                Load {Math.min(20, heldBack)} more new card
+                {Math.min(20, heldBack) === 1 ? "" : "s"}
               </button>
             </>
           )}
@@ -232,7 +333,24 @@ export function ReviewPage() {
             className="review-course"
             style={{ color: card.accent_color ?? "var(--accent-blue)" }}
           >
-            {card.course_code} · {card.module_title}
+            {/* Where a card came from used to be dead text — after failing one
+                the source was the first thing you wanted and could not reach. */}
+            {card.course_id != null ? (
+              <Link
+                to="/courses/$courseId/modules/$moduleId"
+                params={{
+                  courseId: String(card.course_id),
+                  moduleId: String(card.module_id),
+                }}
+                search={{ tab: "overview" }}
+                className="review-source-link"
+                title="Open this module"
+              >
+                {card.course_code} · {card.module_title}
+              </Link>
+            ) : (
+              `${card.course_code} · ${card.module_title}`
+            )}
             {card.reps === 0 ? " · new" : ""}
           </span>
           <button

@@ -325,3 +325,57 @@
     justify-content: space-between;
   }
 }
+
+/* ── Scope bar: narrow a session to one course before an exam ─────────── */
+
+.review-scopes {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--s-1);
+  margin-bottom: var(--s-3);
+}
+.review-scopes .btn.active {
+  background: var(--accent-blue-wash);
+  color: var(--accent-blue-deep);
+  border-color: var(--accent-blue);
+}
+.review-scope-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+.review-scope-count {
+  font-size: 11px;
+  color: var(--ink-faint);
+}
+.review-scopes .btn.active .review-scope-count {
+  color: var(--accent-blue-deep);
+}
+.review-cram {
+  /* sits inline after the course chips; margin-left:auto orphaned it onto a
+     line of its own as soon as the row wrapped */
+  border-style: dashed;
+}
+
+.review-source-link {
+  color: inherit;
+}
+.review-source-link:hover {
+  text-decoration: underline;
+}
+
+@media (max-width: 767px) {
+  .review-scopes {
+    overflow-x: auto;
+    flex-wrap: nowrap;
+    scrollbar-width: none;
+    padding-bottom: 2px;
+  }
+  .review-scopes::-webkit-scrollbar {
+    display: none;
+  }
+  .review-scopes .btn {
+    flex-shrink: 0;
+  }
+}
