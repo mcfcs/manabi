@@ -67,7 +67,7 @@ async def list_cuts(
         (
             await db.execute(
                 select(Course)
-                .where(Course.user_id == user.id)
+                .where(Course.user_id == user.id, Course.archived_at.is_(None))
                 .order_by(Course.position, Course.id)
             )
         )

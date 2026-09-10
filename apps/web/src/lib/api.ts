@@ -100,6 +100,7 @@ export interface CourseOut {
   /** credit units — this course's weight in the term QPI */
   units: number;
   cut_allowance: number | null;
+  archived: boolean;
 }
 
 // ── Grades: syllabus weights, scores, letters and QPI ──────────────────

@@ -1,3 +1,5 @@
+from datetime import UTC, datetime
+
 from fastapi import APIRouter, Depends, HTTPException, UploadFile
 from fastapi.responses import FileResponse
 from manabi_core.models import Course, Document, Module, Note, User
@@ -44,10 +46,13 @@ class CoursePatch(BaseModel):
     canvas_course_id: int | None = None
     units: float | None = None
     cut_allowance: float | None = None
+    # True archives, False restores. archived_at itself stays server-set.
+    archived: bool | None = None
 
 
 class CourseOut(BaseModel):
     id: int
+    archived: bool = False
     code: str
     name: str
     description: str | None
@@ -97,6 +102,7 @@ def _course_out(
         meeting_url=course.meeting_url,
         units=course.units,
         cut_allowance=course.cut_allowance,
+        archived=course.archived_at is not None,
         cover_image_url=(
             f"/api/courses/{course.id}/cover/{course.cover_image_path.rsplit('/', 1)[-1]}"
             if course.cover_image_path
@@ -151,8 +157,16 @@ def canvas_link_conflict(other: Course | None) -> dict:
 
 @router.get("")
 async def list_courses(
-    user: User = Depends(get_default_user), db: AsyncSession = Depends(get_db)
+    archived: bool = False,
+    user: User = Depends(get_default_user),
+    db: AsyncSession = Depends(get_db),
 ) -> list[CourseOut]:
+    """Active courses, or the archive when `archived` is set.
+
+    archived_at was read in seven places and written in none, so a term could
+    only be left in place or DELETEd — and deleting cascades every module,
+    document, chunk, artifact, card, note and grade row it owns.
+    """
     rows = (
         await db.execute(
             select(Course, func.count(Module.id))
@@ -160,7 +174,10 @@ async def list_courses(
                 Module,
                 (Module.course_id == Course.id) & Module.is_general.is_(False),
             )
-            .where(Course.user_id == user.id, Course.archived_at.is_(None))
+            .where(
+                Course.user_id == user.id,
+                Course.archived_at.is_not(None) if archived else Course.archived_at.is_(None),
+            )
             .group_by(Course.id)
             .order_by(Course.position, Course.id)
         )
@@ -232,7 +249,11 @@ async def update_course(
     db: AsyncSession = Depends(get_db),
 ) -> CourseOut:
     course = await _get_course(db, user, course_id)
-    for key, value in data.model_dump(exclude_unset=True).items():
+    fields = data.model_dump(exclude_unset=True)
+    archived = fields.pop("archived", None)
+    if archived is not None:
+        course.archived_at = datetime.now(UTC) if archived else None
+    for key, value in fields.items():
         setattr(course, key, value)
     await _commit_course(db, user, data.canvas_course_id)
     count = (

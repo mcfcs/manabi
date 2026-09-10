@@ -77,6 +77,8 @@ def _review_deck_cards():
             Artifact.artifact_type == ArtifactType.flashcard_deck,
             Artifact.review_enabled.is_(True),
             Flashcard.status == FlashcardStatus.active,
+            # An archived term's cards must stop coming due.
+            Course.archived_at.is_(None),
         )
     )
 

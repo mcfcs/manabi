@@ -122,6 +122,52 @@ function CourseCard({
   );
 }
 
+/** Archiving must not be a one-way door — a finished term stays reachable,
+ * and restoring puts it back on the grid. */
+function ArchivedCourses() {
+  const qc = useQueryClient();
+  const [open, setOpen] = useState(false);
+  const archived = useQuery({
+    queryKey: ["courses", "archived"],
+    queryFn: () => api.get<CourseOut[]>("/api/courses?archived=true"),
+    staleTime: 5 * 60_000,
+  });
+  const restore = useMutation({
+    mutationFn: (id: number) => api.patch(`/api/courses/${id}`, { archived: false }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["courses"] });
+      qc.invalidateQueries({ queryKey: ["review-scopes"] });
+    },
+  });
+  const rows = archived.data ?? [];
+  if (rows.length === 0) return null;
+  return (
+    <details className="archived-courses" open={open} onToggle={(e) => setOpen(e.currentTarget.open)}>
+      <summary>
+        {rows.length} archived course{rows.length === 1 ? "" : "s"}
+      </summary>
+      <ul>
+        {rows.map((c) => (
+          <li key={c.id}>
+            <span className="archived-dot" style={{ background: c.accent_color ?? "var(--rule)" }} />
+            <Link to="/courses/$courseId" params={{ courseId: String(c.id) }}>
+              {c.code}
+            </Link>
+            <span className="archived-term">{c.term ?? ""}</span>
+            <button
+              className="btn btn-sm"
+              onClick={() => restore.mutate(c.id)}
+              disabled={restore.isPending}
+            >
+              Restore
+            </button>
+          </li>
+        ))}
+      </ul>
+    </details>
+  );
+}
+
 export function HomePage() {
   const queryClient = useQueryClient();
   const [dialog, setDialog] = useState<null | { course: CourseOut | null }>(null);
@@ -214,6 +260,8 @@ export function HomePage() {
           </SortableContext>
         </DndContext>
       )}
+
+      <ArchivedCourses />
 
       {dialog && (
         <CourseDialog course={dialog.course} onClose={() => setDialog(null)} />

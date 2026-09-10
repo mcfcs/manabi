@@ -1,6 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useNavigate, useParams } from "@tanstack/react-router";
 import {
+  Archive,
   ArrowDown,
   ArrowUp,
   ChevronLeft,
@@ -245,6 +246,17 @@ export function CoursePage() {
       queryClient.invalidateQueries({ queryKey: ["modules", courseId] }),
   });
 
+  // Archiving is the alternative to deleting a finished term: DELETE cascades
+  // every module, document, chunk, artifact, card, note and grade row.
+  const archive = useMutation({
+    mutationFn: (on: boolean) => api.patch(`/api/courses/${courseId}`, { archived: on }),
+    onSuccess: (_r, on) => {
+      queryClient.invalidateQueries({ queryKey: ["courses"] });
+      queryClient.invalidateQueries({ queryKey: ["review-scopes"] });
+      if (on) navigate({ to: "/" });
+    },
+  });
+
   const removeCourse = useMutation({
     mutationFn: (confirm: boolean) =>
       api.delete(`/api/courses/${courseId}?confirm=${confirm}`),
@@ -340,6 +352,19 @@ export function CoursePage() {
             <Link2 size={15} strokeWidth={1.75} /> Link Canvas
           </button>
         )}
+        <button
+          className="icon-btn"
+          onClick={() => archive.mutate(!(course?.archived ?? false))}
+          disabled={archive.isPending || !course}
+          aria-label={course?.archived ? "Restore this course" : "Archive this course"}
+          title={
+            course?.archived
+              ? "Restore — it returns to the home page and its cards come due again"
+              : "Archive — hide the course and stop its cards coming due, keeping everything"
+          }
+        >
+          <Archive size={16} strokeWidth={1.5} />
+        </button>
         <button
           className="icon-btn danger course-delete"
           onClick={() => removeCourse.mutate(false)}
