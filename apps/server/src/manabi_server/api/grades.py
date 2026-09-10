@@ -141,6 +141,20 @@ class SyncOut(BaseModel):
     still_ungraded: int
 
 
+class SyncAllOut(BaseModel):
+    """Per-course outcome of a sync-everything run, plus the totals."""
+
+    updated: int
+    still_ungraded: int
+    courses: dict[str, int]  # course code -> rows updated
+    skipped: list[str]  # courses with no Canvas link or nothing linked
+    failed: dict[str, str]  # course code -> why
+
+
+class ApplyCutoffsIn(BaseModel):
+    course_ids: list[int]  # where to copy this scheme
+
+
 # ── Helpers ─────────────────────────────────────────────────────────────────
 
 
@@ -767,3 +781,94 @@ async def clear_grades(
     await db.execute(delete(GradeComponent).where(GradeComponent.course_id == course.id))
     await db.commit()
     return {"ok": True}
+
+
+# ── Bulk: the chores that were strictly one course at a time ────────────────
+
+
+@router.post("/grades/sync-all", dependencies=[Depends(require_csrf)])
+async def sync_all_canvas_scores(
+    user: User = Depends(get_default_user), db: AsyncSession = Depends(get_db)
+) -> SyncAllOut:
+    """Refresh linked scores across every Canvas-linked course.
+
+    Canvas *tasks* already sync every course in one pass and auto-run every ten
+    minutes; grades had neither, so keeping a term current meant expanding each
+    course row on /grades and pressing Sync. Still manual, as chosen — but once,
+    not seven times.
+
+    One course failing (Canvas down, token expired) must not lose the others'
+    work, so each is committed on its own and its error reported by name.
+    """
+    courses = (
+        (
+            await db.execute(
+                select(Course)
+                .where(Course.user_id == user.id, Course.archived_at.is_(None))
+                .order_by(Course.position, Course.id)
+            )
+        )
+        .scalars()
+        .all()
+    )
+    updated = ungraded = 0
+    per_course: dict[str, int] = {}
+    skipped: list[str] = []
+    failed: dict[str, str] = {}
+
+    for course in courses:
+        if not course.canvas_course_id:
+            skipped.append(course.code)
+            continue
+        try:
+            result = await sync_canvas_scores(course.id, user=user, db=db)
+        except HTTPException as exc:
+            await db.rollback()
+            failed[course.code] = str(exc.detail)[:200]
+            continue
+        if result.updated == 0 and result.still_ungraded == 0:
+            skipped.append(course.code)
+            continue
+        updated += result.updated
+        ungraded += result.still_ungraded
+        per_course[course.code] = result.updated
+
+    return SyncAllOut(
+        updated=updated,
+        still_ungraded=ungraded,
+        courses=per_course,
+        skipped=skipped,
+        failed=failed,
+    )
+
+
+@router.post("/courses/{course_id}/grades/cutoffs/apply", dependencies=[Depends(require_csrf)])
+async def apply_cutoffs_to(
+    course_id: int,
+    data: ApplyCutoffsIn,
+    user: User = Depends(get_default_user),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """Copy this course's scheme onto others. Six numbers typed per course, with
+    no copy and no apply-to-all, was the most repetitive part of setting a term
+    up — and courses under the same department usually share a scheme."""
+    source = await _owned_course(db, user, course_id)
+    if not source.grade_cutoffs:
+        raise HTTPException(status_code=409, detail="This course has no scheme to copy")
+    targets = (
+        (
+            await db.execute(
+                select(Course).where(
+                    Course.user_id == user.id,
+                    Course.id.in_(data.course_ids),
+                    Course.id != source.id,
+                )
+            )
+        )
+        .scalars()
+        .all()
+    )
+    for c in targets:
+        c.grade_cutoffs = dict(source.grade_cutoffs)
+    await db.commit()
+    return {"applied": [c.code for c in targets]}

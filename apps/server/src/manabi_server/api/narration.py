@@ -14,6 +14,8 @@ from fastapi import APIRouter, Depends, HTTPException, Response
 from manabi_core.models import (
     Course,
     Document,
+    DocumentKind,
+    ExtractStatus,
     Job,
     JobQueue,
     Module,
@@ -289,3 +291,54 @@ async def segment_audio(
         media_type=row[1] or "audio/mpeg",
         headers={"Cache-Control": "private, max-age=31536000, immutable"},
     )
+
+
+# ── The backlog: readings parsed before the switch was turned on ────────────
+
+
+class UnpreparedOut(BaseModel):
+    document_id: int
+    filename: str
+    module_title: str | None
+    course_code: str | None
+    page_count: int | None
+
+
+@router.get("/narration/unprepared")
+async def unprepared_readings(
+    user: User = Depends(get_default_user), db: AsyncSession = Depends(get_db)
+) -> list[UnpreparedOut]:
+    """Narratable PDFs with no narration yet.
+
+    Auto-prepare only fires for documents parsed *after* the master switch was
+    turned on, so everything imported before it has to be opened and prepared
+    one at a time. This is the list; nothing is queued by looking at it.
+    """
+    rows = (
+        await db.execute(
+            select(Document, Module.title, Course.code)
+            .join(Module, Module.id == Document.module_id)
+            .join(Course, Course.id == Module.course_id)
+            .outerjoin(Narration, Narration.document_id == Document.id)
+            .where(
+                Course.user_id == user.id,
+                Course.archived_at.is_(None),
+                Document.deleted_at.is_(None),
+                Document.kind == DocumentKind.pdf,
+                Document.extract_status == ExtractStatus.ready,
+                Narration.id.is_(None),
+            )
+            .order_by(Document.id.desc())
+        )
+    ).all()
+    return [
+        UnpreparedOut(
+            document_id=d.id,
+            filename=d.filename,
+            module_title=module_title,
+            course_code=course_code,
+            page_count=d.page_count,
+        )
+        for d, module_title, course_code in rows
+        if narratable(d)
+    ]

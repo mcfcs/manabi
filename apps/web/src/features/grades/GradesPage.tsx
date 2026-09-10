@@ -1,8 +1,13 @@
-import { useQuery } from "@tanstack/react-query";
-import { ChevronDown, ChevronRight } from "lucide-react";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { ChevronDown, ChevronRight, RefreshCw } from "lucide-react";
 import { useState } from "react";
 
-import { api, type CourseGradeSummaryOut, type GradesOverviewOut } from "../../lib/api";
+import {
+  api,
+  type CourseGradeSummaryOut,
+  type GradesOverviewOut,
+  type SyncAllOut,
+} from "../../lib/api";
 import { CourseGradesEditor } from "./CourseGradesEditor";
 import { GradeValue, useGradesHidden } from "./GradeValue";
 import { fmtPercent, fmtQpi, fmtUnits } from "./grades";
@@ -13,10 +18,37 @@ import "./grades.css";
  * appear on the course page. */
 export function GradesPage() {
   const hidden = useGradesHidden();
+  const qc = useQueryClient();
   const [open, setOpen] = useState<number | null>(null);
+  const [syncNote, setSyncNote] = useState<string | null>(null);
   const overview = useQuery({
     queryKey: ["grades-overview"],
     queryFn: () => api.get<GradesOverviewOut>("/api/grades"),
+  });
+
+  // Canvas tasks already sync every course in one pass, and automatically.
+  // Grades had neither, so keeping a term current meant expanding each row.
+  const syncAll = useMutation({
+    mutationFn: () => api.post<SyncAllOut>("/api/grades/sync-all", {}),
+    onSuccess: (r) => {
+      const names = Object.entries(r.courses)
+        .map(([code, n]) => `${code} ${n}`)
+        .join(", ");
+      const failed = Object.keys(r.failed);
+      setSyncNote(
+        [
+          r.updated > 0
+            ? `Updated ${r.updated} score${r.updated === 1 ? "" : "s"}${names ? ` — ${names}` : ""}.`
+            : "Every linked score was already current.",
+          r.still_ungraded > 0 ? `${r.still_ungraded} still ungraded in Canvas.` : "",
+          failed.length ? `Could not reach: ${failed.join(", ")}.` : "",
+        ]
+          .filter(Boolean)
+          .join(" "),
+      );
+      qc.invalidateQueries({ queryKey: ["grades-overview"] });
+      qc.invalidateQueries({ queryKey: ["course-grades"] });
+    },
   });
 
   const data = overview.data;
@@ -28,7 +60,22 @@ export function GradesPage() {
       <header className="grades-page-head">
         <h1>Grades</h1>
         {hidden && <span className="badge grades-hidden-badge">hidden</span>}
+        <button
+          className="btn btn-sm grades-sync-all"
+          onClick={() => syncAll.mutate()}
+          disabled={syncAll.isPending}
+          title="Refresh linked Canvas scores across every course"
+        >
+          <RefreshCw
+            size={13}
+            strokeWidth={1.75}
+            className={syncAll.isPending ? "spin" : undefined}
+          />
+          {syncAll.isPending ? "Syncing…" : "Sync all"}
+        </button>
       </header>
+
+      {syncNote && <p className="grades-sync-note">{syncNote}</p>}
 
       {overview.isLoading && <p className="gen-hint">Loading…</p>}
 

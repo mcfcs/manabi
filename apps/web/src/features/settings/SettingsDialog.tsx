@@ -5,6 +5,7 @@ import { Loader2 } from "lucide-react";
 
 import { Modal } from "../../components/Modal";
 import { api, type AiModelsOut, ApiError, type SettingsOut } from "../../lib/api";
+import { NarrationBacklog } from "./NarrationBacklog";
 import {
   disablePush,
   enablePush,
@@ -401,6 +402,7 @@ export function SettingsDialog({ onClose }: { onClose: () => void }) {
           play; nothing plays on its own. Headers, footnotes, citations and the
           bibliography are skipped.
         </p>
+        {s?.narration_enabled && <NarrationBacklog />}
 
         <label className="field-label">
           General assistant (Manabi AI) model

@@ -322,6 +322,153 @@ class GenerateAllIn(BaseModel):
     quiz_types: list[str] = ["mcq", "tf", "short"]
 
 
+class CourseKitCandidate(BaseModel):
+    module_id: int
+    title: str
+    document_count: int
+    has_summary: bool
+    card_count: int
+
+
+class CourseKitPlan(BaseModel):
+    """What a course-wide generation would queue, so it can be shown before it
+    runs. Generation is expensive and the GPU is shared with the owner's other
+    work — nothing is queued until this has been seen and confirmed."""
+
+    candidates: list[CourseKitCandidate]
+    skipped_no_materials: list[str]
+    skipped_have_kit: list[str]
+
+
+@router.get("/courses/{course_id}/study-kit-plan")
+async def course_study_kit_plan(
+    course_id: int,
+    user: User = Depends(get_default_user),
+    db: AsyncSession = Depends(get_db),
+) -> CourseKitPlan:
+    """Which of a course's modules still have no study kit.
+
+    generate-all covers one module; there was no way to see across a course
+    which modules had materials and nothing generated, let alone act on it.
+    """
+    course = (
+        await db.execute(
+            select(Course).where(Course.id == course_id, Course.user_id == user.id)
+        )
+    ).scalar_one_or_none()
+    if course is None:
+        raise HTTPException(status_code=404, detail="Course not found")
+    modules = (
+        (
+            await db.execute(
+                select(Module)
+                .where(Module.course_id == course.id, Module.is_general.is_(False))
+                .order_by(Module.position, Module.id)
+            )
+        )
+        .scalars()
+        .all()
+    )
+    from manabi_server.api.modules import _study_kit_stats
+
+    stats = await _study_kit_stats(db, [m.id for m in modules]) if modules else {}
+    doc_counts = dict(
+        (
+            await db.execute(
+                select(Document.module_id, func.count())
+                .where(
+                    Document.module_id.in_([m.id for m in modules] or [0]),
+                    Document.deleted_at.is_(None),
+                    Document.ai_included.is_(True),
+                )
+                .group_by(Document.module_id)
+            )
+        ).all()
+    )
+
+    candidates: list[CourseKitCandidate] = []
+    no_materials: list[str] = []
+    have_kit: list[str] = []
+    for m in modules:
+        st = stats.get(m.id, {})
+        docs = int(doc_counts.get(m.id, 0))
+        has_summary = st.get("summary_state") == "current"
+        cards = int(st.get("card_count", 0))
+        if docs == 0:
+            no_materials.append(m.title)
+        elif has_summary and cards > 0:
+            have_kit.append(m.title)
+        else:
+            candidates.append(
+                CourseKitCandidate(
+                    module_id=m.id,
+                    title=m.title,
+                    document_count=docs,
+                    has_summary=has_summary,
+                    card_count=cards,
+                )
+            )
+    return CourseKitPlan(
+        candidates=candidates,
+        skipped_no_materials=no_materials,
+        skipped_have_kit=have_kit,
+    )
+
+
+class CourseKitIn(BaseModel):
+    module_ids: list[int]  # exactly what the plan showed, confirmed by the owner
+    summary: bool = True
+    flashcards_count: int | None = 12
+    quiz_count: int | None = None
+    quiz_types: list[str] = ["mcq", "tf", "short"]
+
+
+@router.post("/courses/{course_id}/generate-study-kits", dependencies=[Depends(require_csrf)])
+async def generate_course_study_kits(
+    course_id: int,
+    data: CourseKitIn,
+    user: User = Depends(get_default_user),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """Queue study kits for the confirmed modules. Each generation is still
+    duplicate-proof via _enqueue_generation, so a re-run adds nothing."""
+    course = (
+        await db.execute(
+            select(Course).where(Course.id == course_id, Course.user_id == user.id)
+        )
+    ).scalar_one_or_none()
+    if course is None:
+        raise HTTPException(status_code=404, detail="Course not found")
+    if not data.module_ids:
+        raise HTTPException(status_code=422, detail="No modules selected")
+    modules = (
+        (
+            await db.execute(
+                select(Module).where(
+                    Module.course_id == course.id, Module.id.in_(data.module_ids)
+                )
+            )
+        )
+        .scalars()
+        .all()
+    )
+    queued: dict[str, dict[str, int]] = {}
+    for module in modules:
+        jobs = await generate_all(
+            GenerateAllIn(
+                summary=data.summary,
+                flashcards_count=data.flashcards_count,
+                quiz_count=data.quiz_count,
+                quiz_types=data.quiz_types,
+            ),
+            module=module,
+            user=user,
+            db=db,
+        )
+        queued[module.title] = jobs["jobs"]
+    return {"queued": queued, "modules": len(queued)}
+
+
 @router.post("/modules/{module_id}/generate-all", dependencies=[Depends(require_csrf)])
 async def generate_all(
     config: GenerateAllIn,

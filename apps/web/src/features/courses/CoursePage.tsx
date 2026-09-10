@@ -11,6 +11,7 @@ import {
   Link2,
   Pencil,
   Plus,
+  Sparkles,
   StickyNote,
   Trash2,
   Video,
@@ -25,6 +26,7 @@ import { CourseDialog } from "./CourseDialog";
 import { CourseFiles } from "./CourseFiles";
 import { CourseGlance } from "./CourseGlance";
 import { CourseLinks } from "./CourseLinks";
+import { StudyKitPlanModal } from "./StudyKitPlanModal";
 import {
   api,
   ApiError,
@@ -211,6 +213,7 @@ export function CoursePage() {
     useState<DeleteConsequences | null>(null);
   const [canvasFilesOpen, setCanvasFilesOpen] = useState(false);
   const [canvasSyncOpen, setCanvasSyncOpen] = useState(false);
+  const [kitPlanOpen, setKitPlanOpen] = useState(false);
   const [editing, setEditing] = useState(false);
 
   const courses = useQuery({
@@ -354,9 +357,20 @@ export function CoursePage() {
 
       <CourseFiles courseId={courseId} />
 
+      {kitPlanOpen && (
+        <StudyKitPlanModal courseId={Number(courseId)} onClose={() => setKitPlanOpen(false)} />
+      )}
+
       <section className="module-section">
         <div className="module-section-head">
           <h2>Modules</h2>
+          <button
+            className="btn"
+            onClick={() => setKitPlanOpen(true)}
+            title="Summaries and flashcards for every module that has materials and no kit"
+          >
+            <Sparkles size={15} strokeWidth={1.75} /> Study kits
+          </button>
           <button className="btn btn-primary" onClick={() => setAdding(true)}>
             <Plus size={16} strokeWidth={2} /> Module
           </button>

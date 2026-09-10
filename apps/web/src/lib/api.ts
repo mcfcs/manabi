@@ -426,6 +426,36 @@ export interface NarrationSegmentOut {
   duration_ms: number | null;
 }
 
+export interface SyncAllOut {
+  updated: number;
+  still_ungraded: number;
+  courses: Record<string, number>;
+  skipped: string[];
+  failed: Record<string, string>;
+}
+
+export interface CourseKitCandidate {
+  module_id: number;
+  title: string;
+  document_count: number;
+  has_summary: boolean;
+  card_count: number;
+}
+
+export interface CourseKitPlan {
+  candidates: CourseKitCandidate[];
+  skipped_no_materials: string[];
+  skipped_have_kit: string[];
+}
+
+export interface UnpreparedReading {
+  document_id: number;
+  filename: string;
+  module_title: string | null;
+  course_code: string | null;
+  page_count: number | null;
+}
+
 export interface ReviewScopeOut {
   course_id: number;
   code: string;

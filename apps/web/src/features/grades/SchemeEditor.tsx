@@ -1,8 +1,13 @@
-import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 
 import { Modal } from "../../components/Modal";
-import { api, ApiError, type CourseGradesOut } from "../../lib/api";
+import {
+  api,
+  ApiError,
+  type CourseGradesOut,
+  type GradesOverviewOut,
+} from "../../lib/api";
 
 /** The six graded letters, best first. F is implicit: anything below D. */
 const LETTERS = ["A", "B+", "B", "C+", "C", "D"] as const;
@@ -22,6 +27,29 @@ export function SchemeEditor({
     Object.fromEntries(LETTERS.map((l) => [l, String(start[l] ?? "")])),
   );
   const [error, setError] = useState<string | null>(null);
+  const [applyTo, setApplyTo] = useState<Set<number>>(new Set());
+  const [applied, setApplied] = useState<string[] | null>(null);
+
+  // Six numbers per course, retyped each time. Courses in the same department
+  // usually share a scheme, so offer to copy this one across.
+  const others = useQuery({
+    queryKey: ["grades-overview"],
+    queryFn: () => api.get<GradesOverviewOut>("/api/grades"),
+    staleTime: 60_000,
+  });
+
+  const apply = useMutation({
+    mutationFn: () =>
+      api.post<{ applied: string[] }>(
+        `/api/courses/${grades.course_id}/grades/cutoffs/apply`,
+        { course_ids: [...applyTo] },
+      ),
+    onSuccess: (r) => {
+      setApplied(r.applied);
+      setApplyTo(new Set());
+      queryClient.invalidateQueries({ queryKey: ["grades-overview"] });
+    },
+  });
 
   const save = useMutation({
     mutationFn: () =>
@@ -78,6 +106,42 @@ export function SchemeEditor({
           <p className="error-text">Each letter must sit below the one above it.</p>
         )}
         {error && <p className="error-text">{error}</p>}
+
+        {grades.cutoffs && (others.data?.courses.length ?? 0) > 1 && (
+          <details className="scheme-copy">
+            <summary>Also apply this scheme to…</summary>
+            {(others.data?.courses ?? [])
+              .filter((c) => c.course_id !== grades.course_id)
+              .map((c) => (
+                <label key={c.course_id} className="scheme-copy-row">
+                  <input
+                    type="checkbox"
+                    checked={applyTo.has(c.course_id)}
+                    onChange={() => {
+                      const next = new Set(applyTo);
+                      if (next.has(c.course_id)) next.delete(c.course_id);
+                      else next.add(c.course_id);
+                      setApplyTo(next);
+                    }}
+                  />
+                  <span>{c.code}</span>
+                  {c.has_cutoffs && <span className="scheme-copy-warn">has one already</span>}
+                </label>
+              ))}
+            <button
+              className="btn btn-sm"
+              disabled={applyTo.size === 0 || apply.isPending}
+              onClick={() => apply.mutate()}
+            >
+              Copy to {applyTo.size} course{applyTo.size === 1 ? "" : "s"}
+            </button>
+            {applied && (
+              <p className="scheme-copy-done">
+                {applied.length ? `Copied to ${applied.join(", ")}.` : "Nothing to copy."}
+              </p>
+            )}
+          </details>
+        )}
 
         <div className="modal-actions">
           <button className="btn" onClick={onClose}>
