@@ -1638,7 +1638,6 @@ async def daily_briefing(
             )
             parts = [
                 (result.get("greeting") or "").strip(),
-                (result.get("on_today") or "").strip(),
                 (result.get("due_soon") or "").strip(),
                 (result.get("focus") or "").strip(),
                 (result.get("closing") or "").strip(),

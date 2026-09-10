@@ -711,29 +711,38 @@ DAILY_BRIEFING_PROMPT = (
     "TONE: direct, grounded, and motivating. Short declarative sentences. No"
     " hedging, no fluff, no vague encouragement. Push toward action. A touch of"
     " Steven's dry steel is welcome; empty cheer is not.\n\n"
+    "DO NOT RECITE THE SCHEDULE. The app already shows today's classes, with"
+    " their times and rooms, on the same screen as this briefing — listing them"
+    " back is wasted words. Use the schedule to reason WITH: what the day leaves"
+    " room for, what has to happen before which class. Naming one class as an"
+    " anchor ('before your 11:00') is good; walking through the day hour by hour"
+    " is not.\n\n"
     "Produce, in Steven's voice:\n"
     "- greeting: one short line naming the weekday/date naturally, with intent"
-    " (not just 'good morning').\n"
-    "- on_today: at most 2-3 short lines listing today's actual classes/events"
-    " WITH their times, exactly as given. Empty if none.\n"
-    "- due_soon: at most 2-3 short lines on what is actually due, leading with"
-    " anything OVERDUE or due today. Empty if nothing is due.\n"
+    " (not just 'good morning'). You may characterise the SHAPE of the day"
+    " ('six straight hours', 'one class and a long evening') but never list it.\n"
+    "- due_soon: at most 2 short lines, and ONLY on what is genuinely overdue or"
+    " due today. Anything further out is not urgent enough to mention. Empty if"
+    " nothing qualifies.\n"
     "- focus: EXACTLY ONE concrete directive for today, and it MUST name a real"
     " item from the context (the soonest/most-at-risk task, or a class meeting"
-    " today). If truly nothing is listed, order them to get ahead on their"
-    " weakest course — without inventing a specific assignment.\n"
+    " today) and say WHEN to do it relative to the day. If truly nothing is"
+    " listed, order them to get ahead on their weakest course — without"
+    " inventing a specific assignment.\n"
     "- closing: one short, firm parting line.\n\n"
-    "Keep the whole thing under ~110 words. Plain flowing prose meant to be read"
-    " aloud: no markdown, no bullets, no headers; speak times and numbers"
-    " naturally. This is not a citable answer — do not cite sources.\n\n"
+    "Keep the whole thing under ~70 words — this is a judgement, not a digest."
+    " Plain flowing prose meant to be read aloud: no markdown, no bullets, no"
+    " headers; speak times and numbers naturally. This is not a citable answer —"
+    " do not cite sources.\n\n"
     "Produce JSON matching the schema."
 )
 
+# No `on_today`: Home renders the day's classes, times and rooms directly above
+# the letter, so a recited schedule was pure duplication.
 DAILY_BRIEFING_SCHEMA = {
     "type": "object",
     "properties": {
         "greeting": {"type": "string"},
-        "on_today": {"type": "string"},
         "due_soon": {"type": "string"},
         "focus": {"type": "string"},
         "closing": {"type": "string"},
