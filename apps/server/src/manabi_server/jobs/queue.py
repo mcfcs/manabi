@@ -34,6 +34,7 @@ NARRATE_DOCUMENT_TASK = "manabi_ai.tasks.narrate_document"  # gpu
 PROCESS_DOCUMENT_TASK = "manabi_server.tasks.process_document"  # cpu queue (app server)
 SCORE_SUPPORT_TASK = "manabi_server.tasks.score_support"  # cpu (needs local embed model)
 EXTRACT_TEXT_HTML_TASK = "manabi_server.tasks.extract_text_html"  # cpu (backfill)
+VERIFY_OUTPUTS_TASK = "manabi_server.tasks.verify_quiz_outputs"  # cpu (runs the code)
 
 _app: procrastinate.App | None = None
 _lock = threading.Lock()

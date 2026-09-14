@@ -457,6 +457,19 @@ export interface UnpreparedReading {
   page_count: number | null;
 }
 
+export interface TypeSuggestionOut {
+  qtype: string;
+  recommended: boolean;
+  reason: string;
+}
+
+export interface QuizSuggestionsOut {
+  suggestions: TypeSuggestionOut[];
+  recommended: string[];
+  language: string | null;
+  has_material: boolean;
+}
+
 export interface ReviewScopeOut {
   course_id: number;
   code: string;

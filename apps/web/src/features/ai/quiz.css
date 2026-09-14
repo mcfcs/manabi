@@ -339,3 +339,22 @@
   gap: var(--s-2);
   justify-content: center;
 }
+
+/* ── Type suggestions: what this material actually supports ───────────── */
+
+.quiz-check.suggested {
+  font-weight: 550;
+}
+.quiz-suggested-dot {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--accent-blue);
+  flex-shrink: 0;
+  margin-left: 2px;
+}
+.quiz-suggest-hint {
+  flex-basis: 100%;
+  margin: var(--s-1) 0 0;
+  max-width: 68ch;
+}

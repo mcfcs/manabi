@@ -20,6 +20,7 @@ import {
   type QuestionOut,
   type QuizListItem,
   type QuizOut,
+  type QuizSuggestionsOut,
 } from "../../lib/api";
 import { Markdown } from "../../components/Markdown";
 import {
@@ -784,7 +785,10 @@ export function QuizTab({
   const navigate = useNavigate();
   const aiOnline = useAiOnline();
   const [configuring, setConfiguring] = useState(false);
-  const [types, setTypes] = useState<string[]>(["mcq", "tf", "short"]);
+  // `null` until the user touches the chooser, so the material's own
+  // suggestion applies first — the same idiom as the Canvas link in
+  // CourseDialog. Nothing is generated until Create is pressed either way.
+  const [types, setTypes] = useState<string[] | null>(null);
   const [count, setCount] = useState(10);
   const [scopeIds, setScopeIds] = useState<number[]>([Number(moduleId)]);
   const [playing, setPlaying] = useState<number | null>(null);
@@ -796,6 +800,28 @@ export function QuizTab({
   // document scope blocks generation, except practice mode with a focus
   // topic (synthesizes from nothing).
   const singleModule = scopeIds.length === 1;
+
+  // What the selected material can actually support. Deterministic on the
+  // server (no model call), so it re-runs freely as the scope changes.
+  const suggest = useQuery({
+    queryKey: ["quiz-suggestions", scopeIds[0], (docIds ?? []).join(",")],
+    queryFn: () => {
+      const q = new URLSearchParams();
+      for (const d of docIds ?? []) q.append("document_ids", String(d));
+      const qs = q.toString();
+      return api.get<QuizSuggestionsOut>(
+        `/api/modules/${scopeIds[0]}/quiz-suggestions${qs ? `?${qs}` : ""}`,
+      );
+    },
+    enabled: configuring && singleModule && scopeIds.length > 0,
+    staleTime: 5 * 60_000,
+  });
+  const suggestedTypes =
+    suggest.data?.recommended?.length ? suggest.data.recommended : ["mcq", "tf", "short"];
+  const effectiveTypes = types ?? suggestedTypes;
+  const reasons = new Map(
+    (suggest.data?.suggestions ?? []).map((x) => [x.qtype, x] as const),
+  );
   const noSources = singleModule && docIds !== null && docIds.length === 0;
   const topicOnly = mode === "exercise" && instructions.trim().length > 0;
   const blocked = noSources && !topicOnly;
@@ -826,7 +852,7 @@ export function QuizTab({
     mutationFn: () =>
       api.post<JobRef>("/api/quizzes", {
         module_ids: scopeIds,
-        types,
+        types: effectiveTypes,
         count,
         document_ids: singleModule ? docIds : null,
         note_ids: singleModule ? noteIds : null,
@@ -837,13 +863,14 @@ export function QuizTab({
   });
 
   function toggleType(t: string) {
-    setTypes((prev) =>
-      prev.includes(t)
-        ? prev.length > 1
-          ? prev.filter((x) => x !== t)
-          : prev
-        : [...prev, t],
-    );
+    setTypes((prev) => {
+      const cur = prev ?? suggestedTypes;
+      return cur.includes(t)
+        ? cur.length > 1
+          ? cur.filter((x) => x !== t)
+          : cur
+        : [...cur, t];
+    });
   }
 
   function toggleScope(id: number) {
@@ -930,17 +957,35 @@ export function QuizTab({
           <div className="quiz-config-row">
             <span className="field-label">Question types</span>
             <div className="quiz-scope">
-              {Object.entries(TYPE_LABELS).map(([t, label]) => (
-                <label key={t} className="quiz-check">
-                  <input
-                    type="checkbox"
-                    checked={types.includes(t)}
-                    onChange={() => toggleType(t)}
-                  />
-                  {label}
-                </label>
-              ))}
+              {Object.entries(TYPE_LABELS).map(([t, label]) => {
+                const s = reasons.get(t);
+                const suggested = s?.recommended ?? false;
+                return (
+                  <label
+                    key={t}
+                    className={`quiz-check${suggested ? " suggested" : ""}`}
+                    title={s?.reason}
+                  >
+                    <input
+                      type="checkbox"
+                      checked={effectiveTypes.includes(t)}
+                      onChange={() => toggleType(t)}
+                    />
+                    {label}
+                    {suggested && <span className="quiz-suggested-dot" aria-hidden />}
+                  </label>
+                );
+              })}
             </div>
+            {types === null && suggest.data?.has_material && (
+              <p className="gen-hint quiz-suggest-hint">
+                Suggested from this material
+                {suggest.data.language ? ` (${suggest.data.language.toUpperCase()} code found)` : ""}
+                {" — "}
+                {suggestedTypes.map((t) => TYPE_LABELS[t] ?? t).join(", ")}. Tick any box to
+                choose your own.
+              </p>
+            )}
           </div>
           <div className="quiz-config-row">
             <span className="field-label">Materials</span>

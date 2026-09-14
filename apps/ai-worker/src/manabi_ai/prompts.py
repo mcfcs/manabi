@@ -289,7 +289,22 @@ Question guidelines:
   fenced ``` block.
 - "output": show a code snippet or computation and ask for its EXACT output —
   only when the material is code/computation-oriented; put the exact expected
-  output in "correct_text".
+  output in "correct_text". The snippet MUST be in a fenced block tagged with
+  its language (```c or ```python) — untagged code cannot be checked.
+- COMPUTING AN "output" ANSWER — do this literally, not from intuition:
+  1. Work the code through one step at a time and write that reasoning in the
+     explanation: index positions, pointer targets, loop iterations, variable
+     values after each step.
+  2. Build "correct_text" by READING OFF your own step-by-step trace,
+     character by character. Do NOT restate it from memory afterwards.
+  3. Then re-read the trace and confirm the answer still matches it. If your
+     trace and your answer disagree, THE TRACE WINS — rewrite the answer.
+  The usual failure is not miscounting, it is tidying: a pointer at index 5 of
+  "the quick brown fox" is at 'u', so the output is "uick brown fox", NOT the
+  neater-looking "quick brown fox". Off-by-one toward a word boundary, a round
+  number, or a whole line is the single most common error here. Never round an
+  answer toward what looks tidy — exact means exact, including partial words,
+  leading spaces and missing punctuation.
 - Each question includes a brief explanation of the correct answer.
 - VARY the question stems: never open more than one question with the same
   phrase (e.g. "According to the source material…" or "Which of the

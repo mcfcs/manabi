@@ -8,9 +8,10 @@ the module's current AI-eligible chunk set.
 
 import asyncio
 from datetime import UTC, datetime
-from typing import Literal
+from typing import Annotated, Literal
 
-from fastapi import APIRouter, Depends, HTTPException, Response
+from fastapi import APIRouter, Depends, HTTPException, Query, Response
+from manabi_core.material_profile import profile_material
 from manabi_core.models import (
     AIFeedback,
     AIFeedbackKind,
@@ -1503,6 +1504,51 @@ class AttemptIn(BaseModel):
     responses: dict
     score: float | None = None
     finished: bool = False
+
+
+class TypeSuggestionOut(BaseModel):
+    qtype: str
+    recommended: bool
+    reason: str
+
+
+class QuizSuggestionsOut(BaseModel):
+    """What the selected material can actually support, so the type chooser
+    starts from evidence instead of a fixed default of mcq/tf/short."""
+
+    suggestions: list[TypeSuggestionOut]
+    recommended: list[str]
+    language: str | None  # detected code language, when there is code
+    has_material: bool
+
+
+@router.get("/modules/{module_id}/quiz-suggestions")
+async def quiz_suggestions(
+    module_id: int,
+    document_ids: Annotated[list[int] | None, Query()] = None,
+    user: User = Depends(get_default_user),
+    db: AsyncSession = Depends(get_db),
+) -> QuizSuggestionsOut:
+    """Which question types suit this material.
+
+    Deterministic pattern counting over the chunks in scope — no model call, so
+    it returns instantly while the generate dialog opens and cannot recommend
+    something the material does not support. Narrow with `document_ids` to
+    profile just the readings actually selected.
+    """
+    module = await get_owned_module(module_id=module_id, user=user, db=db)
+    chunks = await load_context_chunks(db, [module.id], document_ids=document_ids or None)
+    profile = profile_material(c.text for c in chunks)
+    return QuizSuggestionsOut(
+        suggestions=[
+            TypeSuggestionOut(qtype=s.qtype, recommended=s.recommended, reason=s.reason)
+            for s in profile.suggestions
+            if s.qtype in QUIZ_TYPES
+        ],
+        recommended=[t for t in profile.recommended_types if t in QUIZ_TYPES],
+        language=profile.language,
+        has_material=bool(chunks),
+    )
 
 
 @router.post("/quizzes", dependencies=[Depends(require_csrf)])

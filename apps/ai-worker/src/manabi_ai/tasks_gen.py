@@ -58,6 +58,7 @@ from manabi_ai.validators import (
 log = logging.getLogger("manabi_ai")
 
 SCORE_SUPPORT_TASK = "manabi_server.tasks.score_support"  # cpu queue contract
+VERIFY_OUTPUTS_TASK = "manabi_server.tasks.verify_quiz_outputs"  # cpu queue contract
 
 # Exercise-mode generation with no material in scope: the FOCUS instructions
 # alone define the topic (the enqueue guard requires them for this path).
@@ -164,6 +165,11 @@ async def _finish(db: AsyncSession, job: Job, artifact_id: int, dropped: int) ->
     await db.commit()
     # support scoring runs on the cpu queue (needs the app server's embed model)
     await app.configure_task(SCORE_SUPPORT_TASK, queue="cpu").defer_async(artifact_id=artifact_id)
+    # Output questions get checked by actually running their code — also cpu, so
+    # it costs the GPU nothing and does not hold up the job the user is watching.
+    await app.configure_task(VERIFY_OUTPUTS_TASK, queue="cpu").defer_async(
+        artifact_id=artifact_id
+    )
 
 
 async def _fail(db: AsyncSession, job: Job, exc: Exception) -> None:
