@@ -26,6 +26,7 @@ from manabi_server.processing.code_exec import (
     extract_snippet,
     normalize_output,
     outputs_match,
+    printed_anything,
 )
 
 
@@ -46,22 +47,40 @@ def main(apply: bool) -> int:
 
         for q, artifact in rows:
             checked += 1
+            answer = dict(q.answer or {})
             snippet = extract_snippet(q.prompt or "")
             if snippet is None:
                 unverifiable += 1
                 print(f"  q{q.id:<4} — no runnable code block")
+                if apply:
+                    q.answer = {**answer, "verified": "unverifiable:no runnable code block"}
                 continue
             result = execute(snippet)
             if not result.ok:
                 unverifiable += 1
-                print(f"  q{q.id:<4} — could not run ({result.error})")
+                print(f"  q{q.id:<4} - could not run ({result.error})")
+                if apply:
+                    q.answer = {**answer, "verified": f"unverifiable:{result.error}"}
+                continue
+            if not printed_anything(result):
+                # Ran clean but printed nothing: the question is about something
+                # other than stdout, so "" is not the answer.
+                unverifiable += 1
+                print(f"  q{q.id:<4} - prints nothing; leaving the model's answer")
+                if apply:
+                    q.answer = {**answer, "verified": "unverifiable:program prints nothing"}
                 continue
 
-            claimed = (q.answer or {}).get("text", "")
+            claimed = answer.get("text", "")
             real = normalize_output(result.stdout)
             if outputs_match(claimed, result.stdout):
                 agreed += 1
                 print(f"  q{q.id:<4} ok   {real!r}")
+                if apply:
+                    # Stamp it: without the flag the client self-grades, which
+                    # is the safe default but loses exact grading on answers we
+                    # have actually proven.
+                    q.answer = {**answer, "verified": "executed"}
                 continue
 
             corrected += 1
@@ -83,12 +102,12 @@ def main(apply: bool) -> int:
                         prompt_version=artifact.prompt_version,
                     )
                 )
-                q.answer = {"kind": "output", "text": real}
+                q.answer = {"kind": "output", "text": real, "verified": "executed"}
                 q.explanation = (
                     f"{(q.explanation or '').rstrip()}\n\nVerified by running the code."
                 ).strip()
 
-        if apply and corrected:
+        if apply:
             db.commit()
 
     print(

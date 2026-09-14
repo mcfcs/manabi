@@ -286,11 +286,22 @@ Question guidelines:
   answer in "correct_text" and 2-5 grading criteria in "key_points".
 - "coding": ask the student to WRITE code — only when the material is
   code-oriented; put a complete reference solution in "correct_text" inside a
-  fenced ``` block.
+  fenced ``` block. Any starter/context code the student needs goes in "code".
 - "output": show a code snippet or computation and ask for its EXACT output —
   only when the material is code/computation-oriented; put the exact expected
-  output in "correct_text". The snippet MUST be in a fenced block tagged with
-  its language (```c or ```python) — untagged code cannot be checked.
+  output in "correct_text".
+  * PUT THE SNIPPET IN THE "code" FIELD. That is what it is for. A question
+    that says "the following code" without the code is discarded — the student
+    cannot answer it and the code cannot be checked. (You may instead inline a
+    fenced ```c / ```python block in the prompt; the "code" field is simpler.)
+  * The snippet MUST actually PRINT something — it needs a printf/print whose
+    result is visible. "What is stored in the array afterwards" is not an
+    output question; ask what the program prints, or pick another type.
+  * The program's output must be FULLY DETERMINISTIC. Never write an output
+    question whose result is a memory address, an uninitialised value, a random
+    number, the current time, or anything platform-specific. If you cannot state
+    the exact characters printed, choose different code — "exact output" and
+    "<some address>" cannot both be true, and such a question is discarded.
 - COMPUTING AN "output" ANSWER — do this literally, not from intuition:
   1. Work the code through one step at a time and write that reasoning in the
      explanation: index positions, pointer targets, loop iterations, variable
@@ -314,6 +325,17 @@ Question guidelines:
 
 Produce JSON matching the schema with exactly {{count}} questions."""
 
+ALL_QUIZ_TYPES = (
+    "mcq",
+    "tf",
+    "short",
+    "enumeration",
+    "identification",
+    "essay",
+    "coding",
+    "output",
+)
+
 QUIZ_SCHEMA = {
     "type": "object",
     "properties": {
@@ -323,6 +345,11 @@ QUIZ_SCHEMA = {
             "items": {
                 "type": "object",
                 "properties": {
+                    # Optional, per the grammar-brittleness rule: a required
+                    # nested/extra field has collapsed constrained decoding
+                    # before. An `output` question that leaves it empty and has
+                    # no fence in the prompt is discarded instead.
+                    "code": {"type": "string"},
                     "qtype": {
                         "type": "string",
                         "enum": [
@@ -365,6 +392,26 @@ QUIZ_SCHEMA = {
 # exercises (code traces, computations, applications) that need not have a
 # supporting sentence in the sources. source_ids become optional — an item
 # with [] is persisted uncited and the UI marks it "synthesized".
+
+def quiz_schema_for(types: list[str], *, exercise: bool = False) -> dict:
+    """A copy of the quiz schema whose `qtype` enum is exactly the requested
+    types.
+
+    The enum used to list all eight regardless of what was asked for, so the
+    grammar permitted any of them — and the model took the licence. Measured on
+    a real run asking for `output` only, it returned mcq, output, identification,
+    enumeration, short, mcq: five of six were then thrown away by the type
+    filter, and the shortfall was made up with extra top-up calls. Narrowing the
+    enum makes the wrong type impossible to emit rather than merely discouraged.
+    """
+    import copy
+
+    schema = copy.deepcopy(QUIZ_EXERCISE_SCHEMA if exercise else QUIZ_SCHEMA)
+    allowed = [t for t in types if t in ALL_QUIZ_TYPES] or list(ALL_QUIZ_TYPES)
+    schema["properties"]["questions"]["items"]["properties"]["qtype"]["enum"] = allowed
+    return schema
+
+
 
 _EXERCISE_RULES = """RULES — follow strictly:
 - The numbered SOURCE MATERIAL defines the topics in scope. Stay on those

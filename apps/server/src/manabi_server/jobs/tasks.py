@@ -5,6 +5,8 @@ Procrastinate runs sync tasks in a worker thread, keeping the async worker
 loop responsive. DB access uses a sync engine for the same reason.
 """
 
+import logging
+
 import procrastinate
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session, sessionmaker
@@ -21,6 +23,8 @@ from manabi_server.jobs.queue import (
 def _conninfo() -> str:
     return get_settings().database_url_sync.replace("postgresql+psycopg", "postgresql")
 
+
+log = logging.getLogger("manabi.tasks")
 
 app = procrastinate.App(connector=procrastinate.PsycopgConnector(conninfo=_conninfo()))
 
@@ -110,9 +114,10 @@ def verify_quiz_outputs(artifact_id: int) -> int:
         extract_snippet,
         normalize_output,
         outputs_match,
+        printed_anything,
     )
 
-    corrected = 0
+    corrected = agreed = unverified = 0
     with db_session() as db:
         artifact = db.execute(
             select(Artifact).where(Artifact.id == artifact_id)
@@ -130,14 +135,32 @@ def verify_quiz_outputs(artifact_id: int) -> int:
             .all()
         )
         for q in questions:
+            answer = dict(q.answer or {})
             snippet = extract_snippet(q.prompt or "")
             if snippet is None:
+                # Record WHY it could not be checked, rather than skipping in
+                # silence. `output` is graded by exact string equality with no
+                # self-grade override, so an unverified key marks a correct
+                # student wrong — the client falls back to self-grading unless
+                # this says "executed".
+                q.answer = {**answer, "verified": "unverifiable:no runnable code block"}
+                unverified += 1
                 continue
             result = execute(snippet)
             if not result.ok:
-                continue  # cannot verify -> leave the model's answer alone
-            claimed = (q.answer or {}).get("text", "")
+                q.answer = {**answer, "verified": f"unverifiable:{result.error}"}
+                unverified += 1
+                continue
+            if not printed_anything(result):
+                # Ran clean but printed nothing: the question is about something
+                # other than stdout, so "" is not the answer — leave the model's.
+                q.answer = {**answer, "verified": "unverifiable:program prints nothing"}
+                unverified += 1
+                continue
+            claimed = answer.get("text", "")
             if outputs_match(claimed, result.stdout):
+                q.answer = {**answer, "verified": "executed"}
+                agreed += 1
                 continue
 
             real = normalize_output(result.stdout)
@@ -155,10 +178,16 @@ def verify_quiz_outputs(artifact_id: int) -> int:
                     prompt_version=artifact.prompt_version,
                 )
             )
-            q.answer = {"kind": "output", "text": real}
+            q.answer = {"kind": "output", "text": real, "verified": "executed"}
             note = "Verified by running the code."
             q.explanation = f"{(q.explanation or '').rstrip()}\n\n{note}".strip()
             corrected += 1
-        if corrected:
-            db.commit()
+        db.commit()
+        log.info(
+            "quiz %s outputs: %d agreed, %d corrected, %d unverifiable",
+            artifact_id,
+            agreed,
+            corrected,
+            unverified,
+        )
     return corrected

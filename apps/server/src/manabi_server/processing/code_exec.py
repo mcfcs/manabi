@@ -122,9 +122,16 @@ def execute(snippet: Snippet) -> ExecResult:
                 # -I: isolated — ignore env vars and the user's site-packages.
                 cmd = [sys.executable, "-I", str(src)]
 
+            # Run twice and require agreement. Code that prints an address, an
+            # uninitialised value, a random number or the time would otherwise
+            # "verify" against whatever it happened to print first, and then
+            # mark the student wrong on every later attempt.
             code, out, err = _run(cmd, cwd, RUN_TIMEOUT)
             if code != 0:
                 return ExecResult(False, out[:MAX_OUTPUT], f"exit {code}: {err.strip()[:300]}")
+            code2, out2, _ = _run(cmd, cwd, RUN_TIMEOUT)
+            if code2 != 0 or normalize_output(out) != normalize_output(out2):
+                return ExecResult(False, out[:MAX_OUTPUT], "output is not deterministic")
             return ExecResult(True, out[:MAX_OUTPUT])
     except subprocess.TimeoutExpired:
         return ExecResult(False, "", "timed out")
@@ -145,3 +152,15 @@ def normalize_output(text: str) -> str:
 
 def outputs_match(expected: str, actual: str) -> bool:
     return normalize_output(expected) == normalize_output(actual)
+
+
+def printed_anything(result: "ExecResult") -> bool:
+    """Did the program actually print something?
+
+    A snippet with no printf at all runs fine and produces "". That is not
+    ground truth for "what is the exact output" — it means the question is not
+    about printed output. A real generation asked what a string-copy routine
+    leaves in `dest`; the model answered "Hi\0", the program printed nothing,
+    and treating "" as the truth replaced a sensible answer with an empty one.
+    """
+    return result.ok and normalize_output(result.stdout) != ""

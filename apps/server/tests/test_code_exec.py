@@ -99,3 +99,23 @@ def test_normalization_forgives_the_trailing_newline_but_not_inner_spacing():
     assert outputs_match("hello", "hello\n")
     assert outputs_match("a\nb", "a  \nb\n")
     assert not outputs_match("a b", "a  b")
+
+
+@pytest.mark.skipif(c_compiler() is None, reason="no C compiler")
+def test_a_program_that_prints_nothing_is_not_ground_truth():
+    """A real generation asked what a string-copy routine leaves in `dest`. The
+    snippet had no printf at all, so it ran clean and printed "" — and treating
+    that as the answer replaced the model's sensible "Hi\0" with nothing."""
+    from manabi_server.processing.code_exec import printed_anything
+
+    r = execute(Snippet("c", 'char d[8]; char *t = "Hi"; while ((*d++ = *t++));'))
+    # Whether it compiles or not, an empty run must never count as verified.
+    assert printed_anything(r) is False
+
+
+def test_printed_anything_requires_visible_output():
+    from manabi_server.processing.code_exec import printed_anything
+
+    assert printed_anything(execute(Snippet("python", "x = 1"))) is False
+    assert printed_anything(execute(Snippet("python", "print('')"))) is False
+    assert printed_anything(execute(Snippet("python", "print('hi')"))) is True

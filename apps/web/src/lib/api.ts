@@ -822,7 +822,11 @@ export interface QuestionOut {
     | { kind: "identification"; text: string }
     | { kind: "essay"; model_answer: string; key_points: string[] }
     | { kind: "coding"; solution: string }
-    | { kind: "output"; text: string };
+    /** `verified: "executed"` means the code was compiled and run, so exact
+     * grading is trustworthy. Anything else (or absent) means it was not
+     * checked, and the UI self-grades rather than risk marking a correct
+     * answer wrong. */
+    | { kind: "output"; text: string; verified?: string };
   explanation: string | null;
   citations: CitationOut[];
 }

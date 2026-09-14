@@ -352,7 +352,11 @@ function QuizPlayer({
     : question.answer.kind === "identification"
       ? fuzzyEqual(shortInput, question.answer.text)
       : question.answer.kind === "output"
-        ? normOutput(longInput) === normOutput(question.answer.text)
+        ? // Only grade exactly when the code was actually run. An unchecked
+          // key is exactly how a correct answer got marked wrong.
+          question.answer.verified === "executed"
+          ? normOutput(longInput) === normOutput(question.answer.text)
+          : null
         : enumHits !== null
           ? enumHits.every(Boolean)
           : null;
@@ -737,7 +741,7 @@ function QuizPlayer({
               {index + 1 < results.length ? "Next" : "Back to current"}{" "}
               <ChevronRight size={15} strokeWidth={2} />
             </button>
-          ) : SELF_GRADED.has(question.qtype) ? (
+          ) : SELF_GRADED.has(question.qtype) || verdict === null ? (
             <div className="quiz-self-grade">
               <button className="btn grade-wrong" onClick={() => next(false)}>
                 I was wrong

@@ -713,6 +713,42 @@ async def generate_flashcards(
             raise
 
 
+_FENCED_CODE = re.compile(r"```[A-Za-z0-9_+#-]*\n.*?\S.*?```", re.DOTALL)
+
+# Answers that cannot be an "exact output": placeholders the model substitutes
+# when it knows the real value is unknowable, and words admitting as much.
+_NON_DETERMINISTIC = re.compile(
+    r"(<[^>\n]{2,40}>"  # <some address>, <garbage>, <undefined>
+    r"|\b(?:some|an?|the)\s+(?:memory\s+)?address\b"
+    r"|\b(?:varies|random|garbage|undefined|indeterminate|unpredictable)\b"
+    r"|\bdepends on\b"
+    r"|\bimplementation[- ]defined\b"
+    r"|\bmay differ\b)",
+    re.I,
+)
+
+
+def fold_code_into_prompt(item: dict) -> None:
+    """Move a question's `code` field into its prompt as a fenced block.
+
+    The model reliably writes a stem referring to code ("Analyze the following
+    C code snippet…") and then omits the snippet, leaving a question nobody can
+    answer and nothing can verify. Giving it a dedicated optional slot to put
+    the code in, and assembling the prompt here, turns that from a formatting
+    instruction it ignores into a field it fills. Mutates `item` in place; safe
+    to call on every question of any type.
+    """
+    code = (item.get("code") or "").strip()
+    if not code:
+        return
+    prompt = item.get("prompt") or ""
+    if "```" in prompt:  # already inline — nothing to do
+        return
+    lang = "c" if item.get("qtype") in ("output", "coding") else ""
+    fence = code if code.startswith("```") else f"```{lang}\n{code}\n```"
+    item["prompt"] = f"{prompt.rstrip()}\n\n{fence}"
+
+
 def _question_answer(item: dict) -> dict | None:
     qtype = item.get("qtype")
     if qtype == "mcq":
@@ -757,9 +793,22 @@ def _question_answer(item: dict) -> dict | None:
             return {"kind": "coding", "solution": item["correct_text"]}
         return None
     if qtype == "output":
-        if item.get("correct_text"):
-            return {"kind": "output", "text": item["correct_text"]}
-        return None
+        text = item.get("correct_text")
+        if not text:
+            return None
+        # A question that says "the following C code" and then shows none is
+        # not a question. Observed in a real run: the model wrote the stem and
+        # simply omitted the snippet, and because nothing checked, it shipped —
+        # and the executor then had nothing to verify against, so it passed
+        # silently too.
+        if not _FENCED_CODE.search(item.get("prompt") or ""):
+            return None
+        # "Exact output" and a non-deterministic value cannot both be true. The
+        # same run produced the answer "10\n10\n<some address>" for code that
+        # prints a pointer — unanswerable by construction.
+        if _NON_DETERMINISTIC.search(text):
+            return None
+        return {"kind": "output", "text": text}
     return None
 
 
@@ -812,7 +861,9 @@ async def generate_quiz(
             # different snippets) — a loose 0.8 similarity dedup eats real
             # variants, so practice quizzes dedup at 0.9.
             dedup_threshold = 0.9 if exercise else 0.8
-            quiz_schema = prompts.QUIZ_EXERCISE_SCHEMA if exercise else prompts.QUIZ_SCHEMA
+            # Enum narrowed to the requested types: the grammar then makes a
+            # wrong type impossible rather than merely discouraged.
+            quiz_schema = prompts.quiz_schema_for(types, exercise=exercise)
             candidates: list[ResolvedItem] = []
             used_chunks: list[ScopedChunk] = []
             last_ctx = None  # last built context — reused by the top-up pass
@@ -844,6 +895,8 @@ async def generate_quiz(
                         preview,
                         response_headroom=_GEN_RESPONSE_HEADROOM,
                     )
+                    for q in result.get("questions", []):
+                        fold_code_into_prompt(q)
                     kept, d = resolve_items(
                         result.get("questions", []),
                         ctx.index_map,
@@ -861,10 +914,12 @@ async def generate_quiz(
                         "{count}", str(min(count + 2, _MAX_QUESTIONS_PER_CALL))
                     ).replace("{types}", ", ".join(types)),
                     _NO_SOURCES_TEXT,
-                    prompts.QUIZ_EXERCISE_SCHEMA,
+                    prompts.quiz_schema_for(types, exercise=True),
                     preview,
                     response_headroom=_GEN_RESPONSE_HEADROOM,
                 )
+                for q in result.get("questions", []):
+                    fold_code_into_prompt(q)
                 kept, d = resolve_items(
                     result.get("questions", []), {}, scope, require_sources=False
                 )
@@ -915,6 +970,8 @@ async def generate_quiz(
                     preview,
                     response_headroom=_GEN_RESPONSE_HEADROOM,
                 )
+                for q in result.get("questions", []):
+                    fold_code_into_prompt(q)
                 kept, d = resolve_items(
                     result.get("questions", []),
                     last_ctx.index_map if last_ctx else {},
@@ -1167,10 +1224,12 @@ async def regenerate_question(job_id: int, question_id: int) -> None:
                 result = await generate_structured(
                     base_prompt,
                     ctx.source_text if ctx else _NO_SOURCES_TEXT,
-                    prompts.QUIZ_EXERCISE_SCHEMA if exercise else prompts.QUIZ_SCHEMA,
+                    prompts.quiz_schema_for([question.qtype], exercise=exercise),
                     preview,
                     response_headroom=2048,  # single question + working
                 )
+                for q in result.get("questions", []):
+                    fold_code_into_prompt(q)
                 kept, _d = resolve_items(
                     result.get("questions", []),
                     ctx.index_map if ctx else {},
@@ -1247,6 +1306,12 @@ async def regenerate_question(job_id: int, question_id: int) -> None:
             await db.commit()
             # re-score supports for the rebuilt citations (cpu queue)
             await app.configure_task(SCORE_SUPPORT_TASK, queue="cpu").defer_async(
+                artifact_id=artifact.id
+            )
+            # A regenerated question is as unverified as a freshly generated
+            # one; without this, "regenerate" was a way back to an unchecked
+            # output answer.
+            await app.configure_task(VERIFY_OUTPUTS_TASK, queue="cpu").defer_async(
                 artifact_id=artifact.id
             )
         except (GenerationError, Exception) as exc:  # noqa: BLE001

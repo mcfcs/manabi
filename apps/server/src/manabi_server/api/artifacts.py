@@ -24,6 +24,7 @@ from manabi_core.models import (
     FlashcardStatus,
     Job,
     JobQueue,
+    JobStatus,
     LectureAudio,
     LectureCheckpointResult,
     Module,
@@ -55,6 +56,13 @@ from manabi_server.jobs.queue import (
     TEACH_MODULE_TASK,
     VERIFY_QUESTION_TASK,
     defer_task,
+)
+from manabi_server.processing.code_exec import (
+    execute,
+    extract_snippet,
+    normalize_output,
+    outputs_match,
+    printed_anything,
 )
 from manabi_server.security import get_default_user, require_csrf
 
@@ -252,8 +260,6 @@ async def _enqueue_generation(
     task_name: str,
     **task_kwargs,
 ) -> Job:
-    from manabi_core.models import JobStatus
-
     inflight = (
         (
             await db.execute(
@@ -995,7 +1001,6 @@ class ActiveJobOut(BaseModel):
 async def active_jobs(
     module: Module = Depends(get_owned_module), db: AsyncSession = Depends(get_db)
 ) -> list[ActiveJobOut]:
-    from manabi_core.models import JobStatus
 
     jobs = (
         (
@@ -1796,6 +1801,85 @@ class ChallengeIn(BaseModel):
     user_answer: str = ""
 
 
+async def _settle_output_dispute(
+    db: AsyncSession, user: User, question: QuizQuestion, user_answer: str
+) -> int | None:
+    """Decide an `output` dispute by executing the code. Returns the id of an
+    already-finished job carrying the verdict, or None when the code cannot be
+    run and a model has to adjudicate after all.
+
+    Writes a finished Job rather than answering inline so the client's existing
+    poll-a-job flow is unchanged.
+    """
+    if question.qtype != "output":
+        return None
+    snippet = await asyncio.to_thread(extract_snippet, question.prompt or "")
+    if snippet is None:
+        return None
+    result = await asyncio.to_thread(execute, snippet)
+    if not result.ok or not printed_anything(result):
+        return None  # nothing printed -> the code cannot settle this one
+
+    real = normalize_output(result.stdout)
+    stored = (question.answer or {}).get("text", "")
+    stored_ok = outputs_match(stored, result.stdout)
+    user_ok = outputs_match(user_answer, result.stdout)
+
+    if not stored_ok:
+        # The key was wrong. Correct it here so the same question cannot mark
+        # the next person wrong too, and keep the pair as a training label.
+        artifact = (
+            await db.execute(select(Artifact).where(Artifact.id == question.artifact_id))
+        ).scalar_one_or_none()
+        db.add(
+            AIFeedback(
+                kind=AIFeedbackKind.answer_disputed,
+                artifact_id=question.artifact_id,
+                question_id=question.id,
+                rejected={"answer": question.answer, "explanation": question.explanation},
+                preferred={
+                    "answer": {"kind": "output", "text": real},
+                    "verified_by": f"executed ({snippet.lang}) on challenge",
+                },
+                model_name=artifact.model_name if artifact else None,
+                prompt_version=artifact.prompt_version if artifact else None,
+            )
+        )
+        question.answer = {"kind": "output", "text": real}
+        question.explanation = (
+            f"{(question.explanation or '').rstrip()}\n\n"
+            "Corrected by compiling and running the code."
+        ).strip()
+
+    verdict_text = (
+        f"Ran the code: it prints {real!r}. "
+        + ("The stored answer was right. " if stored_ok else "The stored answer was wrong. ")
+        + ("Your answer matches." if user_ok else "Your answer does not match.")
+    )
+    job = Job(
+        user_id=user.id,
+        job_type="verify_question",
+        queue=JobQueue.cpu,
+        status=JobStatus.succeeded,
+        payload={"question_id": question.id},
+        progress_pct=100,
+        progress_note="Done",
+        started_at=datetime.now(UTC),
+        finished_at=datetime.now(UTC),
+        result={
+            "verdict": {
+                "stored_answer_correct": stored_ok,
+                "user_answer_correct": user_ok,
+                "explanation": verdict_text,
+                "corrected_answer": "" if stored_ok else real,
+            }
+        },
+    )
+    db.add(job)
+    await db.commit()
+    return job.id
+
+
 @router.post(
     "/quiz-questions/{question_id}/challenge", dependencies=[Depends(require_csrf)]
 )
@@ -1806,7 +1890,19 @@ async def challenge_question(
     db: AsyncSession = Depends(get_db),
 ) -> JobRef:
     """Student disputes the stored answer — an adjudication job re-checks it
-    against the question's cited sources and reports who is right."""
+    against the question's cited sources and reports who is right.
+
+    For an `output` question we can do better than an opinion: run the code.
+    This is the moment a wrong answer key does the most damage — `output` is
+    graded by exact string equality with no self-grade override, so a bad key
+    marks a correct student wrong — and asking a model to adjudicate a question
+    another model already got wrong is not an improvement. If the code runs, it
+    settles the dispute instantly, with no GPU job at all.
+    """
+    settled = await _settle_output_dispute(db, user, question, data.user_answer or "")
+    if settled is not None:
+        return JobRef(job_id=settled)
+
     job = await _enqueue_question_job(
         db,
         user,

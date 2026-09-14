@@ -65,10 +65,18 @@ def test_coding_and_output_answers():
         "kind": "coding",
         "solution": "```c\nint x;\n```",
     }
-    assert _question_answer({"qtype": "output", "correct_text": "5 4 6"}) == {
-        "kind": "output",
-        "text": "5 4 6",
-    }
+    # An `output` question must now SHOW its code: a real generation produced
+    # "Given the following C code snippet…" with no snippet at all, which the
+    # student cannot answer and the executor cannot check. See
+    # apps/ai-worker/tests/test_output_questions.py for the full contract.
+    assert _question_answer(
+        {
+            "qtype": "output",
+            "prompt": 'Output?\n\n```c\nprintf("5 4 6");\n```',
+            "correct_text": "5 4 6",
+        }
+    ) == {"kind": "output", "text": "5 4 6"}
+    assert _question_answer({"qtype": "output", "correct_text": "5 4 6"}) is None
     assert _question_answer({"qtype": "coding"}) is None
     assert _question_answer({"qtype": "output"}) is None
 
@@ -232,7 +240,9 @@ def _question_db():
                 _Result(scalars=[]),  # no in-flight jobs
             ]
         ),
-        types.SimpleNamespace(id=9, artifact_id=3),
+        # qtype matters now: an `output` question is settled by running its
+        # code instead of deferring to the model (see _settle_output_dispute).
+        types.SimpleNamespace(id=9, artifact_id=3, qtype="short", prompt="Regex?"),
     )
 
 
