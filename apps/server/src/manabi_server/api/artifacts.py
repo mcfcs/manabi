@@ -53,6 +53,7 @@ from manabi_server.jobs.queue import (
     GENERATE_QUIZ_TASK,
     GENERATE_SUMMARY_TASK,
     REGENERATE_QUESTION_TASK,
+    SAMPLE_QUESTION_TASK,
     TEACH_MODULE_TASK,
     VERIFY_QUESTION_TASK,
     defer_task,
@@ -1795,6 +1796,116 @@ async def _enqueue_question_job(
     )
     await db.commit()
     return job
+
+
+def _sample_answer_text(answer: dict, options: list[str] | None) -> str:
+    """Flatten any answer shape to one readable line for the sample preview."""
+    kind = (answer or {}).get("kind")
+    if kind == "mcq":
+        i = answer.get("correct_option")
+        opts = options or []
+        return opts[i] if isinstance(i, int) and 0 <= i < len(opts) else f"option {i}"
+    if kind == "tf":
+        return "True" if answer.get("value") else "False"
+    if kind == "enumeration":
+        return "; ".join(answer.get("items") or [])
+    if kind == "essay":
+        return answer.get("model_answer") or ""
+    if kind == "coding":
+        return answer.get("solution") or ""
+    return answer.get("text") or ""
+
+
+class SampleIn(BaseModel):
+    qtype: str
+    document_ids: list[int] | None = None
+
+
+class SampleOut(BaseModel):
+    """One throwaway question, so a recommended type can be sanity-checked
+    against the real material before committing to a whole quiz."""
+
+    qtype: str
+    prompt: str
+    options: list[str] | None = None
+    answer_text: str
+    explanation: str | None = None
+    verified: str | None = None  # "executed" when the code was actually run
+
+
+@router.post("/modules/{module_id}/quiz-sample", dependencies=[Depends(require_csrf)])
+async def create_quiz_sample(
+    data: SampleIn,
+    module: Module = Depends(get_owned_module),
+    user: User = Depends(get_default_user),
+    db: AsyncSession = Depends(get_db),
+) -> JobRef:
+    """Queue a single sample question. Persists nothing but the job."""
+    if data.qtype not in QUIZ_TYPES:
+        raise HTTPException(status_code=422, detail="Unknown question type")
+    job = Job(
+        user_id=user.id,
+        job_type="sample_question",
+        queue=JobQueue.gpu,
+        payload={"module_id": module.id, "qtype": data.qtype},
+        module_id=module.id,
+    )
+    db.add(job)
+    await db.flush()
+    job.procrastinate_job_id = await defer_task(
+        SAMPLE_QUESTION_TASK,
+        "gpu",
+        job_id=job.id,
+        module_ids=[module.id],
+        qtype=data.qtype,
+        document_ids=data.document_ids or None,
+    )
+    await db.commit()
+    return JobRef(job_id=job.id)
+
+
+@router.get("/quiz-sample/{job_id}")
+async def read_quiz_sample(
+    job_id: int,
+    user: User = Depends(get_default_user),
+    db: AsyncSession = Depends(get_db),
+) -> SampleOut:
+    """The finished sample. For an `output` question the code is run here —
+    the app server has the compiler, the GPU node need not — so the answer
+    shown is one that was executed, not one that was claimed."""
+    job = (
+        await db.execute(
+            select(Job).where(
+                Job.id == job_id, Job.user_id == user.id, Job.job_type == "sample_question"
+            )
+        )
+    ).scalar_one_or_none()
+    if job is None or job.status != JobStatus.succeeded:
+        raise HTTPException(status_code=404, detail="No finished sample for that job")
+    q = (job.result or {}).get("question") or {}
+    answer = q.get("answer") or {}
+    text = _sample_answer_text(answer, q.get("options"))
+    verified: str | None = None
+
+    if q.get("qtype") == "output":
+        snippet = await asyncio.to_thread(extract_snippet, q.get("prompt") or "")
+        if snippet is not None:
+            result = await asyncio.to_thread(execute, snippet)
+            if result.ok and printed_anything(result):
+                real = normalize_output(result.stdout)
+                verified = "executed"
+                if not outputs_match(text, result.stdout):
+                    text = real  # the run wins over the model, as everywhere else
+            else:
+                verified = f"unverifiable:{result.error or 'program prints nothing'}"
+    return SampleOut(
+        qtype=q.get("qtype") or "",
+        prompt=q.get("prompt") or "",
+        options=q.get("options"),
+        answer_text=text,
+        explanation=q.get("explanation"),
+        verified=verified,
+    )
 
 
 class ChallengeIn(BaseModel):

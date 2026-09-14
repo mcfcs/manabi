@@ -1963,3 +1963,73 @@ async def teach_module(
             log.exception("lecture generation failed")
             await db.rollback()
             await _fail(db, job, exc)
+
+
+@app.task(name="manabi_ai.tasks.sample_question", queue="gpu", retry=0, pass_context=True)
+async def sample_question(
+    context,
+    job_id: int,
+    module_ids: list[int],
+    qtype: str,
+    document_ids: list[int] | None = None,
+) -> None:
+    """Generate ONE question and leave it in the job result — no artifact.
+
+    A dry run before committing to a full quiz: the type chooser recommends a
+    question type from the material's shape, and this proves the material
+    actually supports it. Nothing is persisted beyond the job row, so a sample
+    never pollutes the deck.
+    """
+    async with session_factory()() as db:
+        job = await _start(db, job_id)
+        try:
+            chunks = await load_context_chunks(db, module_ids, document_ids=document_ids)
+            if not chunks:
+                raise GenerationError("No material in scope to sample from")
+            ctx = build_context(next(iter(batch_chunks(chunks))), None)
+            await _progress(db, job, 40, "Writing a sample question")
+
+            # Ask for three in the ONE call and keep the first that passes
+            # validation. Asking for exactly one is fragile: roughly a third are
+            # rejected (no code shown, non-deterministic output), and then there
+            # is nothing to show. Three costs the same round trip.
+            result = await generate_structured(
+                prompts.QUIZ_PROMPT.replace("{count}", "3").replace("{types}", qtype),
+                ctx.source_text,
+                prompts.quiz_schema_for([qtype]),
+                response_headroom=3072,
+            )
+            scope = set(module_ids)
+            picked: dict | None = None
+            for item in result.get("questions", []):
+                fold_code_into_prompt(item)
+                kept, _ = resolve_items([item], ctx.index_map, scope, require_sources=True)
+                if kept and _question_answer(kept[0].item) is not None:
+                    picked = kept[0].item
+                    break
+            if picked is None:
+                raise GenerationError(
+                    f"The model could not produce a usable {qtype} question from this material"
+                )
+
+            job.status = JobStatus.succeeded
+            job.progress_pct = 100
+            job.progress_note = "Done"
+            job.preview = None
+            job.result = {
+                "question": {
+                    "qtype": picked.get("qtype"),
+                    "prompt": picked.get("prompt"),
+                    "options": picked.get("options"),
+                    "explanation": picked.get("explanation"),
+                    "answer": _question_answer(picked),
+                }
+            }
+            job.finished_at = datetime.now(UTC)
+            await db.commit()
+        except JobAborted:
+            raise
+        except (GenerationError, Exception) as exc:  # noqa: BLE001
+            log.exception("sample question failed")
+            await db.rollback()
+            await _fail(db, job, exc)

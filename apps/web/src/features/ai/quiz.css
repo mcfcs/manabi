@@ -358,3 +358,72 @@
   margin: var(--s-1) 0 0;
   max-width: 68ch;
 }
+
+/* ── Sample preview: one real question before committing to a quiz ────── */
+
+.quiz-sample {
+  flex-basis: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-2);
+  margin-top: var(--s-2);
+}
+.quiz-sample > button {
+  align-self: flex-start;
+}
+.quiz-sample-card {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-2);
+  padding: var(--s-3);
+  border: 1px solid var(--rule);
+  border-left: 3px solid var(--accent-blue);
+  border-radius: var(--radius);
+  background: var(--surface-raised);
+  max-width: 72ch;
+}
+.quiz-sample-label {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--s-2);
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--ink-faint);
+}
+.quiz-sample-verified {
+  text-transform: none;
+  letter-spacing: 0;
+  color: var(--accent-blue-deep);
+  background: var(--accent-blue-wash);
+  border-radius: var(--radius-sm);
+  padding: 1px 6px;
+}
+.quiz-sample-unverified {
+  text-transform: none;
+  letter-spacing: 0;
+  color: var(--stale);
+}
+.quiz-sample-prompt {
+  font-size: 13.5px;
+}
+.quiz-sample-options {
+  margin: 0;
+  padding-left: var(--s-4);
+  font-size: 13px;
+  color: var(--ink-soft);
+}
+.quiz-sample-answer {
+  margin: 0;
+  font-size: 13.5px;
+}
+.quiz-sample-why {
+  font-size: 12.5px;
+  color: var(--ink-soft);
+}
+.quiz-sample-note {
+  margin: 0;
+  font-size: 11.5px;
+  color: var(--ink-faint);
+}

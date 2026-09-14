@@ -9,6 +9,7 @@ import {
   Plus,
   RefreshCw,
   SkipForward,
+  Sparkles,
 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 
@@ -20,6 +21,7 @@ import {
   type QuestionOut,
   type QuizListItem,
   type QuizOut,
+  type QuizSampleOut,
   type QuizSuggestionsOut,
 } from "../../lib/api";
 import { Markdown } from "../../components/Markdown";
@@ -826,6 +828,52 @@ export function QuizTab({
   const reasons = new Map(
     (suggest.data?.suggestions ?? []).map((x) => [x.qtype, x] as const),
   );
+
+  // A dry run before committing to a whole quiz: one real question of the
+  // top recommended type, from the material actually selected. Only ever runs
+  // when the button is pressed.
+  const [sampleJobId, setSampleJobId] = useState<number | null>(null);
+  const [sample, setSample] = useState<QuizSampleOut | null>(null);
+  const topType = suggestedTypes[0];
+
+  const sampleJob = useQuery({
+    queryKey: ["job", sampleJobId],
+    queryFn: () => api.get<{ status: string; error: string | null }>(
+      `/api/jobs/${sampleJobId}`,
+    ),
+    enabled: sampleJobId != null,
+    refetchInterval: (q) =>
+      q.state.data && ["succeeded", "failed", "cancelled"].includes(q.state.data.status)
+        ? false
+        : 2000,
+  });
+
+  useEffect(() => {
+    if (sampleJobId == null || sampleJob.data?.status !== "succeeded") return;
+    let cancelled = false;
+    api
+      .get<QuizSampleOut>(`/api/quiz-sample/${sampleJobId}`)
+      .then((s) => !cancelled && setSample(s))
+      .catch(() => undefined);
+    return () => {
+      cancelled = true;
+    };
+  }, [sampleJobId, sampleJob.data?.status]);
+
+  const makeSample = useMutation({
+    mutationFn: () => {
+      setSample(null);
+      return api.post<JobRef>(`/api/modules/${scopeIds[0]}/quiz-sample`, {
+        qtype: topType,
+        document_ids: singleModule ? docIds : null,
+      });
+    },
+    onSuccess: (ref) => setSampleJobId(ref.job_id),
+  });
+  const samplePending =
+    makeSample.isPending ||
+    (sampleJobId != null && sampleJob.data?.status !== "succeeded" &&
+      sampleJob.data?.status !== "failed" && !sample);
   const noSources = singleModule && docIds !== null && docIds.length === 0;
   const topicOnly = mode === "exercise" && instructions.trim().length > 0;
   const blocked = noSources && !topicOnly;
@@ -981,6 +1029,62 @@ export function QuizTab({
                 );
               })}
             </div>
+            {suggest.data?.has_material && topType && (
+              <div className="quiz-sample">
+                <button
+                  className="btn btn-sm"
+                  onClick={() => makeSample.mutate()}
+                  disabled={samplePending || !singleModule}
+                  title={
+                    singleModule
+                      ? `Write one real ${TYPE_LABELS[topType] ?? topType} question from this material, so you can see whether it suits`
+                      : "Pick a single module to preview a sample"
+                  }
+                >
+                  {samplePending ? (
+                    <Loader2 size={13} className="spin" />
+                  ) : (
+                    <Sparkles size={13} strokeWidth={1.75} />
+                  )}{" "}
+                  {samplePending
+                    ? "Writing a sample…"
+                    : `Preview a ${TYPE_LABELS[topType] ?? topType} question`}
+                </button>
+                {sampleJob.data?.status === "failed" && (
+                  <p className="error-text">{sampleJob.data.error}</p>
+                )}
+                {sample && (
+                  <div className="quiz-sample-card">
+                    <span className="quiz-sample-label">
+                      Sample · {TYPE_LABELS[sample.qtype] ?? sample.qtype}
+                      {sample.verified === "executed" && (
+                        <span className="quiz-sample-verified">answer verified by running it</span>
+                      )}
+                      {sample.verified?.startsWith("unverifiable") && (
+                        <span className="quiz-sample-unverified">could not be run</span>
+                      )}
+                    </span>
+                    <Markdown className="quiz-sample-prompt">{sample.prompt}</Markdown>
+                    {sample.options && (
+                      <ul className="quiz-sample-options">
+                        {sample.options.map((o, i) => (
+                          <li key={i}>{o}</li>
+                        ))}
+                      </ul>
+                    )}
+                    <p className="quiz-sample-answer">
+                      <strong>Answer:</strong> {sample.answer_text}
+                    </p>
+                    {sample.explanation && (
+                      <Markdown className="quiz-sample-why">{sample.explanation}</Markdown>
+                    )}
+                    <p className="quiz-sample-note">
+                      A dry run — this question is not saved.
+                    </p>
+                  </div>
+                )}
+              </div>
+            )}
             {types === null && suggest.data?.has_material && (
               <p className="gen-hint quiz-suggest-hint">
                 Suggested from this material

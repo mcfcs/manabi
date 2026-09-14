@@ -457,6 +457,16 @@ export interface UnpreparedReading {
   page_count: number | null;
 }
 
+export interface QuizSampleOut {
+  qtype: string;
+  prompt: string;
+  options: string[] | null;
+  answer_text: string;
+  explanation: string | null;
+  /** "executed" when the code was actually compiled and run */
+  verified: string | null;
+}
+
 export interface TypeSuggestionOut {
   qtype: string;
   recommended: boolean;

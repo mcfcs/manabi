@@ -31,6 +31,7 @@ SYNTHESIZE_LECTURE_TASK = "manabi_ai.tasks.synthesize_lecture"  # gpu
 SPEAK_TEXT_TASK = "manabi_ai.tasks.speak_text"  # gpu
 VOICE_PREVIEW_TASK = "manabi_ai.tasks.voice_preview"  # gpu
 NARRATE_DOCUMENT_TASK = "manabi_ai.tasks.narrate_document"  # gpu
+SAMPLE_QUESTION_TASK = "manabi_ai.tasks.sample_question"  # gpu (one throwaway question)
 PROCESS_DOCUMENT_TASK = "manabi_server.tasks.process_document"  # cpu queue (app server)
 SCORE_SUPPORT_TASK = "manabi_server.tasks.score_support"  # cpu (needs local embed model)
 EXTRACT_TEXT_HTML_TASK = "manabi_server.tasks.extract_text_html"  # cpu (backfill)
