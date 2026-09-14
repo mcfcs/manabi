@@ -1604,6 +1604,26 @@ async def chat_answer(
             raise
 
 
+def _briefing_line(text: str) -> bool:
+    """Is this briefing field worth printing?
+
+    Each field is an optional paragraph, and the prompt tells the model to leave
+    one empty when it has nothing to say. Models do not reliably return "" — they
+    return *something*. Observed in real briefings: `due_soon` came back as the
+    emoticon ":[" on Sep 14 and as the bare shouted task title "GUIDANCE TREST"
+    on Sep 12, both of which were printed verbatim as a paragraph of the letter.
+
+    So require an actual word: at least two consecutive letters. That drops
+    emoticons and stray punctuation, while keeping any real sentence — including
+    short ones like "Proceed." — and is the same rule the TTS splitter applies
+    before handing a fragment to the voice server.
+    """
+    return bool(_WORDY.search(text))
+
+
+_WORDY = re.compile(r"[A-Za-z]{2}")
+
+
 @app.task(name="manabi_ai.tasks.daily_briefing", queue="gpu", retry=1, pass_context=True)
 async def daily_briefing(
     context,
@@ -1642,7 +1662,7 @@ async def daily_briefing(
                 (result.get("focus") or "").strip(),
                 (result.get("closing") or "").strip(),
             ]
-            content = "\n\n".join(p for p in parts if p)
+            content = "\n\n".join(p for p in parts if _briefing_line(p))
             if not content:
                 raise GenerationError("Empty briefing from model")
 
