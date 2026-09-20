@@ -67,7 +67,10 @@ REM -- 5. Services: kill stale instances, then start fresh ---------------
 REM Every run is a clean redeploy: previous API/worker processes (and their
 REM cmd windows) are killed by command-line match, plus anything else that
 REM holds the app port 56690. Postgres (56661, the Docker container) and the
-REM TTS server (9880, ~30s model reload for nothing) are deliberately spared.
+REM TTS server (9880) are deliberately spared. 9880 is CO-OWNED: the comfort
+REM repo brings up the same GPT-SoVITS server with the same check, so the
+REM window titled "Steven TTS" may not be this repo's. Killing it would cost a
+REM ~30s model reload for nothing and would cut the other app off mid-sentence.
 REM The \. in the match patterns keeps the killer from matching itself. The
 REM loop waits (up to ~10s) until 56690 is really free before uvicorn binds it.
 echo [stop]     clearing previous Manabi processes...
@@ -90,7 +93,7 @@ if exist "C:\GPT-SoVITS\api_v2.py" (
         start "Manabi TTS (Steven)" cmd /k "cd /d C:\GPT-SoVITS && set PYTHONUTF8=1&& .venv\Scripts\python api_v2.py -a 127.0.0.1 -p 9880"
         echo [tts]      Steven voice server starting on 127.0.0.1:9880
     ) else (
-        echo [tts]      Steven voice server already running on 9880
+        echo [tts]      Steven voice server already running on 9880 (ours or comfort's)
     )
 ) else (
     echo [tts]      GPT-SoVITS not installed here - Teacher runs in reading mode

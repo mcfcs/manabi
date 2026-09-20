@@ -23,24 +23,58 @@ pip install -r requirements.txt
 # download pretrained v2 weights per the repo README (GPT-SoVITS-v2 bundle)
 ```
 
-## 3. Reference clips (you supply these)
+## 3. Reference clip and training audio
 
-The clone is only as good as the reference. Spec:
+The clone is only as good as its audio. The reference clip is unchanged:
+ONE **3–10 second** clip, a complete clearly spoken sentence, saved as
+`C:\manabi-voices\steven_ref.wav` (44.1kHz wav), with its **exact transcript**
+written down word for word as `TTS_REF_TEXT`. It is still the only clip cut
+clean and transcribed by hand.
 
-- **1–2 minutes total** of Steven A. Starphase (J. Michael Tatum) from the
-  Blood Blockade Battlefront EN dub — dialogue only, calm delivery scenes.
-- Clean audio: no music/SFX underneath. Use **UVR5** (bundled in GPT-SoVITS
-  WebUI, "UVR5" tab) to strip background if needed.
-- From the cleaned audio, cut ONE **3–10 second** clip with a complete,
-  clearly spoken sentence → save as `C:\manabi-voices\steven_ref.wav`
-  (44.1kHz wav). Write down its **exact transcript** word for word.
-- Keep the rest of the cleaned audio for optional fine-tuning.
+**Do not use UVR5 source separation for the training set.** The earlier recipe
+here took 1–2 minutes through UVR5, and its separation residue — a noise floor
+around −40 dB against the reference clip's −70 dB — was cloned onto every
+generated line and heard as echo.
 
-**Optional fine-tune (better likeness, ~10–30 min on the 5090):** run the
-GPT-SoVITS WebUI training pipeline (slice → ASR → SoVITS train → GPT train)
-on the full 1–2 min set, then point the api server at the trained weights.
-Zero-shot with just the reference clip is already good; fine-tuning closes
-most of the remaining gap.
+**Use the centre channel of a 5.1 mix instead.** Dub dialogue sits in the
+centre channel while music and effects sit in L/R, so extracting it isolates
+speech with no separation artefacts at all. The current voice was trained on
+**76 lines / ~7 minutes** pulled that way from the Kekkai Sensen & Beyond EN
+dub.
+
+**Pick the checkpoint by measurement, not by recency.** On a set this small a
+later epoch is often worse: GPT epoch 4 scored 0.65 speaker similarity with no
+early stops, while epochs 8 and 10 degraded to 0.44 / 0.54 and truncated 25% of
+takes.
+
+Full pipeline, measurements and failure history live outside this repo in
+`D:oicelab\HANDOFF.md`.
+
+### Which weights are being served
+
+`C:\GPT-SoVITS\GPT_SoVITS\configs	ts_infer.yaml` decides what a fresh
+`api_v2` start loads. It currently reads:
+
+```yaml
+custom:
+  version: v2ProPlus
+  t2s_weights_path: GPT_weights_v2ProPlus/steven4-e4.ckpt
+  vits_weights_path: SoVITS_weights_v2ProPlus/steven4_e8_s8.pth
+```
+
+v2ProPlus additionally needs
+`pretrained_models/sv/pretrained_eres2netv2w24s4ep4.ckpt` at load time.
+
+**The worker's four weight settings must agree with that version** — see §5.
+`synthesize_variant("base")` swaps the weights on the shared server and then
+restores `TTS_TUNED_*` from `.env`, so a stale tuned path silently rolls the
+voice back for every client until someone restarts the server, and a base pair
+from a different version moves the whole engine onto that version.
+
+To roll back to the 2026-08 fine-tune, change `tts_infer.yaml` **and** all four
+worker settings together: tuned `GPT_weights_v2/steven-e15.ckpt` +
+`SoVITS_weights_v2/steven_e8_s264.pth`, base back to the v2 pretrained pair.
+The old weights were not deleted.
 
 ## 4. Serve the TTS API (localhost only)
 
@@ -64,7 +98,17 @@ TTS_URL=http://127.0.0.1:9880
 TTS_VOICE=steven
 TTS_REF_AUDIO=C:\manabi-voices\steven_ref.wav
 TTS_REF_TEXT=the exact transcript of the reference clip
+
+# The tuned weight set. MUST match what tts_infer.yaml serves (see §3) —
+# `synthesize_variant("base")` restores these on the shared server after a
+# preview, so a stale path here rolls the voice back for every client.
+TTS_TUNED_GPT=GPT_weights_v2ProPlus/steven4-e4.ckpt
+TTS_TUNED_SOVITS=SoVITS_weights_v2ProPlus/steven4_e8_s8.pth
 ```
+
+`TTS_BASE_GPT` / `TTS_BASE_SOVITS` default in `config.py` to the **v2ProPlus**
+pretrained pair, matching the engine above. They only need setting in `.env`
+if you move to a different engine version, and then all four change together.
 
 Restart the worker. Its heartbeat now advertises `tts: true` → the Teacher
 tab switches from reading mode to voiced lectures, chat replies get a

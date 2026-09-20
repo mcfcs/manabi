@@ -36,15 +36,18 @@ class WorkerSettings(CoreSettings):
     tts_speed: float = 1.0
     # Voice-lab A/B: weight sets for "base" (pretrained zero-shot) and
     # "tuned" (fine-tuned). Paths are relative to the TTS server's cwd.
-    tts_base_gpt: str = (
-        "GPT_SoVITS/pretrained_models/gsv-v2final-pretrained/"
-        "s1bert25hz-5kh-longer-epoch=12-step=369668.ckpt"
-    )
-    tts_base_sovits: str = (
-        "GPT_SoVITS/pretrained_models/gsv-v2final-pretrained/s2G2333k.pth"
-    )
-    tts_tuned_gpt: str = ""  # e.g. GPT_weights_v2/steven-e15.ckpt
-    tts_tuned_sovits: str = ""  # e.g. SoVITS_weights_v2/steven_e8_s264.pth
+    #
+    # These MUST match the engine version the server is actually running
+    # (`custom.version` in GPT_SoVITS/configs/tts_infer.yaml) — currently
+    # v2ProPlus. `synthesize_variant("base")` swaps the weights on the shared
+    # api_v2 process and restores `tts_tuned_*` afterwards, so a base pair from
+    # a different version silently moves the whole server onto that version,
+    # and the A/B then compares two engines rather than two training sets.
+    # Rolling back to v2 means changing all four of these together.
+    tts_base_gpt: str = "GPT_SoVITS/pretrained_models/s1v3.ckpt"
+    tts_base_sovits: str = "GPT_SoVITS/pretrained_models/v2Pro/s2Gv2ProPlus.pth"
+    tts_tuned_gpt: str = ""  # e.g. GPT_weights_v2ProPlus/steven4-e4.ckpt
+    tts_tuned_sovits: str = ""  # e.g. SoVITS_weights_v2ProPlus/steven4_e8_s8.pth
 
     @property
     def effective_chat_model(self) -> str:
