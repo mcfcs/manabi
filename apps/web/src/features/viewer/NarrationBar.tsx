@@ -9,6 +9,7 @@ import {
   LocateFixed,
   Pause,
   Play,
+  RotateCw,
   SkipBack,
   SkipForward,
 } from "lucide-react";
@@ -18,8 +19,8 @@ import { api, type NarrationOut, type NarrationSegmentOut } from "../../lib/api"
 import "./narration.css";
 
 const SPEEDS = [0.9, 1, 1.25, 1.5];
-const GAP_MS = 450; // between paragraphs
-const GAP_HEADING_MS = 900; // before a heading / the title
+const GAP_MS = 250; // additional pause after the clip's own breath/tail
+const GAP_HEADING_MS = 500; // before a heading / the title
 
 /** Worker errors arrive as a whole traceback-ish blob; the first line is the
  * part worth putting in a one-line strip. */
@@ -414,6 +415,22 @@ export function NarrationBar({
           </>
         )}
 
+        {!notPrepared && (
+          <button
+            className="icon-btn"
+            aria-label="Re-record this reading"
+            title="Replace the saved audio using the current voice settings"
+            disabled={recording || prepare.isPending || !data.voice_available}
+            onClick={() => {
+              if (!window.confirm("Re-record this reading? This replaces the saved audio using the current voice settings.")) return;
+              setPlaying(false);
+              go(0);
+              prepare.mutate(true);
+            }}
+          >
+            <RotateCw size={16} strokeWidth={1.75} />
+          </button>
+        )}
         <button className="icon-btn narration-close" onClick={onClose} aria-label="Hide narration">
           ×
         </button>
