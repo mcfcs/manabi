@@ -74,3 +74,24 @@ It is disabled while a recording is in progress or the voice is unavailable.
 The user's Article VI and VII recordings were backed up under the ignored
 `storage/tts-audit/` directory before regeneration. Other saved readings can be
 re-recorded using the same control.
+
+The completed full run replaced all **105 paragraphs** (about 5,550 words):
+Article VI is 56/56 ready and Article VII is 49/49 ready. The four passages
+flagged during the first pass were replaced with new segment IDs using the
+text-verified path, and the final four unfinished paragraphs completed with
+the same checks. Source and stored script text were preserved. The final
+whole-paragraph audit has no remaining flags under the conservative
+completeness criteria above; this is not a claim of zero word errors.
+
+With FFmpeg silence detection at -40 dB and a 350 ms minimum gap, measured
+silence across the 105 MP3s fell from **487.8 to 72.6 seconds**. Paragraphs
+containing a silent gap longer than two seconds fell from **36 to zero**.
+These measurements include ordinary pauses as well as unwanted silence,
+and exclude the player's separate paragraph delay. Final duration is about
+15:30 for Article VI and 13:23 for Article VII. Both API statuses are `ready`,
+with no active jobs or errors; replacement audio URLs were checked via HTTP.
+
+Validation: 396 backend/worker tests and 37 frontend tests passed, along with
+the production web build, TypeScript checks, and targeted Python lint checks.
+The re-record control was exercised in the browser with its request
+intercepted to verify `force: true`; actual regeneration used the live API.
