@@ -41,3 +41,27 @@ def test_overlong_sentences_hard_wrap_without_emitting_empty_pieces():
     out = split_sentences("word " * 200, group_chars=60)
     assert len(out) > 1
     assert all(f.strip() and any(c.isalnum() for c in f) for f in out)
+
+
+def test_section_label_stays_with_its_sentence():
+    text = "Section 1. The executive power shall be vested in the President of the Philippines."
+    assert split_sentences(text) == [text]
+
+
+def test_abbreviations_and_decimal_numbers_are_not_sentence_breaks():
+    text = "Dr. Reyes paid 3.50 in the U.S. today. Next sentence."
+    assert split_sentences(text) == ["Dr. Reyes paid 3.50 in the U.S. today.", "Next sentence."]
+
+
+def test_long_legal_sentence_prefers_clauses_and_preserves_every_word():
+    text = (
+        "Section 3. No person shall be a Senator unless he is a natural-born citizen "
+        "of the Philippines and, on the day of the election, is at least thirty-five "
+        "years of age, able to read and write, a registered voter, and a resident "
+        "of the Philippines for not less than two years immediately preceding "
+        "the day of the election."
+    )
+    parts = split_sentences(text)
+    assert " ".join(parts) == text
+    assert all(len(p) <= 200 for p in parts)
+    assert parts[0].endswith(",")

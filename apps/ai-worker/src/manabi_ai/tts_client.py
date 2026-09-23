@@ -1,18 +1,23 @@
 """HTTP client for the local TTS server (GPT-SoVITS api_v2, port 9880).
 
-Long texts are synthesized in sentence groups (~280 chars — quality degrades
+Long texts are synthesized in sentence groups (~200 chars — quality degrades
 on very long inputs), concatenated, and encoded to mono 64kbps MP3 via
 ffmpeg (iOS-safe; ~0.5 MB/min). Swapping engines (e.g. F5-TTS) only means
 changing `_request_wav`.
 """
 
+import array
 import asyncio
+import io
 import logging
+import math
 import os
 import re
 import shutil
 import subprocess
+import sys
 import tempfile
+import wave
 from glob import glob
 from pathlib import Path
 
@@ -22,7 +27,7 @@ from manabi_ai.config import get_settings
 
 log = logging.getLogger("manabi_ai.tts")
 
-GROUP_CHARS = 280
+GROUP_CHARS = 200
 
 _ffmpeg_dir: str | None = None
 
@@ -49,6 +54,15 @@ def _tool(name: str) -> str:
 
 
 _SENT_END = re.compile(r"(?<=[.!?…])\s+")
+_ABBREVIATION_END = re.compile(
+    r"\b(?:Mr|Mrs|Ms|Dr|Prof|Sr|Jr|St|vs|e\.g|i\.e|(?:[A-Za-z]\.)+[A-Za-z])\.$",
+    re.IGNORECASE,
+)
+_SECTION_LABEL = re.compile(r"^(?:section|article|chapter|part)\s+[\w-]+[.:]$", re.IGNORECASE)
+
+
+class TTSQualityError(ValueError):
+    """A successful HTTP response contained unusable or suspiciously short speech."""
 
 
 def _normalize_for_tts(text: str) -> str:
@@ -77,16 +91,30 @@ def _speakable(text: str) -> bool:
 
 def split_sentences(text: str, group_chars: int = GROUP_CHARS) -> list[str]:
     """One TTS fragment per sentence. GPT-SoVITS is most reliable synthesizing a
-    single utterance at a time — combining several sentences into one request is
-    what made it gasp through and skip the earlier ones. Over-long sentences are
-    hard-wrapped on spaces; pieces with nothing to say are dropped."""
+    single utterance at a time. Keep section labels and abbreviations attached;
+    split long sentences at clauses where possible, then at word boundaries.
+    Pieces with nothing to say are dropped."""
     text = _normalize_for_tts(text)
-    out: list[str] = []
+    sentences: list[str] = []
     for s in _SENT_END.split(text):
         s = s.strip()
+        if sentences and (
+            _ABBREVIATION_END.search(sentences[-1]) or _SECTION_LABEL.fullmatch(sentences[-1])
+        ):
+            sentences[-1] += " " + s
+        elif _speakable(s):
+            sentences.append(s)
+    out: list[str] = []
+    for s in sentences:
         while len(s) > group_chars:
-            cut = s.rfind(" ", 0, group_chars)
-            cut = cut if cut > 0 else group_chars
+            # A clause boundary keeps the voice's phrasing intact. Only fall
+            # back to a word boundary when the sentence has no nearby pause.
+            clauses = list(re.finditer(r"[,;:]\s+", s[: group_chars + 1]))
+            if clauses and clauses[-1].start() >= group_chars // 3:
+                cut = clauses[-1].start() + 1
+            else:
+                cut = s.rfind(" ", 0, group_chars + 1)
+                cut = cut if cut > 0 else group_chars
             head = s[:cut].strip()
             if _speakable(head):
                 out.append(head)
@@ -96,13 +124,57 @@ def split_sentences(text: str, group_chars: int = GROUP_CHARS) -> list[str]:
     return out
 
 
+def _validate_and_trim_wav(content: bytes, text: str, speed: float = 1.0) -> bytes:
+    """Reject silent/early-stop takes; keep breathing room at the two edges.
+
+    This is an acoustic sanity check, not word-level recognition. A large WAV
+    can be almost entirely silence. Never trim an internal gap to disguise a
+    missing clause, and never return the 'longest' take when every take fails.
+    """
+    try:
+        with wave.open(io.BytesIO(content), "rb") as source:
+            params = source.getparams()
+            pcm = source.readframes(params.nframes)
+    except (wave.Error, EOFError) as exc:
+        raise TTSQualityError("Voice server returned an invalid WAV") from exc
+    if params.sampwidth != 2 or params.comptype != "NONE" or not params.framerate:
+        raise TTSQualityError("Voice server returned unsupported WAV audio")
+    if len(pcm) != params.nframes * params.nchannels * params.sampwidth:
+        raise TTSQualityError("Voice server returned a truncated WAV")
+    samples = array.array("h", pcm)
+    if sys.byteorder != "little":
+        samples.byteswap()
+    window = max(1, params.framerate // 100) * params.nchannels  # 10 ms
+    levels = [
+        math.sqrt(sum(v * v for v in samples[i : i + window]) / len(samples[i : i + window]))
+        for i in range(0, len(samples), window)
+    ]
+    active = [i for i, level in enumerate(levels) if level >= 184]  # -45 dBFS RMS
+    words = len(re.findall(r"\b[\w]+(?:['’-][\w]+)*\b", text))
+    voiced_seconds = len(active) / 100
+    minimum = max(0.12, words / (10 * max(0.25, speed)))
+    if not active or voiced_seconds < minimum:
+        raise TTSQualityError(
+            f"Voice stopped early or was silent ({voiced_seconds:.2f}s speech for {words} words)"
+        )
+    if any(b - a > 150 for a, b in zip(active, active[1:], strict=False)):
+        raise TTSQualityError("Voice contains a long silent gap inside a sentence")
+    # A lower threshold plus margins protects soft consonants and breaths.
+    audible = [i for i, level in enumerate(levels) if level >= 58]  # -55 dBFS
+    first = max(0, audible[0] - 10) * window
+    last = min(len(samples), (audible[-1] + 19) * window)
+    output = io.BytesIO()
+    with wave.open(output, "wb") as target:
+        target.setparams(params)
+        target.writeframes(pcm[first * 2 : last * 2])
+    return output.getvalue()
+
+
 async def _request_wav(client: httpx.AsyncClient, text: str) -> bytes:
-    """Synthesize one fragment. Retries once on a transient failure or a
-    suspiciously tiny response (an error page / empty clip), so a single bad
-    fragment doesn't silently drop words from the middle of a reply."""
+    """Retry failed takes with fresh sampling instead of caching missing speech."""
     settings = get_settings()
     last: Exception | None = None
-    for attempt in range(2):
+    for attempt in range(3):
         try:
             r = await client.get(
                 f"{settings.tts_url.rstrip('/')}/tts",
@@ -113,30 +185,56 @@ async def _request_wav(client: httpx.AsyncClient, text: str) -> bytes:
                     "prompt_text": settings.tts_ref_text,
                     "prompt_lang": "en",
                     "speed_factor": settings.tts_speed,
+                    # We already split sentences/clauses. The default cut5
+                    # splits them AGAIN at commas and can return silent pieces.
+                    "text_split_method": "cut0",
+                    "fragment_interval": 0,
+                    "seed": -1,
                     "media_type": "wav",
                 },
                 timeout=300,
             )
             r.raise_for_status()
-            if len(r.content) > 1000:  # a real WAV, not an error / empty body
-                return r.content
-            last = ValueError(f"tiny TTS response ({len(r.content)} bytes)")
+            return await asyncio.to_thread(
+                _validate_and_trim_wav, r.content, text, settings.tts_speed
+            )
         except Exception as exc:  # noqa: BLE001
             last = exc
         log.warning("tts fragment retry (attempt %d): %s", attempt + 1, last)
     raise last or ValueError("tts request failed")
 
 
+async def _fragment_wavs(client: httpx.AsyncClient, text: str) -> list[bytes]:
+    try:
+        return [await _request_wav(client, text)]
+    except TTSQualityError:
+        # One bounded fallback: a stubborn sentence often works as shorter
+        # clauses. Every clause must pass; a failure never silently drops one.
+        parts = split_sentences(text, group_chars=max(40, len(text) // 2))
+        if len(parts) < 2:
+            raise
+        return [await _request_wav(client, part) for part in parts]
+
+
 def _encode_mp3(wav_paths: list[Path], out_path: Path) -> None:
     """Concatenate wavs and encode to mono 64kbps mp3."""
     list_file = out_path.with_suffix(".txt")
-    list_file.write_text(
-        "\n".join(f"file '{p.as_posix()}'" for p in wav_paths), encoding="utf-8"
-    )
+    list_file.write_text("\n".join(f"file '{p.as_posix()}'" for p in wav_paths), encoding="utf-8")
     subprocess.run(
         [
-            _tool("ffmpeg"), "-y", "-f", "concat", "-safe", "0", "-i", str(list_file),
-            "-ac", "1", "-b:a", "64k", str(out_path),
+            _tool("ffmpeg"),
+            "-y",
+            "-f",
+            "concat",
+            "-safe",
+            "0",
+            "-i",
+            str(list_file),
+            "-ac",
+            "1",
+            "-b:a",
+            "64k",
+            str(out_path),
         ],
         check=True,
         capture_output=True,
@@ -147,8 +245,14 @@ def _encode_mp3(wav_paths: list[Path], out_path: Path) -> None:
 def _probe_duration_ms(path: Path) -> int:
     out = subprocess.run(
         [
-            _tool("ffprobe"), "-v", "quiet", "-show_entries", "format=duration",
-            "-of", "csv=p=0", str(path),
+            _tool("ffprobe"),
+            "-v",
+            "quiet",
+            "-show_entries",
+            "format=duration",
+            "-of",
+            "csv=p=0",
+            str(path),
         ],
         check=True,
         capture_output=True,
@@ -166,11 +270,11 @@ async def synthesize(text: str) -> tuple[bytes, int]:
         tmpdir = Path(tmp)
         wavs: list[Path] = []
         async with httpx.AsyncClient() as client:
-            for i, group in enumerate(groups):
-                wav = await _request_wav(client, group)
-                p = tmpdir / f"{i:03d}.wav"
-                p.write_bytes(wav)
-                wavs.append(p)
+            for group in groups:
+                for wav in await _fragment_wavs(client, group):
+                    p = tmpdir / f"{len(wavs):03d}.wav"
+                    p.write_bytes(wav)
+                    wavs.append(p)
         out = tmpdir / "out.mp3"
         await asyncio.to_thread(_encode_mp3, wavs, out)
         duration = await asyncio.to_thread(_probe_duration_ms, out)
