@@ -36,6 +36,9 @@ def embed_texts(texts: list[str], *, is_query: bool = False) -> list[list[float]
                     "model": settings.embedding_model,
                     "input": batch,
                     "keep_alive": "10m",
+                    # Retrieval runs on the app-server CPU. Leaving this at
+                    # Ollama's default occupies VRAM needed by Steven's TTS.
+                    "options": {"num_gpu": 0},
                 },
             )
             r.raise_for_status()
