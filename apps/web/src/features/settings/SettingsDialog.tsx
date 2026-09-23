@@ -397,7 +397,7 @@ export function SettingsDialog({ onClose }: { onClose: () => void }) {
           Steven narrates readings
         </label>
         <p className="settings-hint">
-          Adds a Listen bar to PDF readings. New PDFs are recorded in the
+          Adds a Listen bar to PDF and text readings. New readings are recorded in the
           background right after parsing so the audio is ready when you press
           play; nothing plays on its own. Headers, footnotes, citations and the
           bibliography are skipped.

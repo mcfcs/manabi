@@ -73,7 +73,10 @@ def run_pipeline(db: Session, document_id: int, job_id: int | None) -> None:
             db.execute(delete(Chunk).where(Chunk.document_id == doc.id))
             db.execute(delete(DocElement).where(DocElement.document_id == doc.id))
             db.commit()
-            _stage_render(db, doc, job)
+            if doc.kind == DocumentKind.txt:
+                _stage_structure(db, doc)
+            else:
+                _stage_render(db, doc, job)
             doc.extract_stage = "embed"  # terminal — nothing left to resume
             db.commit()
         if doc.processing_mode != "render_only" and done < 1:
@@ -217,6 +220,28 @@ def _stage_structure(db: Session, doc: Document) -> None:
     db.execute(delete(DocElement).where(DocElement.document_id == doc.id))
     db.execute(delete(DocumentPage).where(DocumentPage.document_id == doc.id))
     db.commit()
+
+    if doc.kind == DocumentKind.txt:
+        from manabi_server.processing.plain_text import decode_text, page_html, text_pages
+
+        pages = text_pages(decode_text(files.resolve(doc.storage_path).read_bytes()))
+        order_index = 0
+        for page_no, blocks in enumerate(pages, start=1):
+            page = DocumentPage(
+                document_id=doc.id, page_no=page_no, text_html=page_html(blocks),
+            )
+            db.add(page)
+            db.flush()
+            if doc.processing_mode != "render_only":
+                for block in blocks:
+                    db.add(DocElement(
+                        document_id=doc.id, page_id=page.id, order_index=order_index,
+                        element_type="paragraph", text_content=block,
+                    ))
+                    order_index += 1
+        doc.page_count = len(pages)
+        db.commit()
+        return
 
     # Normalize the source first (split spreads and/or bake page rotation
     # upright); every stage below then reads the normalized file so its 1:1
@@ -711,6 +736,8 @@ def _pptx_notes_and_titles(source: Path) -> tuple[dict[int, str], dict[int, str]
 
 
 def _stage_render(db: Session, doc: Document, job: Job | None) -> None:
+    if doc.kind == DocumentKind.txt:
+        return  # Native text is already readable; no image conversion needed.
     source = parse_source_path(doc)  # normalized (split) PDF if present
     pdf_path = source
 

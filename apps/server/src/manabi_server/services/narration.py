@@ -1,6 +1,6 @@
 """Narration orchestration shared by the API (async) and the CPU worker (sync).
 
-Script building is CPU-only and fast (PyMuPDF over the stored PDF); the GPU
+Script building is CPU-only (PyMuPDF for PDFs, direct text for TXT); the GPU
 worker then fills in audio per segment (manabi_ai.tasks.narrate_document).
 """
 
@@ -37,9 +37,13 @@ DEFAULT_OPTIONS = {
 
 
 def build_for_document(doc: Document) -> Script:
-    """Layout pass over the document's (normalized) PDF."""
+    """Read plain text directly or run a layout pass over the normalized PDF."""
     from manabi_server.processing.pipeline import parse_source_path
 
+    if doc.kind == DocumentKind.txt:
+        from manabi_server.processing.plain_text import build_text_script, decode_text
+
+        return build_text_script(decode_text(parse_source_path(doc).read_bytes()))
     return build_script_from_path(str(parse_source_path(doc)))
 
 
@@ -62,7 +66,7 @@ def segment_rows(script: Script) -> list[dict]:
 
 
 def narratable(doc: Document) -> bool:
-    return doc.kind == DocumentKind.pdf and doc.processing_mode != "render_only"
+    return doc.kind in (DocumentKind.pdf, DocumentKind.txt) and doc.processing_mode != "render_only"
 
 
 # ── sync side (CPU worker, after a successful parse) ────────────────────────

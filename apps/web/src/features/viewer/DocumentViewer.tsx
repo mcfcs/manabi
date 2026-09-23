@@ -265,7 +265,13 @@ export function DocumentViewer({
   const citation = inPanel ? undefined : routeSearch.citation;
   const queryClient = useQueryClient();
   const isMobile = useIsMobile();
-  const [mode, setModeState] = useState<ViewMode>(loadMode);
+  const doc = useQuery({
+    queryKey: ["document", documentId],
+    queryFn: () => api.get<DocumentDetail>(`/api/documents/${documentId}`),
+  });
+  const isPlainText = doc.data?.kind === "txt";
+  const [preferredMode, setModeState] = useState<ViewMode>(loadMode);
+  const mode = isPlainText ? "read" : preferredMode;
   const [showNotes, setShowNotes] = useState(false);
   const [showText, setShowText] = useState(false);
   const [pageRange, setPageRange] = useState(""); // "Ask about pages 1-3, 5"
@@ -383,11 +389,6 @@ export function DocumentViewer({
     localStorage.setItem("manabi-viewer-mode", m);
     setModeState(m);
   }
-
-  const doc = useQuery({
-    queryKey: ["document", documentId],
-    queryFn: () => api.get<DocumentDetail>(`/api/documents/${documentId}`),
-  });
 
   const module = useQuery({
     queryKey: ["module", String(doc.data?.module_id)],
@@ -632,14 +633,14 @@ export function DocumentViewer({
               <Headphones size={17} strokeWidth={1.5} />
             </button>
           )}
-          <button
+          {!isPlainText && <button
             className={`icon-btn${showText ? " active" : ""}`}
             onClick={() => setShowText((v) => !v)}
             aria-label="Extracted text"
             title="Extracted text — selectable and searchable, even for scanned PDFs"
           >
             <Type size={17} strokeWidth={1.5} />
-          </button>
+          </button>}
           {mode === "scroll" && showText && (
             <button
               className={`icon-btn${showContinuous ? " active" : ""}`}
@@ -685,6 +686,7 @@ export function DocumentViewer({
               <span className="viewer-discuss-count">{docThreads.data!.length}</span>
             )}
           </button>
+          {!isPlainText && <>
           <button
             className={`icon-btn${mode === "single" ? " active" : ""}`}
             onClick={() => setMode("single")}
@@ -716,6 +718,7 @@ export function DocumentViewer({
           >
             <AlignLeft size={17} strokeWidth={1.5} />
           </button>
+          </>}
           {d.kind === "pdf" && (
             <button
               className={`icon-btn${mode === "original" ? " active" : ""}`}
@@ -993,6 +996,7 @@ export function DocumentViewer({
       {narrationAllowed && narrationOpen && (
         <NarrationBar
           documentId={documentId}
+          isPlainText={isPlainText}
           onGoToPage={(p) => {
             if (p !== page) goTo(p);
           }}

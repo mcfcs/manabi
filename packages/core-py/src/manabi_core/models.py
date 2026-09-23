@@ -160,6 +160,7 @@ class CourseLink(Base, TimestampMixin):
 class DocumentKind(enum.StrEnum):
     pdf = "pdf"
     pptx = "pptx"
+    txt = "txt"
 
 
 class ExtractStatus(enum.StrEnum):

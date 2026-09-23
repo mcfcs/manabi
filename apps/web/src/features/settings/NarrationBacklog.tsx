@@ -5,7 +5,7 @@ import { api, type UnpreparedReading } from "../../lib/api";
 
 /** Readings that predate the narration switch.
  *
- * Auto-prepare only fires for PDFs parsed *after* the switch was turned on, so
+ * Auto-prepare only fires for readings parsed *after* the switch was turned on, so
  * everything imported before it had to be opened and prepared one at a time.
  * Recording is GPU work, so this lists the backlog and queues only what is
  * confirmed — never on load. */
@@ -21,7 +21,7 @@ export function NarrationBacklog() {
 
   const prepare = useMutation({
     mutationFn: async (docs: UnpreparedReading[]) => {
-      // Sequentially: each POST scripts a PDF server-side, and the GPU runs
+      // Sequentially: each POST scripts a reading server-side, and the GPU runs
       // them one at a time anyway. A failure on one must not lose the rest.
       const bad: string[] = [];
       let ok = 0;

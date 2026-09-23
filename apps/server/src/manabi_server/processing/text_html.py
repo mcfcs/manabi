@@ -388,6 +388,8 @@ def build_text_html(db: Session, document_id: int) -> int:
     doc = db.get(Document, document_id)
     if doc is None:
         return 0
+    if doc.kind == DocumentKind.txt:
+        return 0  # Built directly from the source during structure extraction.
     pages = (
         db.execute(
             select(DocumentPage)

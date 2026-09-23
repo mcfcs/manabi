@@ -32,6 +32,33 @@
   margin-top: var(--s-1);
 }
 
+.material-add-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: var(--s-2);
+  margin-top: var(--s-2);
+}
+
+.text-material-hint {
+  margin: 0;
+  font-size: 13px;
+  color: var(--ink-soft);
+}
+
+.text-material-input {
+  min-height: 240px;
+  padding: var(--s-3);
+  resize: vertical;
+  line-height: 1.6;
+}
+
+.text-material-field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-1);
+}
+
 .canvas-file-list {
   max-height: 260px;
   overflow-y: auto;

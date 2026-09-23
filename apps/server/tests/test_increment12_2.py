@@ -37,8 +37,8 @@ class _FakeUpload:
         self._data = data
         self.filename = filename
 
-    async def read(self):
-        return self._data
+    async def read(self, size=-1):
+        return self._data if size < 0 else self._data[:size]
 
 
 class _Module:

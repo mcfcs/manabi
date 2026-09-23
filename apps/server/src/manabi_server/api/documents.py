@@ -169,7 +169,16 @@ async def ingest_bytes(
     kind = DocumentKind(ext)
     if len(content) > MAX_UPLOAD_BYTES:
         raise HTTPException(status_code=413, detail="File exceeds the 100 MB limit")
-    if not content.startswith(MAGIC[kind]):
+    if kind == DocumentKind.txt:
+        from manabi_server.processing.plain_text import MAX_TEXT_BYTES, decode_text
+
+        if len(content) > MAX_TEXT_BYTES:
+            raise HTTPException(status_code=413, detail="Text exceeds the 2 MB limit")
+        try:
+            decode_text(content)
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+    elif not content.startswith(MAGIC[kind]):
         raise HTTPException(status_code=422, detail=f"Content does not look like a {ext.upper()}")
     content_hash = hashlib.sha256(content).hexdigest()
     existing = (
@@ -289,10 +298,13 @@ async def upload_document(
     if processing_mode not in ("full", "render_only"):
         raise HTTPException(status_code=422, detail="Invalid processing_mode")
     ext = (file.filename or "").rsplit(".", 1)[-1].lower()
-    if ext not in ("pdf", "pptx"):
-        raise HTTPException(status_code=422, detail="Only PDF and PPTX files are supported")
+    if ext not in ("pdf", "pptx", "txt"):
+        raise HTTPException(status_code=422, detail="Only PDF, PPTX and TXT files are supported")
 
-    data = await file.read()
+    from manabi_server.processing.plain_text import MAX_TEXT_BYTES
+
+    limit = MAX_TEXT_BYTES if ext == "txt" else MAX_UPLOAD_BYTES
+    data = await file.read(limit + 1)
     doc, job = await ingest_bytes(
         db,
         user,
@@ -384,6 +396,9 @@ async def document_reader(
         .scalars()
         .all()
     )
+    if doc.kind == DocumentKind.txt:
+        # Plain text has explicit paragraph boundaries; don't guess joins.
+        return ReaderOut(html="".join(p or "" for p in page_htmls))
     return ReaderOut(html=merge_pages_html(list(page_htmls)))
 
 
@@ -411,11 +426,13 @@ async def download_original(
 ) -> FileResponse:
     """The stored file. inline=1 renders in the browser's own PDF viewer
     (native text layer → Ctrl+F and copy/paste without any extraction)."""
-    media = (
-        "application/pdf"
-        if doc.kind == DocumentKind.pdf
-        else "application/vnd.openxmlformats-officedocument.presentationml.presentation"
-    )
+    media = {
+        DocumentKind.pdf: "application/pdf",
+        DocumentKind.pptx: (
+            "application/vnd.openxmlformats-officedocument.presentationml.presentation"
+        ),
+        DocumentKind.txt: "text/plain",
+    }[doc.kind]
     if inline:
         return FileResponse(
             files.resolve(doc.storage_path),

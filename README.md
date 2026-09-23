@@ -6,13 +6,20 @@ materials, with a privately hosted LLM doing the heavy lifting — everything
 
 ## What it does
 
-- **Materials** — PDF/PPTX upload or Canvas import; Docling parse → page
+- **Materials** — PDF/PPTX/TXT upload, pasted documents, or Canvas import; Docling parse → page
   renders → structure-aware chunks → pgvector embeddings. Viewer with text
   layer, tables, highlights, annotations, native "Original" PDF mode
   (browser Ctrl+F). Per-document AI include/exclude; render-only mode for
   files that shouldn't feed the AI. **Scanned two-page-spread books are
   auto-detected and split** into single logical pages (per-document
   Auto/Single/Spread override), with column-aware reading order.
+  **Text readings** preserve the supplied wording and open directly in the
+  continuous reader. Add them with **Materials → Paste text** (give the reading
+  a title) or upload a `.txt` file (UTF-8 or BOM-marked UTF-16, up to 2 MB).
+  After processing, open the reading and choose **Listen with Steven**. Enable
+  document narration in Settings if the headphone control is hidden. Text
+  narration retains numbered clauses, dates, and references; long readings
+  get generated page numbers for citations and playback, not original pagination.
 - **AI artifacts** — summaries (coverage-tracked key terms/acronyms),
   flashcards (Anki .apkg export), quizzes with attempt history, all with
   page-cited claims, staleness detection, and version history.

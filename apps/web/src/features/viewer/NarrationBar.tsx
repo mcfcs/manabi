@@ -58,10 +58,12 @@ export function NarrationBar({
   documentId,
   onGoToPage,
   onClose,
+  isPlainText = false,
 }: {
   documentId: string;
   onGoToPage: (page: number) => void;
   onClose: () => void;
+  isPlainText?: boolean;
 }) {
   const queryClient = useQueryClient();
   const storageKey = `manabi-narration-${documentId}`;
@@ -297,8 +299,9 @@ export function NarrationBar({
             ) : (
               <>
                 <span className="narration-hint">
-                  Steven can read this to you — headers, footnotes and the bibliography are
-                  skipped.
+                  {isPlainText
+                    ? "Steven reads the full text, including numbered clauses and references."
+                    : "Steven can read this to you — headers, footnotes and the bibliography are skipped."}
                 </span>
                 <button
                   className="btn btn-primary"

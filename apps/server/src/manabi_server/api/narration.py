@@ -171,7 +171,9 @@ async def prepare_narration(
     with force=true (or when it has no segments)."""
     force = bool(data and data.force)
     if not narratable(doc):
-        raise HTTPException(status_code=409, detail="Narration is available for PDF readings only")
+        raise HTTPException(
+            status_code=409, detail="Narration is available for PDF and text readings"
+        )
     if doc.extract_status.value != "ready":
         raise HTTPException(status_code=409, detail="The document is still being processed")
 
@@ -208,7 +210,9 @@ async def prepare_narration(
         script = await asyncio.to_thread(build_for_document, doc)
         rows = segment_rows(script)
         if not rows:
-            raise HTTPException(status_code=422, detail="Nothing readable was found in this PDF")
+            raise HTTPException(
+                status_code=422, detail="Nothing readable was found in this document"
+            )
         if narration is None:
             narration = Narration(document_id=doc.id, options=dict(DEFAULT_OPTIONS))
             db.add(narration)
@@ -308,7 +312,7 @@ class UnpreparedOut(BaseModel):
 async def unprepared_readings(
     user: User = Depends(get_default_user), db: AsyncSession = Depends(get_db)
 ) -> list[UnpreparedOut]:
-    """Narratable PDFs with no narration yet.
+    """Narratable readings with no narration yet.
 
     Auto-prepare only fires for documents parsed *after* the master switch was
     turned on, so everything imported before it has to be opened and prepared
@@ -324,7 +328,7 @@ async def unprepared_readings(
                 Course.user_id == user.id,
                 Course.archived_at.is_(None),
                 Document.deleted_at.is_(None),
-                Document.kind == DocumentKind.pdf,
+                Document.kind.in_([DocumentKind.pdf, DocumentKind.txt]),
                 Document.extract_status == ExtractStatus.ready,
                 Narration.id.is_(None),
             )

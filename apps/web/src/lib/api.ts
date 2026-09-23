@@ -398,7 +398,7 @@ export type ExtractStatus = "pending" | "processing" | "ready" | "failed";
 export interface DocumentOut {
   id: number;
   module_id: number;
-  kind: "pdf" | "pptx";
+  kind: "pdf" | "pptx" | "txt";
   filename: string;
   byte_size: number;
   extract_status: ExtractStatus;

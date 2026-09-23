@@ -112,7 +112,7 @@ export function CourseFiles({ courseId }: { courseId: string }) {
           {docs.map((doc) => (
             <div key={doc.id} className="course-file-card">
               <span className="doc-icon">
-                {doc.kind === "pdf" ? (
+                {doc.kind !== "pptx" ? (
                   <FileText size={16} strokeWidth={1.5} />
                 ) : (
                   <Presentation size={16} strokeWidth={1.5} />

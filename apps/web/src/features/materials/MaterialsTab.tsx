@@ -20,6 +20,7 @@ import { useRef, useState } from "react";
 import { Modal } from "../../components/Modal";
 import { api, type DocumentOut } from "../../lib/api";
 import { CanvasImportModal } from "./CanvasImportModal";
+import { PasteTextModal } from "./PasteTextModal";
 import "./materials.css";
 
 function formatBytes(n: number): string {
@@ -87,6 +88,7 @@ export function MaterialsTab({
   const [uploadError, setUploadError] = useState<string | null>(null);
   const [deleting, setDeleting] = useState<DocumentOut | null>(null);
   const [importing, setImporting] = useState(false);
+  const [pasting, setPasting] = useState(false);
 
   const docs = useQuery({
     queryKey: ["documents", moduleId],
@@ -157,7 +159,7 @@ export function MaterialsTab({
       >
         <Upload size={20} strokeWidth={1.5} />
         <p>
-          Drop PDF or PPTX files here, or{" "}
+          Drop PDF, PPTX or TXT files here, or{" "}
           <button className="link-btn" onClick={() => fileInput.current?.click()}>
             browse
           </button>
@@ -165,7 +167,7 @@ export function MaterialsTab({
         <input
           ref={fileInput}
           type="file"
-          accept=".pdf,.pptx"
+          accept=".pdf,.pptx,.txt"
           multiple
           hidden
           onChange={(e) => {
@@ -173,9 +175,14 @@ export function MaterialsTab({
             e.target.value = "";
           }}
         />
-        <button className="btn canvas-import-btn" onClick={() => setImporting(true)}>
-          <CloudDownload size={15} strokeWidth={1.75} /> Import from Canvas
-        </button>
+        <div className="material-add-actions">
+          <button className="btn" onClick={() => setPasting(true)}>
+            <FileText size={15} strokeWidth={1.75} /> Paste text
+          </button>
+          <button className="btn" onClick={() => setImporting(true)}>
+            <CloudDownload size={15} strokeWidth={1.75} /> Import from Canvas
+          </button>
+        </div>
         {upload.isPending && (
           <p className="upload-status">
             <Loader2 size={14} className="spin" /> Uploading…
@@ -186,7 +193,7 @@ export function MaterialsTab({
 
       {docs.data && docs.data.length === 0 && (
         <div className="home-empty">
-          <p>No materials yet. Upload your first lecture file above.</p>
+          <p>No materials yet. Upload a file or paste a reading above.</p>
         </div>
       )}
 
@@ -197,7 +204,7 @@ export function MaterialsTab({
             className={`doc-row${doc.ai_included ? "" : " ai-excluded"}`}
           >
             <span className="doc-icon">
-              {doc.kind === "pdf" ? (
+              {doc.kind !== "pptx" ? (
                 <FileText size={18} strokeWidth={1.5} />
               ) : (
                 <Presentation size={18} strokeWidth={1.5} />
@@ -305,6 +312,8 @@ export function MaterialsTab({
           onClose={() => setImporting(false)}
         />
       )}
+
+      {pasting && <PasteTextModal moduleId={moduleId} onClose={() => setPasting(false)} />}
 
       {deleting && (
         <Modal title={`Remove "${deleting.filename}"?`} onClose={() => setDeleting(null)}>
