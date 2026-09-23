@@ -48,6 +48,17 @@ def test_section_label_stays_with_its_sentence():
     assert split_sentences(text) == [text]
 
 
+def test_uppercase_numbered_labels_are_words_but_acronyms_stay_intact():
+    assert split_sentences("SECTION 22. The UN and IMF may attend.") == [
+        "Section 22. The UN and IMF may attend."
+    ]
+    for label in ("ARTICLE VII", "CHAPTER 2", "PART IV"):
+        word, number = label.split()
+        assert split_sentences(f"{label}. These provisions apply to the UN.") == [
+            f"{word.capitalize()} {number}. These provisions apply to the UN."
+        ]
+
+
 def test_abbreviations_and_decimal_numbers_are_not_sentence_breaks():
     text = "Dr. Reyes paid 3.50 in the U.S. today. Next sentence."
     assert split_sentences(text) == ["Dr. Reyes paid 3.50 in the U.S. today.", "Next sentence."]

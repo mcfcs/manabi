@@ -70,6 +70,13 @@ def _normalize_for_tts(text: str) -> str:
     plain pauses and collapse repeats. Stray "…", "—", run-on lines and doubled
     punctuation are a common source of the model gasping or skipping words."""
     t = text or ""
+    # Uppercase legal labels are words, not initialisms ("S E C T I O N").
+    # Limit this to numbered labels so real acronyms elsewhere stay intact.
+    t = re.sub(
+        r"\b(SECTION|ARTICLE|CHAPTER|PART)(?=\s+(?:\d+|[IVXLCDM]+)\b)",
+        lambda m: m[0].capitalize(),
+        t,
+    )
     t = t.replace("…", ". ")
     t = re.sub(r"\.{3,}", ". ", t)  # "..." → one pause
     t = re.sub(r"\s*[—–]\s*", ", ", t)  # em/en dash → comma pause

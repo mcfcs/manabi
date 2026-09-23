@@ -27,6 +27,9 @@ The client now owns segmentation (up to 200 characters, preferring clause
 boundaries), keeps section labels and abbreviations together, and requests
 `cut0` with no additional server-inserted fragment silence. It preserves the
 existing trained weights, reference recording, speed, and sampler defaults.
+Numbered uppercase labels such as `SECTION 22` are cased as `Section 22`
+before synthesis. Both small and large-v3 Whisper transcriptions confirmed
+that the uppercase label was being spelled out; real acronyms remain intact.
 
 Previously any response over 1,000 bytes passed. Silence easily exceeds that
 size. Now each WAV is decoded and checked for truncation, measurable speech,
