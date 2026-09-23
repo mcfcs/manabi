@@ -34,6 +34,10 @@ class WorkerSettings(CoreSettings):
     tts_ref_audio: str = ""  # path (on this machine) to a 3-10s reference wav
     tts_ref_text: str = ""  # exact transcript of the reference clip
     tts_speed: float = 1.0
+    # Document readings get a local CPU transcription check before caching.
+    # The named model downloads once; an existing model directory also works.
+    tts_verify_speech: bool = True
+    tts_verification_model: str = "small"
     # Voice-lab A/B: weight sets for "base" (pretrained zero-shot) and
     # "tuned" (fine-tuned). Paths are relative to the TTS server's cwd.
     #

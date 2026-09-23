@@ -24,6 +24,7 @@ from pathlib import Path
 import httpx
 
 from manabi_ai.config import get_settings
+from manabi_ai.tts_verification import verify_wav
 
 log = logging.getLogger("manabi_ai.tts")
 
@@ -122,6 +123,13 @@ def split_sentences(text: str, group_chars: int = GROUP_CHARS) -> list[str]:
             else:
                 cut = s.rfind(" ", 0, group_chars + 1)
                 cut = cut if cut > 0 else group_chars
+            # Don't strand a tiny tail such as "by law.". It has too little
+            # context for this voice and can repeatedly produce silence.
+            min_tail = min(30, max(10, group_chars // 2))
+            if len(s) - cut < min_tail:
+                earlier = s.rfind(" ", 0, len(s) - min_tail + 1)
+                if earlier > 0:
+                    cut = earlier
             head = s[:cut].strip()
             if _speakable(head):
                 out.append(head)
@@ -177,7 +185,7 @@ def _validate_and_trim_wav(content: bytes, text: str, speed: float = 1.0) -> byt
     return output.getvalue()
 
 
-async def _request_wav(client: httpx.AsyncClient, text: str) -> bytes:
+async def _request_wav(client: httpx.AsyncClient, text: str, *, verify: bool = False) -> bytes:
     """Retry failed takes with fresh sampling instead of caching missing speech."""
     settings = get_settings()
     last: Exception | None = None
@@ -202,25 +210,32 @@ async def _request_wav(client: httpx.AsyncClient, text: str) -> bytes:
                 timeout=300,
             )
             r.raise_for_status()
-            return await asyncio.to_thread(
+            wav = await asyncio.to_thread(
                 _validate_and_trim_wav, r.content, text, settings.tts_speed
             )
+            if verify:
+                problem = await asyncio.to_thread(verify_wav, wav, text)
+                if problem:
+                    raise TTSQualityError(problem)
+            return wav
         except Exception as exc:  # noqa: BLE001
             last = exc
         log.warning("tts fragment retry (attempt %d): %s", attempt + 1, last)
     raise last or ValueError("tts request failed")
 
 
-async def _fragment_wavs(client: httpx.AsyncClient, text: str) -> list[bytes]:
+async def _fragment_wavs(
+    client: httpx.AsyncClient, text: str, *, verify: bool = False
+) -> list[bytes]:
     try:
-        return [await _request_wav(client, text)]
+        return [await _request_wav(client, text, verify=verify)]
     except TTSQualityError:
         # One bounded fallback: a stubborn sentence often works as shorter
         # clauses. Every clause must pass; a failure never silently drops one.
         parts = split_sentences(text, group_chars=max(40, len(text) // 2))
         if len(parts) < 2:
             raise
-        return [await _request_wav(client, part) for part in parts]
+        return [await _request_wav(client, part, verify=verify) for part in parts]
 
 
 def _encode_mp3(wav_paths: list[Path], out_path: Path) -> None:
@@ -268,7 +283,7 @@ def _probe_duration_ms(path: Path) -> int:
     return int(float(out.stdout.decode().strip() or "0") * 1000)
 
 
-async def synthesize(text: str) -> tuple[bytes, int]:
+async def synthesize(text: str, *, verify: bool = False) -> tuple[bytes, int]:
     """Returns (mp3 bytes, duration_ms)."""
     groups = split_sentences(text)
     if not groups:
@@ -278,7 +293,7 @@ async def synthesize(text: str) -> tuple[bytes, int]:
         wavs: list[Path] = []
         async with httpx.AsyncClient() as client:
             for group in groups:
-                for wav in await _fragment_wavs(client, group):
+                for wav in await _fragment_wavs(client, group, verify=verify):
                     p = tmpdir / f"{len(wavs):03d}.wav"
                     p.write_bytes(wav)
                     wavs.append(p)

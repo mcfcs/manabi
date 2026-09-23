@@ -119,6 +119,10 @@ TTS_URL=http://127.0.0.1:9880
 TTS_VOICE=steven
 TTS_REF_AUDIO=C:\manabi-voices\steven_ref.wav
 TTS_REF_TEXT=the exact transcript of the reference clip
+TTS_VERIFY_SPEECH=true
+# Local CPU Whisper check for document readings; also accepts a model directory.
+# Downloads once if uncached. Spoken chat/voice previews don't run this check.
+TTS_VERIFICATION_MODEL=small
 
 # The tuned weight set. MUST match what tts_infer.yaml serves (see §3) —
 # `synthesize_variant("base")` restores these on the shared server after a

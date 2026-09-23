@@ -76,3 +76,14 @@ def test_long_legal_sentence_prefers_clauses_and_preserves_every_word():
     assert " ".join(parts) == text
     assert all(len(p) <= 200 for p in parts)
     assert parts[0].endswith(",")
+
+
+def test_shorter_retry_chunks_do_not_strand_by_law_as_a_tiny_tail():
+    text = (
+        "effect of increasing the foreign debt, "
+        "and containing other matters as may be provided by law."
+    )
+    parts = split_sentences(text, group_chars=len(text) // 2)
+    assert " ".join(parts) == text
+    assert parts[-1] != "by law."
+    assert all(len(p) <= len(text) // 2 for p in parts)

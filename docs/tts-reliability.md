@@ -40,10 +40,24 @@ of publishing incomplete audio. Only leading/trailing silence is trimmed,
 with margins for quiet consonants and breathing; internal gaps are not erased
 to conceal an omitted clause. Player paragraph pauses were also shortened.
 
-These are acoustic sanity checks, **not a guarantee of word-perfect speech**.
-They catch silent takes and gross early stops; a fluent substitution or a small
-omission can still pass. ASR is useful for auditing passages but also makes
-recognition mistakes, especially with legal names and pronunciation.
+The full-document audit also found fluent omissions (for example, "or a
+Vice-President") and an unintelligible tail that passed the acoustic checks.
+Document narration now additionally transcribes each fragment with local
+CPU/int8 Whisper before accepting it. Substantial missing phrases or very
+low text coverage trigger the same retry/shorter-clause path. It never primes
+recognition with the requested text. The check is enabled by default through
+`TTS_VERIFY_SPEECH`; `TTS_VERIFICATION_MODEL` defaults to `small` and can point
+to a local model directory. A named model downloads once if it is not cached.
+Spoken chat and voice previews keep the faster acoustic-only path.
+
+These are conservative checks, **not a guarantee of word-perfect speech**.
+ASR also makes recognition mistakes, especially with uncommon legal terms.
+The comparison tolerates small substitutions and ignores number formatting;
+it does not verify numeric accuracy or tiny headings. This trades additional
+CPU time and occasional retries for fewer incomplete saved readings. Failed
+recognition/model loading fails the job visibly rather than bypassing checks.
+Shorter retries also avoid stranding tiny endings such as "by law.", which
+repeatedly produced silence during the full audit.
 
 ## Verification and existing audio
 

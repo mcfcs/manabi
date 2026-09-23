@@ -215,6 +215,7 @@ async def narrate_document(context, job_id: int, narration_id: int) -> None:
             if narration is None:
                 raise RuntimeError("narration row is gone")
             narration.status = "synthesizing"
+            narration.error = None
             await db.commit()
             todo = (
                 (
@@ -249,7 +250,7 @@ async def narrate_document(context, job_id: int, narration_id: int) -> None:
                 text = (seg.spoken_text or "").strip()
                 if not text:
                     continue
-                audio, duration = await synthesize(text)
+                audio, duration = await synthesize(text, verify=settings.tts_verify_speech)
                 seg.audio = audio
                 seg.mime = "audio/mpeg"
                 seg.duration_ms = duration

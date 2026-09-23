@@ -5,7 +5,7 @@ import io
 import math
 import wave
 from types import SimpleNamespace
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, Mock
 
 import httpx
 import pytest
@@ -130,6 +130,31 @@ async def test_shorter_fallback_must_preserve_and_synthesize_every_word(monkeypa
     source = "This is an unusually difficult sentence, but every word must still be spoken."
     request = AsyncMock(side_effect=[tts.TTSQualityError("short"), b"first", b"second"])
     monkeypatch.setattr(tts, "_request_wav", request)
-    assert await tts._fragment_wavs(None, source) == [b"first", b"second"]
+    assert await tts._fragment_wavs(None, source, verify=True) == [b"first", b"second"]
     parts = [c.args[1] for c in request.await_args_list[1:]]
     assert " ".join(parts) == source
+    assert all(c.kwargs["verify"] for c in request.await_args_list)
+
+
+@pytest.mark.asyncio
+async def test_audible_but_incomplete_speech_is_retried_before_caching(monkeypatch):
+    monkeypatch.setattr(
+        tts,
+        "get_settings",
+        lambda: SimpleNamespace(
+            tts_url="http://voice", tts_ref_audio="ref.wav", tts_ref_text="Reference.", tts_speed=1
+        ),
+    )
+    verify = Mock(side_effect=["Voice transcript omits a phrase", None])
+    monkeypatch.setattr(tts, "verify_wav", verify)
+    requests = []
+
+    def reply(request):
+        requests.append(request)
+        return httpx.Response(200, content=wav((2, 6000)))
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(reply)) as client:
+        await tts._request_wav(
+            client, "The President or Vice-President shall have qualified.", verify=True
+        )
+    assert len(requests) == verify.call_count == 2
