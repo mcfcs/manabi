@@ -25,9 +25,13 @@ from sqlalchemy import select
 from manabi_ai.app import app
 from manabi_ai.config import get_settings
 from manabi_ai.db import session_factory
-from manabi_ai.tts_client import synthesize
+from manabi_ai.tts_client import TTSQualityError, synthesize
 
 log = logging.getLogger("manabi_ai.tts")
+
+# Paragraphs a narration may drop as unsayable before the voice server itself
+# is presumed broken (or a tenth of the document, if larger).
+_MAX_UNSAYABLE = 3
 
 
 def _chat_text_for_tts(text: str) -> str:
@@ -238,6 +242,7 @@ async def narrate_document(context, job_id: int, narration_id: int) -> None:
                     select(NarrationSegment.id).where(NarrationSegment.narration_id == narration_id)
                 )
             ).all()
+            skipped: list[int] = []
             for done, seg in enumerate(todo):
                 if context is not None and context.should_abort():
                     job.status = JobStatus.cancelled
@@ -252,7 +257,23 @@ async def narrate_document(context, job_id: int, narration_id: int) -> None:
                 text = (seg.spoken_text or "").strip()
                 if not text:
                     continue
-                audio, duration = await synthesize(text, verify=settings.tts_verify_speech)
+                try:
+                    audio, duration = await synthesize(text, verify=settings.tts_verify_speech)
+                except TTSQualityError as exc:
+                    # A paragraph the voice cannot say — a real one was a line
+                    # of Python (`re.sub(r'[^\x00-\x7f]', …)`) — failed all 70
+                    # paragraphs of its document. Drop it from the script and
+                    # keep reading. Many such failures mean the voice server is
+                    # broken, not the text: fail then, as before.
+                    skipped.append(seg.ord)
+                    if len(skipped) > max(_MAX_UNSAYABLE, len(todo) // 10):
+                        raise
+                    log.warning(
+                        "narration %s: dropped paragraph %s: %s", narration_id, seg.ord, exc
+                    )
+                    await db.delete(seg)
+                    await db.commit()
+                    continue
                 seg.audio = audio
                 seg.mime = "audio/mpeg"
                 seg.duration_ms = duration
@@ -262,6 +283,9 @@ async def narrate_document(context, job_id: int, narration_id: int) -> None:
             job.status = JobStatus.succeeded
             job.progress_pct = 100
             job.progress_note = "Narration ready"
+            if skipped:
+                job.progress_note += f" ({len(skipped)} unspeakable paragraph(s) left out)"
+                job.result = {"skipped_ords": skipped}
             job.finished_at = datetime.now(UTC)
             await db.commit()
         except JobAborted:
