@@ -85,13 +85,11 @@ def test_answers_agree_by_type():
     assert answers_agree(
         "identification", {"kind": "identification", "text": "Lexeme"}, {"answer_text": "a lexeme"}
     )
-    assert not answers_agree(
-        "short", {"kind": "short", "text": "a*b*"}, {"answer_text": "b*a*"}
-    )
+    assert not answers_agree("short", {"kind": "short", "text": "a*b*"}, {"answer_text": "b*a*"})
 
 
 def test_code_output_questions_are_left_to_the_compiler():
-    code = "```c\nint main(){printf(\"%d\", 1);}\n```"
+    code = '```c\nint main(){printf("%d", 1);}\n```'
     assert executable_check_applies("output", "What is printed?\n\n" + code)
     assert executable_check_applies("mcq", "What does the program print?\n\n" + code)
     assert not executable_check_applies("mcq", "Which paradigm uses objects?")
@@ -158,7 +156,7 @@ def test_shuffle_mcq_skips_explanations_that_name_a_letter():
 
 
 def test_assumed_semantics_go_to_the_audit_not_the_compiler():
-    p = "Assume call by value-result. What is printed?\n\n```c\nint main(){printf(\"%d\", 1);}\n```"
+    p = 'Assume call by value-result. What is printed?\n\n```c\nint main(){printf("%d", 1);}\n```'
     assert not executable_check_applies("output", p)
 
 
@@ -211,3 +209,18 @@ def test_python_needing_a_third_party_library_is_audited_not_run():
     stdlib = "What is the exact output?\n\n```python\nimport math\nprint(math.floor(2.5))\n```"
     assert not executable_check_applies("output", nltk)
     assert executable_check_applies("output", stdlib)
+
+
+def test_a_reworded_question_with_the_same_answer_is_the_same_question():
+    from manabi_ai.quizplan import same_answer
+
+    output_gate = {"kind": "identification", "text": "Output gate"}
+    assert same_answer("identification", output_gate, {"kind": "identification", "text": "Output"})
+    assert not same_answer(
+        "identification", output_gate, {"kind": "identification", "text": "Forget gate"}
+    )
+    gates = {"items": ["Forget gate", "Input gate", "Output gate"]}
+    assert same_answer(
+        "enumeration", gates, {"items": ["output gate", "input gate", "forget gate"]}
+    )
+    assert not same_answer("mcq", {"correct_option": 1}, {"correct_option": 1})

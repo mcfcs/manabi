@@ -1663,18 +1663,16 @@ async def regenerate_question(job_id: int, question_id: int) -> None:
             }
             batches.sort(key=lambda b: -sum(1 for c in b if c.id in cited))
 
-            others = [
-                p
-                for (p,) in (
-                    await db.execute(
-                        select(QuizQuestion.prompt).where(
-                            QuizQuestion.artifact_id == artifact.id,
-                            QuizQuestion.id != question.id,
-                        )
+            sibling_rows = (
+                await db.execute(
+                    select(QuizQuestion.prompt, QuizQuestion.qtype, QuizQuestion.answer).where(
+                        QuizQuestion.artifact_id == artifact.id,
+                        QuizQuestion.id != question.id,
                     )
-                ).all()
-                if p
-            ]
+                )
+            ).all()
+            others = [p for p, _t, _a in sibling_rows if p]
+            sibling_answers = [a for _p, t, a in sibling_rows if str(t) == str(question.qtype)]
             existing = [*others, question.prompt or ""]
             avoid = "\n".join(f"- {p[:120]}" for p in existing[-30:]) or "(none)"
             base_prompt = prompts.EXERCISE_QUIZ_PROMPT if exercise else prompts.QUIZ_PROMPT
@@ -1714,6 +1712,12 @@ async def regenerate_question(job_id: int, question_id: int) -> None:
                         cand.item.get("qtype") == question.qtype
                         and _question_answer(cand.item) is not None
                         and not any(_near_duplicate(stem, p, 0.8) for p in existing)
+                        and not any(
+                            quizplan.same_answer(
+                                question.qtype, _question_answer(cand.item), a
+                            )
+                            for a in sibling_answers
+                        )
                     ):
                         # Solved blind like any generated question: a
                         # replacement used to reach the student unchecked.

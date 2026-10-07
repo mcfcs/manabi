@@ -60,10 +60,7 @@ def unit_mixes(owed: dict[int, int], mix: dict[str, float]) -> dict[int, dict[st
     counts = allocate(total, mix)
     order = list(mix)
     slots = sorted(
-        ((k + 0.5) / q, order.index(t), t)
-        for t, q in counts.items()
-        if q > 0
-        for k in range(q)
+        ((k + 0.5) / q, order.index(t), t) for t, q in counts.items() if q > 0 for k in range(q)
     )
     seq = [t for _pos, _i, t in slots]
     out: dict[int, dict[str, float]] = {}
@@ -268,6 +265,23 @@ def answers_agree(qtype: str, answer: dict, solved: dict) -> bool:
     if eq is not None:
         return eq
     return fuzzy_equal(key, got)
+
+
+def same_answer(qtype: str, a: dict | None, b: dict | None) -> bool:
+    """Do two written-answer questions of one type ask for the same thing?
+    Stems can be reworded past any similarity threshold; the answer can't. A
+    regenerated "which LSTM gate determines what to pass forward?" (Output
+    gate) passed the stem check against "the gate that determines what to pass
+    forward is the ___ gate" (Output)."""
+    a, b = a or {}, b or {}
+    if qtype in ("identification", "short"):
+        ta, tb = a.get("text") or "", b.get("text") or ""
+        return bool(ta and tb) and fuzzy_equal(ta, tb)
+    if qtype == "enumeration":
+        sa = {_norm(s) for s in a.get("items") or []}
+        sb = {_norm(s) for s in b.get("items") or []}
+        return bool(sa) and sa == sb
+    return False
 
 
 # ── Choosing the final questions ─────────────────────────────────────────
