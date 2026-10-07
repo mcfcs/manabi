@@ -801,6 +801,9 @@ def finalize_question(item: dict) -> dict:
     return item
 
 
+_IDENTIFICATION_MAX_WORDS = 6  # "Term Frequency-Inverse Document Frequency" is 4
+
+
 def _question_answer(item: dict) -> dict | None:
     qtype = item.get("qtype")
     if qtype == "mcq":
@@ -836,9 +839,12 @@ def _question_answer(item: dict) -> dict | None:
             return {"kind": "enumeration", "items": items}
         return None
     if qtype == "identification":
-        if item.get("correct_text"):
-            return {"kind": "identification", "text": item["correct_text"]}
-        return None
+        text = (item.get("correct_text") or "").strip()
+        # The answer is a term. A real one asked "how does RAG address
+        # hallucinations?" and keyed a whole sentence no typed answer matches.
+        if not text or len(text.split()) > _IDENTIFICATION_MAX_WORDS:
+            return None
+        return {"kind": "identification", "text": text}
     if qtype == "essay":
         if item.get("correct_text"):
             return {

@@ -90,3 +90,17 @@ def test_a_true_false_item_is_not_a_disguised_mcq():
         "A) It grows up.\nB) It grows down.\nC) Neither.\nD) Both."
     )
     assert _question_answer({"qtype": "tf", "prompt": stem, "correct_bool": False}) is None
+
+
+def test_an_identification_answer_is_a_term_not_a_sentence():
+    def ident(text):
+        item = {"qtype": "identification", "prompt": "Name it.", "correct_text": text}
+        return _question_answer(item)
+
+    assert ident("Term Frequency-Inverse Document Frequency") == {
+        "kind": "identification",
+        "text": "Term Frequency-Inverse Document Frequency",
+    }
+    assert ident(
+        "RAG addresses hallucinations by referencing actual documents and grounding the response"
+    ) is None
