@@ -1247,6 +1247,7 @@ async def generate_quiz(
                     i: sum(len(c.text) for c in b) for i, (m, b) in enumerate(units) if m.id == mid
                 }
                 owed.update(quizplan.allocate(per_module[mid], mine))
+            unit_mix = quizplan.unit_mixes(owed, mix)
             candidates: list[tuple[int, ResolvedItem]] = []
             source_by_unit: dict[int, str] = {}
             index_by_unit: dict[int, dict] = {}
@@ -1267,7 +1268,7 @@ async def generate_quiz(
                     source_text=ctx.source_text,
                     index_map=ctx.index_map,
                     types=types,
-                    mix=mix,
+                    mix=unit_mix.get(ui) or mix,
                     need=owed[ui],
                     instructions=instructions,
                     exercise=exercise,
@@ -1332,7 +1333,7 @@ async def generate_quiz(
 
             def select_final(pairs: list[Pair]) -> list[Pair]:
                 picked = quizplan.select_by_quota(
-                    [(u, c.item["qtype"]) for u, c in pairs], owed, mix, count
+                    [(u, c.item["qtype"]) for u, c in pairs], owed, mix, count, unit_mix
                 )
                 return [pairs[i] for i in picked]
 

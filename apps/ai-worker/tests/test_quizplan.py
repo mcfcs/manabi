@@ -169,3 +169,33 @@ def test_mermaid_is_cleaned_and_kind_checked():
     assert clean_mermaid("%%{init: {}}%%\nstateDiagram-v2\n[*] --> q0").startswith("stateDiagram")
     assert clean_mermaid("pie title x") is None
     assert clean_mermaid("") is None
+
+
+def test_light_types_still_get_slots_when_the_quiz_is_split_into_small_units():
+    # The SocSc final: 20 questions over seven batches owing 2-3 each, with
+    # essay and enumeration at ~0.8 in 10. Rounded per batch, neither appeared.
+    from manabi_ai.quizplan import allocate, unit_mixes
+
+    mix = {"mcq": 4.17, "identification": 2.5, "tf": 1.67, "essay": 0.83, "enumeration": 0.83}
+    owed = {0: 3, 1: 3, 2: 3, 3: 3, 4: 3, 5: 3, 6: 2}
+    assert all(allocate(n, mix)["essay"] == 0 for n in owed.values())  # the old starvation
+
+    per_unit = unit_mixes(owed, mix)
+    totals: dict[str, float] = {}
+    for u, n in owed.items():
+        assert sum(per_unit[u].values()) == n
+        for t, w in per_unit[u].items():
+            totals[t] = totals.get(t, 0) + w
+    assert totals == {t: float(q) for t, q in allocate(20, mix).items()}
+    assert totals["essay"] == 2 and totals["enumeration"] == 2
+    # spread out, not bunched into one unit
+    assert sum(1 for m in per_unit.values() if m.get("essay")) == 2
+
+
+def test_selection_follows_each_units_own_mix():
+    from manabi_ai.quizplan import select_by_quota
+
+    items = [(0, "mcq"), (0, "mcq"), (0, "essay"), (1, "mcq"), (1, "mcq")]
+    per_unit = {0: {"mcq": 1.0, "essay": 1.0}, 1: {"mcq": 2.0}}
+    picked = select_by_quota(items, {0: 2, 1: 2}, {"mcq": 9, "essay": 1}, 4, per_unit)
+    assert 2 in picked and len(picked) == 4

@@ -45,6 +45,37 @@ def allocate(total: int, weights: dict, minimum: int = 0) -> dict:
     return {k: out.get(k, 0) for k in weights}
 
 
+def unit_mixes(owed: dict[int, int], mix: dict[str, float]) -> dict[int, dict[str, float]]:
+    """Each unit's own type mix, apportioned across the whole quiz.
+
+    Rounding the mix inside every unit starved the light types: a 20-question
+    final over seven small context batches asked each for 2-3 questions, the
+    essay share (0.8 in 10) never won a slot in any of them, and a plan with
+    essay and enumeration produced neither. Here the quiz's total is split by
+    type first, those slots are spread evenly along the quiz, and each unit
+    takes its run of them in order."""
+    total = sum(n for n in owed.values() if n > 0)
+    if total <= 0:
+        return {u: dict(mix) for u in owed}
+    counts = allocate(total, mix)
+    order = list(mix)
+    slots = sorted(
+        ((k + 0.5) / q, order.index(t), t)
+        for t, q in counts.items()
+        if q > 0
+        for k in range(q)
+    )
+    seq = [t for _pos, _i, t in slots]
+    out: dict[int, dict[str, float]] = {}
+    at = 0
+    for u, n in owed.items():
+        n = max(0, n)
+        mine = seq[at : at + n]
+        at += n
+        out[u] = {t: float(mine.count(t)) for t in order if t in mine} or dict(mix)
+    return out
+
+
 def normalize_mix(types: list[str], type_mix: dict | None) -> dict[str, float]:
     """Requested type weights restricted to the requested types; uniform when
     no mix (or an unusable one) is given."""
@@ -222,7 +253,11 @@ def answers_agree(qtype: str, answer: dict, solved: dict) -> bool:
 
 
 def select_by_quota(
-    items: list[tuple[int, str]], owed: dict[int, int], mix: dict[str, float], count: int
+    items: list[tuple[int, str]],
+    owed: dict[int, int],
+    mix: dict[str, float],
+    count: int,
+    per_unit: dict[int, dict[str, float]] | None = None,
 ) -> list[int]:
     """Pick which candidates make the quiz. `items` are (unit, qtype) in
     generation order; returns the chosen indexes in that order.
@@ -238,7 +273,7 @@ def select_by_quota(
         if need <= 0:
             continue
         mine = [i for i, (uu, _t) in enumerate(items) if uu == u]
-        quota = allocate(need, mix)
+        quota = allocate(need, (per_unit or {}).get(u) or mix)
         taken = 0
         for t, q in quota.items():
             for i in [i for i in mine if items[i][1] == t][:q]:
