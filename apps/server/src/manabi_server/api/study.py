@@ -549,3 +549,70 @@ async def course_study(
         )
     ).scalar_one_or_none()
     return await build_view(db, user, course, plan)
+
+
+class DiagramIn(BaseModel):
+    # The browser's Mermaid render error, when asking for a repair.
+    error: str | None = Field(default=None, max_length=2000)
+
+
+@router.post(
+    "/artifacts/{artifact_id}/sections/{index}/diagram", dependencies=[Depends(require_csrf)]
+)
+async def draw_section_diagram(
+    artifact_id: int,
+    index: int,
+    data: DiagramIn,
+    user: User = Depends(get_default_user),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """Queue one diagram for a summary section (or a repair of a diagram the
+    browser could not render). The model may decline when no diagram helps."""
+    from manabi_core.models import JobQueue
+
+    from manabi_server.jobs.queue import DIAGRAM_SECTION_TASK, defer_task
+
+    artifact = (
+        await db.execute(
+            select(Artifact)
+            .join(Module, Module.id == Artifact.module_id)
+            .join(Course, Course.id == Module.course_id)
+            .where(
+                Artifact.id == artifact_id,
+                Artifact.artifact_type == ArtifactType.summary,
+                Course.user_id == user.id,
+            )
+        )
+    ).scalar_one_or_none()
+    if artifact is None:
+        raise HTTPException(status_code=404, detail="Summary not found")
+    if not 0 <= index < len(_summary_sections(artifact)):
+        raise HTTPException(status_code=404, detail="No such section")
+    payload = {"artifact_id": artifact.id, "section_index": index}
+    inflight = (
+        await db.execute(
+            select(Job).where(
+                Job.job_type == "diagram_section",
+                Job.status.in_([JobStatus.queued, JobStatus.running]),
+            )
+        )
+    ).scalars().all()
+    for j in inflight:
+        if (j.payload or {}).get("artifact_id") == artifact.id and (j.payload or {}).get(
+            "section_index"
+        ) == index:
+            return {"job_id": j.id}
+    job = Job(
+        user_id=user.id,
+        job_type="diagram_section",
+        queue=JobQueue.gpu,
+        payload=payload,
+        module_id=artifact.module_id,
+    )
+    db.add(job)
+    await db.flush()
+    job.procrastinate_job_id = await defer_task(
+        DIAGRAM_SECTION_TASK, "gpu", job_id=job.id, error=data.error, **payload
+    )
+    await db.commit()
+    return {"job_id": job.id}

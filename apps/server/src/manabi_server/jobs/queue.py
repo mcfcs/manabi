@@ -37,6 +37,8 @@ SCORE_SUPPORT_TASK = "manabi_server.tasks.score_support"  # cpu (needs local emb
 EXTRACT_TEXT_HTML_TASK = "manabi_server.tasks.extract_text_html"  # cpu (backfill)
 VERIFY_OUTPUTS_TASK = "manabi_server.tasks.verify_quiz_outputs"  # cpu (runs the code)
 REEXPLAIN_QUESTIONS_TASK = "manabi_ai.tasks.reexplain_questions"  # gpu (after a key fix)
+DIAGRAM_SECTION_TASK = "manabi_ai.tasks.diagram_section"  # gpu (one Mermaid diagram)
+GRADE_ESSAY_TASK = "manabi_ai.tasks.grade_essay"  # gpu (rubric grading)
 
 _app: procrastinate.App | None = None
 _lock = threading.Lock()

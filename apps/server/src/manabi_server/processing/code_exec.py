@@ -474,3 +474,59 @@ def converted_prompt(prompt: str) -> str:
     """Re-word an mcq stem whose options were dropped ("Which of the following
     is the output…" → "What is the exact output…")."""
     return _WHICH_OF.sub("What is the exact ", prompt or "", count=1)
+
+
+# ── Grading a student's program against the reference solution ────────────
+
+_TMP_PATH = re.compile(r"[A-Za-z]:[\\/][^\s:]*?manabi-exec-[^\\/]+[\\/]|/tmp/manabi-exec-[^/]+/")
+
+
+def _program(source: str, lang_hint: str | None) -> Snippet | None:
+    snippet = extract_snippet(source)
+    if snippet is not None:
+        return snippet
+    body = re.sub(r"^```[A-Za-z0-9_+#-]*[ \t]*\n|\n?```\s*$", "", (source or "").strip())
+    if not body.strip():
+        return None
+    lang = guess_lang(body) or lang_hint or "c"
+    return Snippet(lang, body)
+
+
+def compare_programs(student: str, reference: str) -> dict:
+    """Run the student's code and the reference solution; same stdout = pass.
+
+    status: passed | failed | error (student code did not compile or crashed)
+            | unverifiable (the reference itself would not run, or printed
+            nothing — then only a person can judge)."""
+    ref = _program(reference, None)
+    if ref is None:
+        return {"status": "unverifiable", "message": "This question has no runnable solution."}
+    mine = _program(student, ref.lang)
+    if mine is None:
+        return {"status": "error", "message": "Write some code first."}
+    if mine.lang != ref.lang and ref.lang in ("c", "cpp") and mine.lang in ("c", "cpp"):
+        mine = Snippet(ref.lang, mine.source)  # C written in a C++ question is still C++
+    expected = execute(ref)
+    if not expected.ok or not printed_anything(expected):
+        return {
+            "status": "unverifiable",
+            "message": "The reference solution could not be run, so this one is self-marked.",
+        }
+    got = execute(mine)
+    if not got.ok:
+        msg = _TMP_PATH.sub("", got.error or "could not run")
+        return {
+            "status": "error",
+            "message": msg[:600],
+            "expected_output": normalize_output(expected.stdout),
+            "student_output": normalize_output(got.stdout),
+        }
+    passed = outputs_match(got.stdout, expected.stdout)
+    return {
+        "status": "passed" if passed else "failed",
+        "message": "Your program prints exactly what the reference prints."
+        if passed
+        else "Your program runs, but prints something different.",
+        "expected_output": normalize_output(expected.stdout),
+        "student_output": normalize_output(got.stdout),
+    }

@@ -546,3 +546,344 @@
     padding: var(--s-4);
   }
 }
+
+/* ── Plan header row ─────────────────────────────────────────── */
+
+.study-head-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: var(--s-3);
+}
+.study-head-focus {
+  margin: var(--s-2) 0 0;
+  font-size: 14px;
+  color: var(--accent-red-deep);
+}
+
+/* ── Plans list ──────────────────────────────────────────────── */
+
+.plans-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 460px), 1fr));
+  gap: var(--s-3);
+}
+.plan-card {
+  position: relative;
+  border: 1px solid var(--rule);
+  border-radius: var(--radius);
+  background: var(--surface-raised);
+  transition: border-color var(--t-fast) var(--ease), box-shadow var(--t-fast) var(--ease);
+}
+.plan-card:hover {
+  border-color: rgba(28, 36, 52, 0.24);
+  box-shadow: 0 6px 22px rgba(28, 36, 52, 0.06);
+}
+.plan-card-link {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 20px;
+  grid-template-areas: "main chev" "side chev";
+  gap: var(--s-3);
+  padding: var(--s-5) var(--s-5) var(--s-4);
+  color: inherit;
+  text-decoration: none;
+}
+.plan-card-main {
+  grid-area: main;
+  min-width: 0;
+  padding-right: var(--s-6);
+}
+.plan-card-main h2 {
+  margin: 0 0 4px;
+  font-family: var(--font-display);
+  font-size: 21px;
+  font-weight: 600;
+  line-height: 1.2;
+}
+.plan-card-meta {
+  margin: 0;
+  font-size: 13px;
+}
+.plan-card-types {
+  margin: var(--s-2) 0 0;
+  font-size: 13.5px;
+  color: var(--ink-soft);
+}
+.plan-card-focus {
+  margin: 4px 0 0;
+  font-size: 13.5px;
+  color: var(--accent-red-deep);
+}
+.plan-card-side {
+  grid-area: side;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.plan-card-track {
+  margin: 0;
+  max-width: none;
+}
+.plan-card-chev {
+  grid-area: chev;
+  align-self: center;
+  color: var(--ink-faint);
+}
+.plan-card-delete {
+  position: absolute;
+  top: var(--s-3);
+  right: calc(var(--s-5) + 20px);
+  opacity: 0.55;
+}
+.plan-card:hover .plan-card-delete,
+.plan-card-delete:focus-visible {
+  opacity: 1;
+}
+.plans-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--s-2);
+  padding: var(--s-6);
+  border: 1px dashed var(--rule);
+  border-radius: var(--radius);
+  max-width: 620px;
+}
+.plans-empty h2 {
+  margin: 0;
+  font-family: var(--font-display);
+  font-size: 22px;
+}
+.plans-empty p {
+  margin: 0 0 var(--s-2);
+}
+
+/* ── Plan editor ─────────────────────────────────────────────── */
+
+.plan-form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-5);
+}
+.plan-field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-2);
+}
+.plan-mods {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  border: 1px solid var(--rule);
+  border-radius: var(--radius);
+}
+.plan-mods > li + li {
+  border-top: 1px solid var(--rule);
+}
+.plan-mod-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--s-3);
+  padding: var(--s-2) var(--s-3);
+  min-height: var(--touch-target);
+}
+.plan-mods > li:not(.on) .plan-mod-row {
+  color: var(--ink-faint);
+}
+.plan-mod-docs-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 13px;
+  white-space: nowrap;
+}
+.plan-mod-docs-btn .rot {
+  transform: rotate(180deg);
+}
+.plan-docs {
+  list-style: none;
+  margin: 0;
+  padding: 0 var(--s-3) var(--s-3) calc(var(--s-3) + 22px);
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.plan-docs .quiz-check {
+  font-size: 13.5px;
+  gap: var(--s-2);
+  min-width: 0;
+}
+.plan-doc-name {
+  overflow-wrap: anywhere;
+}
+.plan-auto {
+  display: grid;
+  grid-template-columns: auto auto minmax(0, 1fr);
+  gap: var(--s-2);
+  align-items: start;
+  padding: var(--s-3);
+  border-radius: var(--radius);
+  background: var(--surface);
+  font-size: 14px;
+  cursor: pointer;
+}
+.plan-auto input {
+  margin-top: 3px;
+  accent-color: var(--accent-blue);
+}
+.plan-auto svg {
+  margin-top: 2px;
+  color: var(--accent-red);
+}
+.plan-types {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--s-2);
+}
+.plan-type {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 36px;
+  padding: 6px 12px;
+  border: 1px solid var(--rule);
+  border-radius: 999px;
+  background: var(--surface-raised);
+  font: 500 13.5px var(--font-ui);
+  color: var(--ink-soft);
+  cursor: pointer;
+}
+.plan-type.on {
+  border-color: var(--accent-blue);
+  background: var(--accent-blue-wash);
+  color: var(--accent-blue-deep);
+}
+.plan-type-w {
+  letter-spacing: 1px;
+  font-size: 12px;
+}
+.plan-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--s-2);
+}
+
+@media (max-width: 767px) {
+  .plan-card-link {
+    padding: var(--s-4);
+  }
+  .plan-card-delete {
+    right: calc(var(--s-4) + 20px);
+  }
+}
+
+/* ── Cited slides under a section ────────────────────────────── */
+
+.sec-figs {
+  display: flex;
+  gap: var(--s-2);
+  overflow-x: auto;
+  padding-bottom: 4px;
+  scroll-snap-type: x proximity;
+}
+.sec-fig {
+  position: relative;
+  flex: 0 0 auto;
+  width: 148px;
+  padding: 0;
+  border: 1px solid var(--rule);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  overflow: hidden;
+  cursor: zoom-in;
+  scroll-snap-align: start;
+}
+.sec-fig img {
+  display: block;
+  width: 100%;
+  aspect-ratio: 4 / 3;
+  object-fit: contain;
+  background: #fff;
+}
+.sec-fig-cap {
+  position: absolute;
+  right: 4px;
+  bottom: 4px;
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: rgba(28, 36, 52, 0.72);
+  color: var(--paper);
+  font-size: 11px;
+}
+.sec-lightbox {
+  position: fixed;
+  inset: 0;
+  z-index: 70;
+  background: rgba(28, 36, 52, 0.6);
+  display: grid;
+  place-items: center;
+  padding: var(--s-4);
+}
+.sec-lightbox-inner {
+  max-width: min(1100px, 100%);
+  max-height: 100%;
+  display: flex;
+  flex-direction: column;
+  background: var(--paper);
+  border-radius: var(--radius);
+  overflow: hidden;
+}
+.sec-lightbox-bar {
+  display: flex;
+  align-items: center;
+  gap: var(--s-3);
+  padding: var(--s-2) var(--s-3);
+  font-size: 13.5px;
+  border-bottom: 1px solid var(--rule);
+}
+.sec-lightbox-bar span {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.sec-lightbox-inner img {
+  display: block;
+  max-width: 100%;
+  max-height: calc(100dvh - 120px);
+  object-fit: contain;
+  background: #fff;
+}
+
+/* ── AI-drawn section diagram ────────────────────────────────── */
+
+.sec-diagram figure {
+  margin: 0;
+  padding: var(--s-3);
+  border: 1px solid var(--rule);
+  border-radius: var(--radius);
+  background: var(--surface-raised);
+  overflow-x: auto;
+}
+.sec-diagram-svg svg {
+  display: block;
+  max-width: 100%;
+  height: auto;
+  margin-inline: auto;
+}
+.sec-diagram figcaption {
+  margin-top: var(--s-2);
+  font-size: 13px;
+  color: var(--ink-soft);
+}
+.sec-diagram-loading {
+  height: 120px;
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+}

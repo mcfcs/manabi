@@ -2493,3 +2493,171 @@ async def reexplain_questions(artifact_id: int, question_ids: list[int]) -> None
             if text:
                 q.explanation = f"{text}\n\n(Answer verified by compiling and running the code.)"
         await db.commit()
+
+
+# ── Diagrams for summary sections ─────────────────────────────────────────
+
+_MERMAID_HEADERS = (
+    "flowchart",
+    "graph",
+    "stateDiagram",
+    "classDiagram",
+    "sequenceDiagram",
+    "erDiagram",
+)
+
+
+def clean_mermaid(code: str) -> str | None:
+    """Strip fences and init directives; None unless it reads as one of the
+    diagram kinds we allow and stays small. The browser does the real parse
+    (and a failed render can ask for a repair)."""
+    c = (code or "").strip()
+    c = re.sub(r"^```(?:mermaid)?[ \t]*\n?", "", c)
+    c = re.sub(r"\n?```\s*$", "", c).strip()
+    c = re.sub(r"%%\{.*?\}%%", "", c, flags=re.S).strip()
+    if not c:
+        return None
+    first = c.split("\n", 1)[0].strip()
+    if not first.startswith(_MERMAID_HEADERS):
+        return None
+    if len(c) > 4000 or c.count("\n") > 80:
+        return None
+    return c
+
+
+@app.task(name="manabi_ai.tasks.diagram_section", queue="gpu", retry=0)
+async def diagram_section(
+    job_id: int, artifact_id: int, section_index: int, error: str | None = None
+) -> None:
+    """Draw (or decline to draw) one Mermaid diagram for a summary section,
+    from the section's text and the chunks it cites. Stored on the section as
+    `diagram`; `error` carries the browser's render error for a repair."""
+    async with session_factory()() as db:
+        job = await _start(db, job_id)
+        try:
+            artifact = (
+                await db.execute(select(Artifact).where(Artifact.id == artifact_id))
+            ).scalar_one()
+            content = dict(artifact.content or {})
+            sections = list(content.get("sections") or [])
+            if not 0 <= section_index < len(sections):
+                raise GenerationError("No such section")
+            sec = dict(sections[section_index])
+            chunk_ids = [
+                int(c)
+                for b in sec.get("blocks") or []
+                for c in (b.get("chunk_ids") or [])
+                if isinstance(c, int)
+            ]
+            chunks = await load_chunks_by_ids(db, list(dict.fromkeys(chunk_ids)))
+            source = build_context(chunks, None).source_text if chunks else ""
+            text = "\n".join(str(b.get("text") or "") for b in sec.get("blocks") or [])
+            user_block = f"SECTION: {sec.get('title') or ''}\n{text}\n\n{source}"
+            system = prompts.DIAGRAM_PROMPT
+            previous = (sec.get("diagram") or {}).get("mermaid") or ""
+            if error and previous:
+                system += prompts.DIAGRAM_REPAIR.replace("{error}", error[:600]).replace(
+                    "{previous}", previous
+                )
+            await _progress(db, job, 30, "Drawing a diagram")
+            diagram: dict | None = None
+            for _ in range(2):
+                result = await generate_structured(
+                    system, user_block, prompts.DIAGRAM_SCHEMA, response_headroom=2048
+                )
+                if not result.get("needed"):
+                    diagram = {
+                        "needed": False,
+                        "caption": (result.get("caption") or "").strip()[:300],
+                    }
+                    break
+                code = clean_mermaid(result.get("mermaid") or "")
+                if code:
+                    diagram = {
+                        "needed": True,
+                        "kind": (result.get("kind") or "").strip()[:60],
+                        "caption": (result.get("caption") or "").strip()[:300],
+                        "mermaid": code,
+                    }
+                    break
+            if diagram is None:
+                raise GenerationError("The model did not produce a usable diagram")
+            sec["diagram"] = diagram
+            sections[section_index] = sec
+            artifact.content = {**content, "sections": sections}
+            job.status = JobStatus.succeeded
+            job.progress_pct = 100
+            job.progress_note = "Done"
+            job.result = {"diagram": diagram}
+            job.finished_at = datetime.now(UTC)
+            await db.commit()
+        except (GenerationError, Exception) as exc:  # noqa: BLE001
+            log.exception("diagram generation failed")
+            await db.rollback()
+            await _fail(db, job, exc)
+
+
+@app.task(name="manabi_ai.tasks.grade_essay", queue="gpu", retry=0)
+async def grade_essay(job_id: int, question_id: int, answer: str) -> None:
+    """Grade a written answer against the question's rubric (and cited
+    sources). The verdict lives in job.result; nothing is mutated."""
+    settings = get_settings()
+    async with session_factory()() as db:
+        job = await _start(db, job_id)
+        try:
+            q = (
+                await db.execute(select(QuizQuestion).where(QuizQuestion.id == question_id))
+            ).scalar_one()
+            cited = [
+                cid
+                for (cid,) in (
+                    await db.execute(
+                        select(Citation.chunk_id).where(
+                            Citation.artifact_id == q.artifact_id,
+                            Citation.item_ref == f"q:{q.ord}",
+                            Citation.chunk_id.is_not(None),
+                        )
+                    )
+                ).all()
+            ]
+            chunks = await load_chunks_by_ids(db, cited) if cited else []
+            source = build_context(chunks, None).source_text if chunks else ""
+            a = q.answer or {}
+            rubric = "\n".join(f"- {k}" for k in a.get("key_points") or []) or "(none given)"
+            block = (
+                f"QUESTION:\n{q.prompt}\n\nMODEL ANSWER:\n{a.get('model_answer') or ''}\n\n"
+                f"RUBRIC:\n{rubric}\n\nSTUDENT'S ANSWER:\n{answer.strip() or '(blank)'}\n\n"
+                + source
+            )
+            await _progress(db, job, 30, "Grading your answer")
+            result = await generate_structured(
+                prompts.GRADE_ESSAY_PROMPT,
+                block,
+                prompts.GRADE_ESSAY_SCHEMA,
+                model=settings.effective_chat_model,
+                response_headroom=2048,
+            )
+            score = max(0, min(100, int(result.get("score") or 0)))
+            job.status = JobStatus.succeeded
+            job.progress_pct = 100
+            job.progress_note = "Done"
+            job.result = {
+                "grade": {
+                    "score": score,
+                    "points": [
+                        {
+                            "point": str(p.get("point") or "")[:300],
+                            "met": bool(p.get("met")),
+                            "comment": str(p.get("comment") or "")[:400],
+                        }
+                        for p in result.get("points") or []
+                    ],
+                    "feedback": str(result.get("feedback") or "")[:1200],
+                }
+            }
+            job.finished_at = datetime.now(UTC)
+            await db.commit()
+        except (GenerationError, Exception) as exc:  # noqa: BLE001
+            log.exception("essay grading failed")
+            await db.rollback()
+            await _fail(db, job, exc)

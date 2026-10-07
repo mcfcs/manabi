@@ -8,6 +8,7 @@ import {
 import { AssistantPage } from "../features/assistant/AssistantPage";
 import { CalendarPage } from "../features/calendar/CalendarPage";
 import { CoursePage } from "../features/courses/CoursePage";
+import { PlansPage } from "../features/study/PlansPage";
 import { StudyPage } from "../features/study/StudyPage";
 import { HomePage } from "../features/courses/HomePage";
 import { ModuleWorkspace } from "../features/modules/ModuleWorkspace";
@@ -39,9 +40,15 @@ const courseRoute = createRoute({
   component: CoursePage,
 });
 
-const studyRoute = createRoute({
+const plansRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "/courses/$courseId/study",
+  component: PlansPage,
+});
+
+const planRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "/courses/$courseId/study/$planId",
   component: StudyPage,
 });
 
@@ -164,7 +171,8 @@ const assistantRoute = createRoute({
 const routeTree = rootRoute.addChildren([
   homeRoute,
   courseRoute,
-  studyRoute,
+  plansRoute,
+  planRoute,
   moduleRoute,
   documentRoute,
   scheduleRoute,

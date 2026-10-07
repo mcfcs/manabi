@@ -611,9 +611,18 @@ export interface SummaryBlock {
   edited?: boolean;
 }
 
+export interface SectionDiagram {
+  needed: boolean;
+  kind?: string;
+  caption?: string;
+  mermaid?: string;
+}
+
 export interface SummarySection {
   title: string;
   blocks: SummaryBlock[];
+  /** AI-drawn Mermaid diagram (or a judgement that none would help) */
+  diagram?: SectionDiagram;
 }
 
 export interface KeyTerm {
@@ -895,13 +904,44 @@ export interface StudyModuleOut {
   lecture_segments: number;
   checkpoint: QuizListItem | null;
   language: string | null;
+  /** the question mix this plan's tests use for the module */
+  mix?: Record<string, number>;
   /** in-flight generation by slot ("checkpoint", "section:<i>", "summary", "lecture") */
   pending?: Record<string, number>;
 }
 
+export interface PlanOut {
+  id: number;
+  course_id: number;
+  name: string;
+  position: number;
+  module_ids: number[];
+  /** null = every material of the chosen modules */
+  document_ids: number[] | null;
+  /** null = the AI chooses from the material */
+  types: string[] | null;
+  type_mix: Record<string, number> | null;
+  focus: string | null;
+  created_at: string;
+  modules_total: number;
+  modules_passed: number;
+  final_best: number | null;
+}
+
+export interface PlanIn {
+  name: string;
+  module_ids: number[];
+  document_ids: number[] | null;
+  types: string[] | null;
+  type_mix: Record<string, number> | null;
+  focus: string | null;
+}
+
 export interface StudyOut {
   course_id: number;
+  plan?: PlanOut | null;
   modules: StudyModuleOut[];
   finals: QuizListItem[];
+  final_mix?: Record<string, number>;
   pending_final?: number | null;
 }

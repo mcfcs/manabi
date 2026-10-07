@@ -683,3 +683,66 @@
     padding: 0 var(--s-3) var(--s-3);
   }
 }
+
+/* ── Automatic grading of coding / essay answers ─────────────── */
+
+.autograde {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-2);
+}
+.autograde-pending {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0;
+  font-size: 13px;
+}
+.autograde-result {
+  padding: var(--s-3);
+  border-radius: var(--radius);
+  border-left: 3px solid var(--rule);
+  background: var(--surface);
+  font-size: 14px;
+}
+.autograde-result strong {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 6px;
+  font-weight: 600;
+}
+.autograde-result.passed {
+  border-left-color: var(--accent-blue);
+  background: var(--accent-blue-wash);
+}
+.autograde-result.failed,
+.autograde-result.error {
+  border-left-color: var(--accent-red);
+  background: var(--accent-red-wash);
+}
+.autograde-outputs {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: var(--s-3);
+  margin-top: var(--s-2);
+}
+.autograde-points {
+  list-style: none;
+  margin: var(--s-2) 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 13.5px;
+}
+.autograde-points li {
+  display: flex;
+  gap: 6px;
+  align-items: baseline;
+}
+.autograde-points li.met svg {
+  color: var(--accent-blue);
+}
+.autograde-points li.missed svg {
+  color: var(--accent-red);
+}

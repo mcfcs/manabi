@@ -16,6 +16,7 @@ import { createPortal } from "react-dom";
 
 import { Markdown } from "../../components/Markdown";
 import { api, type QuestionOut, type QuizOut } from "../../lib/api";
+import { AutoGrade } from "./AutoGrade";
 import { answerText, type Grade, gradeResponse, responseText } from "./quizGrading";
 import "./exam.css";
 
@@ -283,6 +284,9 @@ function ReviewItem({
               <span className="field-label">Why</span>
               <Markdown className="quiz-explanation">{q.explanation}</Markdown>
             </div>
+          )}
+          {(q.qtype === "coding" || q.qtype === "essay") && (
+            <AutoGrade q={q} response={response ?? ""} onGrade={onSelfGrade} auto />
           )}
           {grade === "self" && (
             <div className="exam-selfgrade">

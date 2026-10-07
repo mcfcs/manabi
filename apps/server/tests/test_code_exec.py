@@ -327,3 +327,18 @@ def test_a_reference_parameter_marks_cpp():
     s = extract_snippet("```c\nvoid f(int &v) { v++; }\nint main(){ int n=1; f(n); }\n```")
     assert s is not None and s.lang == "cpp"
     assert guess_lang("if (x & mask) { y(); }") != "cpp"
+
+
+@needs_cc
+def test_a_students_program_is_graded_by_running_both():
+    from manabi_server.processing.code_exec import compare_programs
+
+    ref = "```c\n#include <stdio.h>\nint main(void){ for (int i = 1; i <= 3; i++) printf(\"%d \", i * i); return 0; }\n```"
+    good = "#include <stdio.h>\nint main(){ int i; for(i=1;i<4;i++){ printf(\"%d \", i*i); } return 0; }"
+    bad = "#include <stdio.h>\nint main(){ printf(\"1 4 8\"); return 0; }"
+    broken = "int main( { return 0 }"
+    assert compare_programs(good, ref)["status"] == "passed"
+    out = compare_programs(bad, ref)
+    assert out["status"] == "failed" and out["expected_output"] == "1 4 9"
+    err = compare_programs(broken, ref)
+    assert err["status"] == "error" and "manabi-exec" not in err["message"]

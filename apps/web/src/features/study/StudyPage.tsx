@@ -2,6 +2,8 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useParams } from "@tanstack/react-router";
 import {
   BookOpen,
+  Pencil,
+  Shapes,
   Check,
   ChevronDown,
   ChevronLeft,
@@ -28,13 +30,22 @@ import {
 } from "../../lib/api";
 import { ExamPlayer } from "../ai/ExamPlayer";
 import { useJob } from "../ai/common";
+import { PlanEditor, TYPE_LABELS } from "./PlanEditor";
+import { MermaidDiagram } from "./MermaidDiagram";
+import { SectionFigures, sectionPages } from "./SectionFigures";
 import "./study.css";
 
 const PASS = 70;
 
-type Preset = "output" | "balanced" | "theory";
+type Preset = "plan" | "output" | "balanced" | "theory";
 
 const PRESETS: Record<Preset, { label: string; hint: string; types: string[]; mix: Record<string, number> }> = {
+  plan: {
+    label: "Plan",
+    hint: "The plan's own question mix",
+    types: [],
+    mix: {},
+  },
   output: {
     label: "Output",
     hint: "Mostly what-does-this-print, plus code-reading choices",
@@ -54,6 +65,19 @@ const PRESETS: Record<Preset, { label: string; hint: string; types: string[]; mi
     mix: { mcq: 5, tf: 3, identification: 3, enumeration: 1 },
   },
 };
+
+/** "Mostly predict the output and multiple choice, some true or false". */
+export function mixText(mix: Record<string, number> | undefined | null): string {
+  const entries = Object.entries(mix ?? {}).filter(([, w]) => w > 0);
+  if (!entries.length) return "a mix chosen from the material";
+  const top = Math.max(...entries.map(([, w]) => w));
+  const label = (t: string) => (TYPE_LABELS[t] ?? t).toLowerCase();
+  const major = entries.filter(([, w]) => w >= top * 0.6).map(([t]) => label(t));
+  const minor = entries.filter(([, w]) => w < top * 0.6).map(([t]) => label(t));
+  const join = (xs: string[]) =>
+    xs.length <= 1 ? xs.join("") : `${xs.slice(0, -1).join(", ")} and ${xs[xs.length - 1]}`;
+  return minor.length ? `mostly ${join(major)}, some ${join(minor)}` : join(major);
+}
 
 // Jobs started from this page, remembered per course so progress survives a
 // reload (per-device convenience only; the server is the source of truth).
@@ -129,6 +153,10 @@ function SectionRow({
   open,
   onToggle,
   onNext,
+  allowedDocs,
+  diagramJobId,
+  onDiagram,
+  onDiagramDone,
 }: {
   module: StudyModuleOut;
   index: number;
@@ -144,8 +172,14 @@ function SectionRow({
   open: boolean;
   onToggle: () => void;
   onNext: (() => void) | null;
+  allowedDocs: Set<number> | null;
+  diagramJobId: number | undefined;
+  onDiagram: (error?: string) => void;
+  onDiagramDone: (ok: boolean) => void;
 }) {
   const section = summary?.sections[index];
+  const [renderError, setRenderError] = useState<string | null>(null);
+  const diagram = section?.diagram;
   const done = bestScore != null && bestScore >= PASS;
   return (
     <li className={`study-sec${open ? " open" : ""}${done ? " done" : ""}`}>
@@ -174,6 +208,42 @@ function SectionRow({
                   {b.text}
                 </Markdown>
               ))}
+            </div>
+          )}
+          {section && <SectionFigures pages={sectionPages(summary, index, allowedDocs)} />}
+          {section && (
+            <div className="sec-diagram">
+              {diagramJobId != null ? (
+                <JobLine jobId={diagramJobId} onDone={(ok) => { setRenderError(null); onDiagramDone(ok); }} />
+              ) : diagram?.needed && diagram.mermaid && !renderError ? (
+                <figure>
+                  <MermaidDiagram code={diagram.mermaid} onError={setRenderError} />
+                  <figcaption>
+                    {diagram.caption} <span className="study-muted">AI-drawn from this section.</span>{" "}
+                    <button type="button" className="link-btn" onClick={() => onDiagram()}>
+                      Redraw
+                    </button>
+                  </figcaption>
+                </figure>
+              ) : diagram?.needed && renderError ? (
+                <p className="study-muted study-small">
+                  The diagram did not render.{" "}
+                  <button type="button" className="link-btn" onClick={() => onDiagram(renderError)}>
+                    Repair it
+                  </button>
+                </p>
+              ) : diagram && !diagram.needed ? (
+                <p className="study-muted study-small">
+                  No diagram: {diagram.caption || "this section reads better as text."}{" "}
+                  <button type="button" className="link-btn" onClick={() => onDiagram()}>
+                    Try again
+                  </button>
+                </p>
+              ) : (
+                <button type="button" className="btn btn-sm" onClick={() => onDiagram()}>
+                  <Shapes size={14} strokeWidth={1.75} /> Draw a diagram
+                </button>
+              )}
             </div>
           )}
           <div className="study-sec-actions">
@@ -228,7 +298,8 @@ function ModuleStep({
   startJob,
   finishJob,
   onPlay,
-  preset,
+  planId,
+  allowedDocs,
 }: {
   n: number;
   courseId: string;
@@ -239,7 +310,8 @@ function ModuleStep({
   startJob: (key: string, run: () => Promise<JobRef>) => void;
   finishJob: (key: string, ok: boolean) => void;
   onPlay: (quizId: number) => void;
-  preset: Preset;
+  planId: number | null;
+  allowedDocs: Set<number> | null;
 }) {
   const [openSec, setOpenSec] = useState<number | null>(null);
   const summary = useQuery({
@@ -252,7 +324,7 @@ function ModuleStep({
   const cp = module.checkpoint;
   const isDone = passed(cp);
   const checked = module.sections.filter((s) => s.best_score != null && s.best_score >= PASS).length;
-  const p = PRESETS[module.language ? preset : "theory"];
+  const mixLabel = mixText(module.mix);
 
   const kSummary = `summary:${module.id}`;
   const kCheckpoint = `checkpoint:${module.id}`;
@@ -316,15 +388,24 @@ function ModuleStep({
                           s.index + 1 < module.sections.length ? () => setOpenSec(s.index + 1) : null
                         }
                         onPlay={onPlay}
+                        allowedDocs={allowedDocs}
+                        diagramJobId={jobs[`diagram:${module.id}:${s.index}`]}
+                        onDiagram={(error) =>
+                          module.summary_id != null &&
+                          startJob(`diagram:${module.id}:${s.index}`, () =>
+                            api.post<JobRef>(
+                              `/api/artifacts/${module.summary_id}/sections/${s.index}/diagram`,
+                              { error: error ?? null },
+                            ),
+                          )
+                        }
+                        onDiagramDone={(ok) => finishJob(`diagram:${module.id}:${s.index}`, ok)}
                         onJobDone={(ok) => finishJob(`section:${module.id}:${s.index}`, ok)}
                         onCheck={() =>
                           startJob(`section:${module.id}:${s.index}`, () =>
                             api.post<JobRef>("/api/quizzes", {
+                              plan_id: planId,
                               module_ids: [module.id],
-                              types: ["mcq", "tf", "identification", ...(module.language ? ["output"] : [])],
-                              type_mix: module.language
-                                ? { mcq: 3, output: 2, tf: 1, identification: 1 }
-                                : { mcq: 3, tf: 1, identification: 1 },
                               count: 4,
                               mode: "sources",
                               section: s.index,
@@ -393,7 +474,7 @@ function ModuleStep({
                   <ListChecks size={15} strokeWidth={1.75} /> Topic test
                 </h4>
                 <p className="study-muted study-part-hint">
-                  12 questions across the whole module, {p.hint.toLowerCase()}. Pass mark {PASS}%.
+                  12 questions across the whole module: {mixLabel}. Pass mark {PASS}%.
                 </p>
                 {jobs[kCheckpoint] != null ? (
                   <JobLine jobId={jobs[kCheckpoint]} onDone={(ok) => finishJob(kCheckpoint, ok)} />
@@ -413,9 +494,8 @@ function ModuleStep({
                       onClick={() =>
                         startJob(kCheckpoint, () =>
                           api.post<JobRef>("/api/quizzes", {
+                            plan_id: planId,
                             module_ids: [module.id],
-                            types: p.types,
-                            type_mix: p.mix,
                             count: 12,
                             mode: "exercise",
                             role: "checkpoint",
@@ -450,6 +530,7 @@ function FinalPanel({
   onPlay,
   preset,
   setPreset,
+  planId,
 }: {
   data: StudyOut;
   jobs: Record<string, number>;
@@ -458,6 +539,7 @@ function FinalPanel({
   onPlay: (id: number) => void;
   preset: Preset;
   setPreset: (p: Preset) => void;
+  planId: number | null;
 }) {
   const [count, setCount] = useState(40);
   const withMaterial = data.modules.filter((m) => m.has_material);
@@ -513,7 +595,9 @@ function FinalPanel({
                 </button>
               ))}
             </div>
-            <span className="study-muted study-small">{p.hint}</span>
+            <span className="study-muted study-small">
+              {preset === "plan" ? `Plan: ${mixText(data.final_mix)}` : p.hint}
+            </span>
           </div>
           <div className="study-field">
             <span className="field-label">Length</span>
@@ -561,9 +645,9 @@ function FinalPanel({
             onClick={() =>
               startJob("final", () =>
                 api.post<JobRef>("/api/quizzes", {
+                  plan_id: planId,
                   module_ids: scope,
-                  types: p.types,
-                  type_mix: p.mix,
+                  ...(preset === "plan" ? {} : { types: p.types, type_mix: p.mix }),
                   count,
                   mode: "exercise",
                   exam: true,
@@ -600,7 +684,7 @@ function FinalPanel({
 // ── Page ───────────────────────────────────────────────────────────────
 
 export function StudyPage() {
-  const { courseId } = useParams({ from: "/courses/$courseId/study" });
+  const { courseId, planId } = useParams({ from: "/courses/$courseId/study/$planId" });
   const qc = useQueryClient();
   const courses = useQuery({
     queryKey: ["courses"],
@@ -608,10 +692,12 @@ export function StudyPage() {
   });
   const course = { data: courses.data?.find((c) => String(c.id) === courseId) };
   const study = useQuery({
-    queryKey: ["study", courseId],
-    queryFn: () => api.get<StudyOut>(`/api/courses/${courseId}/study`),
+    queryKey: ["plan", planId],
+    queryFn: () => api.get<StudyOut>(`/api/plans/${planId}`),
   });
-  const local = useStudyJobs(courseId);
+  const plan = study.data?.plan ?? null;
+  const [editing, setEditing] = useState(false);
+  const local = useStudyJobs(`${courseId}-${planId}`);
   const { add, done } = local;
   // Jobs the server knows are in flight (started on another device, or before
   // a reload) merged with the ones started here.
@@ -630,7 +716,7 @@ export function StudyPage() {
   }, [study.data, local.jobs]);
   const [playing, setPlaying] = useState<number | null>(null);
   const [openStep, setOpenStep] = useState<number | null>(null);
-  const [preset, setPreset] = useState<Preset>("output");
+  const [preset, setPreset] = useState<Preset>("plan");
   const [error, setError] = useState<string | null>(null);
 
   const quiz = useQuery({
@@ -646,11 +732,6 @@ export function StudyPage() {
   );
   const doneCount = modules.filter((m) => passed(m.checkpoint)).length;
   const nextUp = modules.find((m) => m.has_material && !passed(m.checkpoint));
-  const codeCourse = modules.some((m) => m.language);
-
-  useEffect(() => {
-    if (!codeCourse && study.data) setPreset("balanced");
-  }, [codeCourse, study.data]);
   useEffect(() => {
     if (openStep == null && nextUp) setOpenStep(nextUp.id);
   }, [nextUp, openStep]);
@@ -670,7 +751,8 @@ export function StudyPage() {
   function finishJob(key: string, ok: boolean) {
     done(key);
     if (!ok) setError("A generation run failed. The Activity page has the details; try again.");
-    qc.invalidateQueries({ queryKey: ["study", courseId] });
+    qc.invalidateQueries({ queryKey: ["plan", planId] });
+    qc.invalidateQueries({ queryKey: ["plans", courseId] });
     qc.invalidateQueries({ queryKey: ["summary"] });
   }
 
@@ -691,7 +773,8 @@ export function StudyPage() {
           moduleTitles={moduleTitles}
           onExit={() => {
             setPlaying(null);
-            qc.invalidateQueries({ queryKey: ["study", courseId] });
+            qc.invalidateQueries({ queryKey: ["plan", planId] });
+            qc.invalidateQueries({ queryKey: ["plans", courseId] });
           }}
           onPracticeWeak={(topics, moduleIds) => {
             setPlaying(null);
@@ -700,9 +783,11 @@ export function StudyPage() {
               key: "final",
               run: () =>
                 api.post<JobRef>("/api/quizzes", {
+                  plan_id: plan?.id ?? null,
                   module_ids: ids,
-                  types: PRESETS[preset].types,
-                  type_mix: PRESETS[preset].mix,
+                  ...(preset === "plan"
+                    ? {}
+                    : { types: PRESETS[preset].types, type_mix: PRESETS[preset].mix }),
                   count: Math.min(20, Math.max(8, topics.length * 2)),
                   mode: "exercise",
                   exam: true,
@@ -719,13 +804,21 @@ export function StudyPage() {
   return (
     <div className="study-page">
       <nav className="crumb">
-        <Link to="/courses/$courseId" params={{ courseId }}>
-          <ChevronLeft size={15} strokeWidth={1.5} /> {course.data?.code ?? "Course"}
+        <Link to="/courses/$courseId/study" params={{ courseId }}>
+          <ChevronLeft size={15} strokeWidth={1.5} /> {course.data?.code ?? "Course"} study plans
         </Link>
       </nav>
 
       <header className="study-head">
-        <h1>Study path</h1>
+        <div className="study-head-row">
+          <h1>{plan?.name ?? "Study plan"}</h1>
+          {plan && (
+            <button type="button" className="btn" onClick={() => setEditing(true)}>
+              <Pencil size={14} strokeWidth={1.75} /> Edit plan
+            </button>
+          )}
+        </div>
+        {plan?.focus && <p className="study-head-focus">Focus: {plan.focus}</p>}
         <p className="study-head-sub">
           {modules.length > 0
             ? `${doneCount} of ${modules.filter((m) => m.has_material).length} topic tests passed. Read each section, check it, then take the topic test.`
@@ -769,11 +862,12 @@ export function StudyPage() {
                 startJob={(key, run) => start.mutate({ key, run })}
                 finishJob={finishJob}
                 onPlay={setPlaying}
-                preset={preset}
+                planId={plan?.id ?? null}
+                allowedDocs={plan?.document_ids ? new Set(plan.document_ids) : null}
               />
             ))}
             {modules.length === 0 && (
-              <li className="study-muted">This course has no modules yet.</li>
+              <li className="study-muted">This plan has no modules with materials.</li>
             )}
           </ol>
           <FinalPanel
@@ -784,8 +878,17 @@ export function StudyPage() {
             onPlay={setPlaying}
             preset={preset}
             setPreset={setPreset}
+            planId={plan?.id ?? null}
           />
         </div>
+      )}
+      {editing && plan && (
+        <PlanEditor
+          courseId={courseId}
+          plan={plan}
+          onClose={() => setEditing(false)}
+          onSaved={() => setEditing(false)}
+        />
       )}
     </div>
   );

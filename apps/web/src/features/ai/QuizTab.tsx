@@ -33,6 +33,7 @@ import {
   useGenerationJob,
   useJob,
 } from "./common";
+import { AutoGrade } from "./AutoGrade";
 import { ExamPlayer } from "./ExamPlayer";
 import { fuzzyEqual, matchEnumeration, normOutput } from "./quizGrading";
 import { SourcesPicker } from "./SourcesPicker";
@@ -603,6 +604,9 @@ function QuizPlayer({
                 </ul>
               )}
             </>
+          )}
+          {(question.answer.kind === "coding" || question.answer.kind === "essay") && !reviewing && (
+            <AutoGrade key={question.id} q={question} response={longInput} onGrade={() => undefined} />
           )}
           {question.answer.kind === "coding" && (
             <>

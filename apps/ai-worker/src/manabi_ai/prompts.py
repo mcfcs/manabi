@@ -346,7 +346,10 @@ Question types (use exactly these): {{types}}.
   ask which term/concept it names; the answer is the exact term.
 - "essay": an open question needing a few sentences of synthesis.
 - "coding": ask the student to WRITE code — only when the material is
-  code-oriented.
+  code-oriented. The task must state exactly what the program prints for
+  values fixed in the task itself (no keyboard input), so the student's
+  program can be run and its output compared; the reference solution in
+  "correct_text" is a complete program (includes and main) that prints it.
 - "output": show a program and ask for its EXACT printed output — only when
   the material is code/computation-oriented.
 
@@ -498,7 +501,9 @@ Question types (use exactly these): {{types}}.
 - "identification": describe a concept precisely and ask which term it names.
 - "essay": an open exercise needing a few sentences of applied reasoning.
 - "coding": ask the student to WRITE an original program solving a small,
-  fully-specified task on the topic.
+  fully-specified task on the topic. State exactly what it must print for
+  values fixed in the task (no keyboard input); the reference solution in
+  "correct_text" is a complete program (includes and main) that prints it.
 - "output": an original program; ask for its EXACT printed output. The
   natural exercise type for code tracing.
 
@@ -677,6 +682,61 @@ REEXPLAIN_SCHEMA = {
     "type": "object",
     "properties": {"explanation": {"type": "string"}},
     "required": ["explanation"],
+}
+
+
+# ── Diagrams for a study section (Mermaid) ────────────────────────────────
+
+DIAGRAM_PROMPT = """You draw one diagram that helps a student understand a section
+of their study notes. The SECTION and its SOURCE MATERIAL are below.
+
+First decide whether a diagram adds real understanding. Good cases: a process
+or pipeline (compiler phases, a loop's control flow), a state machine (a DFA:
+states, input-labelled transitions, start and accepting states), a tree (a
+parse tree, an inheritance hierarchy), memory and pointers (boxes for
+variables, arrows for what points where), a call stack, a comparison of two
+structures. If the section is a list of facts, definitions or history, set
+"needed" to false and leave "mermaid" empty — a decorative diagram is worse
+than none.
+
+Rules for the diagram:
+- Draw ONLY what the section and sources state. No invented steps, states,
+  labels or values. Use the material's own names and terms.
+- Mermaid syntax only, no ``` fences, no %%{init}%% directives, no styling or
+  colours. At most 15 nodes; short labels.
+- Pick the right kind and start with its header line:
+  * "flowchart TD" (or LR) for processes, control flow, pointers/memory
+    (boxes + arrows) and parse trees (top-down, unique node ids like
+    n1["E"]).
+  * "stateDiagram-v2" for automata: [*] --> start state; transitions
+    "q0 --> q1 : a"; mark accepting states with a note or name them q2_accept.
+  * "classDiagram" for classes, members and inheritance (Base <|-- Derived).
+  * "sequenceDiagram" for calls between functions/objects over time.
+- Quote any label containing spaces, punctuation or symbols: n1["int *p = &x"].
+  Never put a raw double quote, # or ; inside a label.
+- "kind": the diagram kind in a few words; "caption": one sentence saying what
+  the diagram shows.
+
+Produce JSON matching the schema."""
+
+DIAGRAM_REPAIR = """
+
+The previous attempt failed to render with this Mermaid error — fix the syntax
+(keep the same content):
+{error}
+
+Previous attempt:
+{previous}"""
+
+DIAGRAM_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "needed": {"type": "boolean"},
+        "kind": {"type": "string"},
+        "caption": {"type": "string"},
+        "mermaid": {"type": "string"},
+    },
+    "required": ["needed", "kind", "caption", "mermaid"],
 }
 
 
@@ -977,4 +1037,47 @@ THREAD_RECAP_SCHEMA = {
     "type": "object",
     "properties": {"summary": {"type": "string"}},
     "required": ["summary"],
+}
+
+
+
+# ── Grading a written (essay) answer against its rubric ──────────────────
+
+GRADE_ESSAY_PROMPT = """You grade a student's written answer fairly and specifically.
+
+You are given the QUESTION, its MODEL ANSWER, its RUBRIC (key points), the
+STUDENT'S ANSWER, and the SOURCE MATERIAL when there is any.
+
+- For each rubric point decide whether the student's answer covers it
+  ("met"), with a one-sentence "comment" saying what they wrote or what is
+  missing. Accept equivalent wording; do not require the model answer's
+  phrasing. Do not reward length, confidence or padding.
+- A statement that is factually wrong per the sources counts against the
+  point it concerns, even if the right words appear.
+- "score": 0-100, roughly the share of rubric points met, lowered for
+  factual errors.
+- "feedback": 2-4 sentences: what was strong, the most important thing
+  missing, and how to fix it.
+
+Produce JSON matching the schema."""
+
+GRADE_ESSAY_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "points": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "point": {"type": "string"},
+                    "met": {"type": "boolean"},
+                    "comment": {"type": "string"},
+                },
+                "required": ["point", "met", "comment"],
+            },
+        },
+        "score": {"type": "integer"},
+        "feedback": {"type": "string"},
+    },
+    "required": ["points", "score", "feedback"],
 }

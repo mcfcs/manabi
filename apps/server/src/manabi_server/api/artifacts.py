@@ -43,7 +43,7 @@ from manabi_core.retrieval import (
     retrieve,
     source_fingerprint,
 )
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -54,6 +54,7 @@ from manabi_server.jobs.queue import (
     GENERATE_FLASHCARDS_TASK,
     GENERATE_QUIZ_TASK,
     GENERATE_SUMMARY_TASK,
+    GRADE_ESSAY_TASK,
     REGENERATE_QUESTION_TASK,
     SAMPLE_QUESTION_TASK,
     TEACH_MODULE_TASK,
@@ -2237,6 +2238,51 @@ async def challenge_question(
         VERIFY_QUESTION_TASK,
         question_id=question.id,
         user_answer=(data.user_answer or "").strip()[:4000],
+    )
+    return JobRef(job_id=job.id)
+
+
+class RunCodeIn(BaseModel):
+    code: str = Field(max_length=20000)
+
+
+@router.post("/quiz-questions/{question_id}/run", dependencies=[Depends(require_csrf)])
+async def run_coding_answer(
+    data: RunCodeIn,
+    question: QuizQuestion = Depends(_get_owned_question),
+) -> dict:
+    """Grade a coding answer by running it: the student's program and the
+    reference solution are both compiled and run, and their output compared."""
+    from manabi_server.processing.code_exec import compare_programs
+
+    if question.qtype != "coding":
+        raise HTTPException(status_code=422, detail="Only coding questions can be run")
+    reference = (question.answer or {}).get("solution") or ""
+    return await asyncio.to_thread(compare_programs, data.code, reference)
+
+
+class GradeIn(BaseModel):
+    answer: str = Field(max_length=20000)
+
+
+@router.post("/quiz-questions/{question_id}/grade", dependencies=[Depends(require_csrf)])
+async def grade_written_answer(
+    data: GradeIn,
+    question: QuizQuestion = Depends(_get_owned_question),
+    user: User = Depends(get_default_user),
+    db: AsyncSession = Depends(get_db),
+) -> JobRef:
+    """Queue AI grading of an essay answer against the question's rubric."""
+    if question.qtype != "essay":
+        raise HTTPException(status_code=422, detail="Only essay questions are AI-graded")
+    job = await _enqueue_question_job(
+        db,
+        user,
+        question,
+        "grade_essay",
+        GRADE_ESSAY_TASK,
+        question_id=question.id,
+        answer=data.answer.strip()[:20000],
     )
     return JobRef(job_id=job.id)
 

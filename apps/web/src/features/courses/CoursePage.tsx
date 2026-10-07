@@ -311,7 +311,7 @@ export function CoursePage() {
             params={{ courseId: String(course.id) }}
             title="Lessons, section checks, topic tests and a final mock exam"
           >
-            <GraduationCap size={15} strokeWidth={1.75} /> Study path
+            <GraduationCap size={15} strokeWidth={1.75} /> Study plans
           </Link>
         )}
         {course && <ReviewThisCourse courseId={course.id} />}
