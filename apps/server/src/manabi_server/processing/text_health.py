@@ -481,13 +481,24 @@ def _docling_rect(page, bbox: dict):
     return pymupdf.Rect(rect.x0 - 1, rect.y0 - 1, rect.x1 + 1, rect.y1 + 1)
 
 
+# Same rule as text_html.sanitize (kept local: text_html imports this module).
+# Some decks' embedded fonts leak NUL/control characters into the text layer,
+# and Postgres text columns reject NUL — a re-read must be cleaned like every
+# other extraction path or the whole document fails to save.
+_LAYER_CONTROL = re.compile(r"[\x00-\x08\x0c\x0e-\x1f]")
+
+
+def _clean_layer_text(text: str) -> str:
+    return _LAYER_CONTROL.sub("", (text or "").replace("\x0b", "\n"))
+
+
 def pymupdf_clip_text(pdf_doc) -> ClipText:
     """ClipText backed by an open PyMuPDF document. Docling bboxes are in PDF
     points with a bottom-left origin (t > b); PyMuPDF wants top-left."""
 
     def clip(page_no: int, bbox: dict) -> str:
         page = pdf_doc[page_no - 1]
-        return page.get_text("text", clip=_docling_rect(page, bbox), sort=True)
+        return _clean_layer_text(page.get_text("text", clip=_docling_rect(page, bbox), sort=True))
 
     return clip
 
@@ -498,6 +509,8 @@ def pymupdf_clip_code(pdf_doc) -> ClipText:
 
     def clip(page_no: int, bbox: dict) -> str:
         page = pdf_doc[page_no - 1]
-        return code_lines_from_dict(page.get_text("dict", clip=_docling_rect(page, bbox)))
+        return _clean_layer_text(
+            code_lines_from_dict(page.get_text("dict", clip=_docling_rect(page, bbox)))
+        )
 
     return clip

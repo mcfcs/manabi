@@ -7,6 +7,7 @@ worker then fills in audio per segment (manabi_ai.tasks.narrate_document).
 from __future__ import annotations
 
 import logging
+import re
 
 from manabi_core.models import (
     AINodeHeartbeat,
@@ -25,6 +26,8 @@ from sqlalchemy.orm import Session
 from manabi_server.processing.narration_script import Script, build_script_from_path
 
 log = logging.getLogger("manabi_server")
+
+_CONTROL = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f]")
 
 SCRIPT_VERSION = 1
 NARRATE_JOB_TYPE = "narrate_document"
@@ -109,6 +112,12 @@ def prepare_narration_sync(db: Session, doc: Document) -> int | None:
         narration.script_version = SCRIPT_VERSION
         narration.error = None
         for r in rows:
+            # Some decks' fonts leak NUL/control characters into the text layer
+            # the script is read from; Postgres rejects NUL in text, and the
+            # failed flush took the whole document's extraction down with it.
+            for key in ("text", "spoken_text"):
+                if isinstance(r.get(key), str):
+                    r[key] = _CONTROL.sub("", r[key])
             db.add(NarrationSegment(narration_id=narration.id, **r))
         from manabi_core.models import User
 

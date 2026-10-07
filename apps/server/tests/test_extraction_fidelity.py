@@ -161,3 +161,11 @@ def test_one_huge_element_is_split_under_the_chunk_budget(code):
     chunks = chunking.chunk_pdf(els)
     assert len(chunks) > 1
     assert all(chunking.approx_tokens(c.text) <= chunking.MAX_CHUNK_TOKENS + 40 for c in chunks)
+
+
+def test_text_re_read_from_the_pdf_layer_is_cleaned_of_nul_bytes():
+    # csci60-set3's fonts leak NUL into the text layer; the re-read used to
+    # carry it into Postgres and fail the whole document.
+    from manabi_server.processing.text_health import _clean_layer_text
+
+    assert _clean_layer_text("a\x00b\x0bc\td") == "ab\nc\td"

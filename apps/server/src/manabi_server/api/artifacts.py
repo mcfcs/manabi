@@ -1473,7 +1473,7 @@ async def export_deck_by_id(
 
 
 class QuizConfigIn(BaseModel):
-    module_ids: list[int]
+    module_ids: list[int] = []  # may be left empty when plan_id supplies them
     types: list[str] = ["mcq", "tf", "short"]
     count: int = 10
     # Document/note scoping is only meaningful for a single-module quiz (422
