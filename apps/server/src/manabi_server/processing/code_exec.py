@@ -304,6 +304,7 @@ _ASKS_OUTPUT = re.compile(
     r"\b(?:outputs?|print(?:s|ed)?|display(?:s|ed)?|cout|printf|console|screen|shown)\b",
     re.I,
 )
+_UNPRINTABLE = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]")
 _COMPILE_ERR = re.compile(
     r"compil\w*\s+error|does not compile|won't compile|fails to compile", re.I
 )
@@ -411,6 +412,11 @@ def check_code_question(
         return CodeCheck("unverifiable", result.error or "could not run")
     if not printed_anything(result):
         return CodeCheck("unverifiable" if qtype == "output" else "skip", "program prints nothing")
+    if _UNPRINTABLE.search(result.stdout):
+        # e.g. printf("%c") of an empty stack's '\0': nobody can type that
+        # answer, and Postgres cannot store "\u0000" in JSON either (a real
+        # one failed verification of a whole 40-question exam).
+        return CodeCheck("rejected", "the program prints a non-printable character")
 
     real = normalize_output(result.stdout)
     if qtype in ("output", "short"):

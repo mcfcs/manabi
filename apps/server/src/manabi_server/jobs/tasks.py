@@ -202,7 +202,11 @@ def verify_quiz_outputs(artifact_id: int) -> int:
             answer = dict(q.answer or {})
             if str(answer.get("verified", "")).startswith(("executed", "rejected")):
                 continue  # already settled by an earlier pass
-            chk = check_code_question(q.qtype, q.prompt or "", q.options, answer)
+            try:
+                chk = check_code_question(q.qtype, q.prompt or "", q.options, answer)
+            except Exception:  # noqa: BLE001 — one bad question must not sink the quiz
+                log.exception("code check crashed on question %s", q.id)
+                continue
             if chk.status == "skip":
                 continue
             counts[chk.status] = counts.get(chk.status, 0) + 1

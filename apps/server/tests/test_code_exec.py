@@ -297,3 +297,11 @@ def test_a_cpp_program_that_forgot_iostream_still_runs():
     r = execute(Snippet("cpp", src))
     assert r.ok, r.error
     assert normalize_output(r.stdout) == "7"
+
+
+@needs_cc
+def test_output_with_a_nul_character_is_retired():
+    # printf("%c") of an empty stack's '\0' broke verification of a whole exam.
+    p = "What is printed?\n\n```c\n#include <stdio.h>\nint main(void){ char c = 0; printf(\"x%cy\", c); return 0; }\n```"
+    chk = check_code_question("output", p, None, {"kind": "output", "text": "xy"})
+    assert chk.status == "rejected" and "non-printable" in chk.reason
