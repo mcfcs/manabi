@@ -199,3 +199,15 @@ def test_selection_follows_each_units_own_mix():
     per_unit = {0: {"mcq": 1.0, "essay": 1.0}, 1: {"mcq": 2.0}}
     picked = select_by_quota(items, {0: 2, 1: 2}, {"mcq": 9, "essay": 1}, 4, per_unit)
     assert 2 in picked and len(picked) == 4
+
+
+def test_python_needing_a_third_party_library_is_audited_not_run():
+    from manabi_ai.quizplan import executable_check_applies
+
+    nltk = (
+        "What is the exact output?\n\n```python\nfrom nltk.corpus import stopwords\n"
+        "print(sorted(stopwords.words('english'))[:2])\n```"
+    )
+    stdlib = "What is the exact output?\n\n```python\nimport math\nprint(math.floor(2.5))\n```"
+    assert not executable_check_applies("output", nltk)
+    assert executable_check_applies("output", stdlib)

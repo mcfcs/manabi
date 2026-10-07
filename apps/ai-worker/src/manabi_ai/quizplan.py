@@ -159,14 +159,35 @@ _HYPOTHETICAL = re.compile(
 )
 
 
+_PY_IMPORT = re.compile(
+    r"^\s*(?:from\s+([A-Za-z_]\w*)[\w.]*\s+import|import\s+([A-Za-z_]\w*))", re.M
+)
+
+
+def imports_outside_stdlib(prompt: str) -> bool:
+    """Does the code import a library the sandbox (stdlib only) lacks? An NLP
+    question on `nltk.corpus.stopwords` was sent to the runner, which could
+    not import nltk — so it was checked by neither the runner nor a model."""
+    import sys
+
+    for m in _PY_IMPORT.finditer("\n".join(_FENCE.findall(prompt or ""))):
+        name = m.group(1) or m.group(2)
+        if name and name not in sys.stdlib_module_names:
+            return True
+    return False
+
+
 def executable_check_applies(qtype: str, prompt: str) -> bool:
     """True when the app server will settle this question by running its
     code (so a blind model solve would only add noise). A question asking the
     student to assume semantics C does not have (call by value-result) cannot
-    be settled by compiling it, so it is audited by a model instead."""
+    be settled by compiling it, so it is audited by a model instead; so is
+    Python that needs a library the runner does not have."""
     if not has_code(prompt):
         return False
     if _HYPOTHETICAL.search(_FENCE.sub(" ", prompt or "")):
+        return False
+    if imports_outside_stdlib(prompt):
         return False
     if qtype == "output":
         return True
