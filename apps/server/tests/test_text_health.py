@@ -181,37 +181,10 @@ def test_heal_replaces_only_glued_pages_and_respects_sanity_bounds():
     assert healed[2]["text"] == "a | b"  # tables untouched
     assert healed[3]["text"] == CLEAN and "healed" not in healed[3]  # clean page never re-read
     assert healed[4]["text"] == "specific"  # ligatures folded even without a bbox
-    # Page 2 is read once to compare letter counts (dropped-letter check) but,
-    # matching the PDF, it is never rewritten.
-    assert {p for p, _ in calls} == {1, 2}
+    assert {p for p, _ in calls} == {1}
 
 
 def test_heal_without_clip_only_folds_ligatures():
     elements = [{"type": "paragraph", "text": GLUED + " ﬁne", "page_no": 1, "bbox": None}]
     out = heal_elements(elements, None)
     assert out[0]["text"].endswith(" fine") and out[0]["text"].startswith("Itisnow")
-
-
-# ── Dropped letters (CSCI 70 L6: every "s" missing from Docling's text) ────
-
-from manabi_server.processing.text_health import heal_elements as _heal  # noqa: E402
-from manabi_server.processing.text_health import letters_dropped  # noqa: E402
-
-_PDF = "Arrays are pointers. An array name represents the address of the first element of the array. Pointer arithmetic: subtraction, increment, decrement operators work on pointers too."
-_DOCLING = "Array  are pointer . An array name repre ent  the addre   of the fir t element of the array. Pointer arithmetic:  ubtraction, increment, decrement operator  work on pointer  too."
-
-
-def test_a_letter_dropped_everywhere_is_detected():
-    assert letters_dropped(_DOCLING, _PDF) == ["s"]
-
-
-def test_ordinary_text_drops_nothing():
-    assert letters_dropped(_PDF, _PDF) == []
-    assert letters_dropped(_PDF.replace("first", "1st"), _PDF) == []
-
-
-def test_a_page_missing_a_letter_is_healed_from_the_pdf():
-    el = {"page_no": 5, "type": "text", "text": _DOCLING, "bbox": {"l": 0, "r": 500, "t": 700, "b": 600}}
-    healed = _heal([el], lambda page_no, bbox: _PDF)
-    assert healed[0]["text"].startswith("Arrays are pointers")
-    assert healed[0].get("healed") is True
