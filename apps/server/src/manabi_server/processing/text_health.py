@@ -148,6 +148,57 @@ def _letters(text: str) -> int:
     return sum(1 for ch in text if ch.isalpha())
 
 
+# ── Dropped-letter detection ────────────────────────────────────────────────
+#
+# A second failure of custom-encoded fonts: Docling silently drops one letter
+# everywhere — a CSCI 70 lecture came out "Array  are pointer  / An array name
+# repre ent  the addre  of the fir t element" (every "s" gone) while PyMuPDF
+# read "Arrays are pointers" from the same page. Compare letter frequencies of
+# Docling's text with the PDF's own text over the same region; one letter
+# collapsing is the signature (ordinary extraction noise never removes a whole
+# letter class).
+
+DROP_MIN_PDF_COUNT = 8  # the letter must be common enough on the page to judge
+DROP_MAX_RATIO = 0.5  # docling keeps fewer than half of its occurrences
+
+
+def letters_dropped(docling_text: str, pdf_text: str) -> list[str]:
+    """Letters the PDF text has plenty of that Docling's text mostly lacks."""
+    from collections import Counter
+
+    have = Counter(ch for ch in docling_text.lower() if ch.isalpha())
+    ref = Counter(ch for ch in pdf_text.lower() if ch.isalpha())
+    return sorted(
+        ch
+        for ch, n in ref.items()
+        if n >= DROP_MIN_PDF_COUNT and have.get(ch, 0) < DROP_MAX_RATIO * n
+    )
+
+
+def _page_drops_letters(page_no: int, page_els: list[dict], clip_text: ClipText) -> bool:
+    boxes = [
+        e["bbox"]
+        for e in page_els
+        if e.get("bbox") and e.get("text") and e.get("type") not in ("table", "figure")
+    ]
+    if not boxes:
+        return False
+    union = {
+        "l": min(float(b["l"]) for b in boxes),
+        "r": max(float(b["r"]) for b in boxes),
+        "t": max(float(b["t"]) for b in boxes),
+        "b": min(float(b["b"]) for b in boxes),
+    }
+    try:
+        pdf_text = clip_text(page_no, union) or ""
+    except Exception:  # noqa: BLE001 — healing is best-effort
+        return False
+    docling = " ".join(
+        e.get("text") or "" for e in page_els if e.get("type") not in ("table", "figure")
+    )
+    return bool(letters_dropped(docling, pdf_text))
+
+
 def heal_elements(elements: list[dict], clip_text: ClipText | None) -> list[dict]:
     """Return elements with ligatures folded everywhere and, on pages whose
     Docling text is glued, each boxed text element re-read through
@@ -165,7 +216,7 @@ def heal_elements(elements: list[dict], clip_text: ClipText | None) -> list[dict
 
     for page_no, page_els in by_page.items():
         texts = [e.get("text") or "" for e in page_els if e.get("type") not in ("table", "figure")]
-        if not page_needs_healing(texts):
+        if not page_needs_healing(texts) and not _page_drops_letters(page_no, page_els, clip_text):
             continue
         for el in page_els:
             if el.get("type") in ("table", "figure") or not el.get("bbox") or not el.get("text"):
