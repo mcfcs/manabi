@@ -200,7 +200,7 @@ def verify_quiz_outputs(artifact_id: int) -> int:
         )
         for q in questions:
             answer = dict(q.answer or {})
-            if str(answer.get("verified", "")).startswith(("executed", "rejected")):
+            if str(answer.get("verified", "")).startswith(("executed", "rejected", "manual", "language-checked")):
                 continue  # already settled by an earlier pass
             try:
                 chk = check_code_question(q.qtype, q.prompt or "", q.options, answer)
