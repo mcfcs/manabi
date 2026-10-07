@@ -51,6 +51,7 @@ from manabi_ai.ollama_client import GenerationError, generate_structured
 from manabi_ai.recap import recap_block, should_refresh, turns_to_fold
 from manabi_ai.validators import (
     ResolvedItem,
+    _near_duplicate,
     dedup_cards,
     dedup_questions,
     match_element_ids,
@@ -1640,17 +1641,37 @@ async def regenerate_question(job_id: int, question_id: int) -> None:
                 if not own:
                     own = await load_context_chunks(db, [question.module_id])
                 chunks = own or chunks
-            batch = batch_chunks(chunks)[0] if chunks else []
-            ctx = build_context(batch, None) if batch else None
+            # Start from the batch the old question cited, and move to another
+            # batch on a retry. Always using the first batch kept handing the
+            # model the same few topics: a replacement came back as a
+            # near-copy of another question already in the quiz.
+            batches = batch_chunks(chunks) if chunks else []
+            cited = {
+                cid
+                for (cid,) in (
+                    await db.execute(
+                        select(Citation.chunk_id).where(
+                            Citation.artifact_id == artifact.id,
+                            Citation.item_ref == f"q:{question.ord}",
+                        )
+                    )
+                ).all()
+            }
+            batches.sort(key=lambda b: -sum(1 for c in b if c.id in cited))
 
-            existing = [
+            others = [
                 p
                 for (p,) in (
                     await db.execute(
-                        select(QuizQuestion.prompt).where(QuizQuestion.artifact_id == artifact.id)
+                        select(QuizQuestion.prompt).where(
+                            QuizQuestion.artifact_id == artifact.id,
+                            QuizQuestion.id != question.id,
+                        )
                     )
                 ).all()
+                if p
             ]
+            existing = [*others, question.prompt or ""]
             avoid = "\n".join(f"- {p[:120]}" for p in existing[-30:]) or "(none)"
             base_prompt = prompts.EXERCISE_QUIZ_PROMPT if exercise else prompts.QUIZ_PROMPT
             if artifact.instructions:
@@ -1664,7 +1685,10 @@ async def regenerate_question(job_id: int, question_id: int) -> None:
             await _progress(db, job, 30, "Writing a replacement question")
             new_item: dict | None = None
             resolved_chunks: list[ScopedChunk] = []
-            for _ in range(2):
+            ctx = None
+            for attempt in range(3):
+                batch = batches[attempt % len(batches)] if batches else []
+                ctx = build_context(batch, None) if batch else None
                 result = await generate_structured(
                     base_prompt,
                     ctx.source_text if ctx else _NO_SOURCES_TEXT,
@@ -1681,9 +1705,11 @@ async def regenerate_question(job_id: int, question_id: int) -> None:
                     require_sources=not exercise,
                 )
                 for cand in kept:
+                    stem = cand.item.get("prompt") or ""
                     if (
                         cand.item.get("qtype") == question.qtype
                         and _question_answer(cand.item) is not None
+                        and not any(_near_duplicate(stem, p, 0.8) for p in existing)
                     ):
                         new_item, resolved_chunks = cand.item, cand.chunks
                         break
