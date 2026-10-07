@@ -340,7 +340,8 @@ Question types (use exactly these): {{types}}.
 - "tf": a statement that is clearly true or false per the sources.
 - "short": answerable in one sentence, phrase or value.
 - "enumeration": when the sources list several related items, ask the student
-  to name ALL of them, named exactly as in the sources. Fewer than 2 items =
+  to name ALL of them, named exactly as in the sources. Each item is a short
+  name (a few words), never a sentence or an explanation. Fewer than 2 items =
   discarded.
 - "identification": state a definition or description from the sources and
   ask which term/concept it names; the answer is the exact term.

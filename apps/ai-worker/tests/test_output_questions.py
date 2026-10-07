@@ -5,7 +5,7 @@ deterministic result. Both failures were observed in a real generation run.
 
 from manabi_ai.tasks_gen import _question_answer
 
-CODE = "```c\nint n = 5;\nprintf(\"%d\\n\", n);\n```"
+CODE = '```c\nint n = 5;\nprintf("%d\\n", n);\n```'
 
 
 def _q(**kw) -> dict:
@@ -21,9 +21,12 @@ def test_a_normal_output_question_is_accepted():
 def test_a_question_that_shows_no_code_is_rejected():
     # The real failure: the model wrote "Given the following C code snippet…"
     # and omitted the snippet entirely.
-    assert _question_answer(
-        _q(prompt="Given the following C code snippet, what is the output?", correct_text="5")
-    ) is None
+    assert (
+        _question_answer(
+            _q(prompt="Given the following C code snippet, what is the output?", correct_text="5")
+        )
+        is None
+    )
 
 
 def test_an_empty_fence_does_not_count_as_code():
@@ -73,15 +76,25 @@ def test_other_question_types_are_unaffected_by_the_code_requirement():
 
 def test_a_true_false_item_must_be_a_statement():
     # Real failure: "what is the memory address of p + 3?" keyed True.
-    assert _question_answer(
-        {"qtype": "tf", "prompt": "What is the address of p + 3?", "correct_bool": True}
-    ) is None
+    assert (
+        _question_answer(
+            {"qtype": "tf", "prompt": "What is the address of p + 3?", "correct_bool": True}
+        )
+        is None
+    )
     assert _question_answer(
         {"qtype": "tf", "prompt": "p + 3 is 12 bytes past p.", "correct_bool": True}
     ) == {"kind": "tf", "value": True}
-    assert _question_answer(
-        {"qtype": "tf", "prompt": "True or false: p + 3 is 12 bytes past p?", "correct_bool": True}
-    ) is not None
+    assert (
+        _question_answer(
+            {
+                "qtype": "tf",
+                "prompt": "True or false: p + 3 is 12 bytes past p?",
+                "correct_bool": True,
+            }
+        )
+        is not None
+    )
 
 
 def test_a_true_false_item_is_not_a_disguised_mcq():
@@ -101,6 +114,30 @@ def test_an_identification_answer_is_a_term_not_a_sentence():
         "kind": "identification",
         "text": "Term Frequency-Inverse Document Frequency",
     }
-    assert ident(
-        "RAG addresses hallucinations by referencing actual documents and grounding the response"
-    ) is None
+    assert (
+        ident(
+            "RAG addresses hallucinations by referencing documents and grounding the response"
+        )
+        is None
+    )
+
+
+def test_enumeration_items_are_names_not_sentences():
+    def enum(items):
+        return _question_answer(
+            {"qtype": "enumeration", "prompt": "List them.", "correct_items": items}
+        )
+
+    assert enum(["trust", "reciprocity"]) == {
+        "kind": "enumeration",
+        "items": ["trust", "reciprocity"],
+    }
+    assert (
+        enum(
+            [
+                "Transformers process tokens in parallel, so they do not capture order.",
+                "RNNs process tokens sequentially via recurrence, which encodes position.",
+            ]
+        )
+        is None
+    )

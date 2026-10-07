@@ -804,6 +804,7 @@ def finalize_question(item: dict) -> dict:
 
 
 _IDENTIFICATION_MAX_WORDS = 6  # "Term Frequency-Inverse Document Frequency" is 4
+_ENUMERATION_ITEM_MAX_WORDS = 8  # "political, socio-cultural, ethical" items are 1-2
 
 
 def _question_answer(item: dict) -> dict | None:
@@ -837,7 +838,10 @@ def _question_answer(item: dict) -> dict | None:
         items = [
             s.strip() for s in (item.get("correct_items") or []) if isinstance(s, str) and s.strip()
         ]
-        if len(items) >= 2:
+        # Items are names, as for identification. A real one listed "three
+        # reasons Transformers need positional encodings" as three sentences
+        # no student could reproduce closely enough to be marked right.
+        if len(items) >= 2 and all(len(s.split()) <= _ENUMERATION_ITEM_MAX_WORDS for s in items):
             return {"kind": "enumeration", "items": items}
         return None
     if qtype == "identification":
