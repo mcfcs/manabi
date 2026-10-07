@@ -16,6 +16,7 @@ import {
   StickyNote,
   Trash2,
   Video,
+  GraduationCap,
 } from "lucide-react";
 import { type FormEvent, useState } from "react";
 
@@ -303,6 +304,16 @@ export function CoursePage() {
           <h1>{course ? `${course.code} · ${course.name}` : "…"}</h1>
           {course?.term && <p className="course-head-meta">{course.term}</p>}
         </div>
+        {course && (
+          <Link
+            className="btn btn-primary"
+            to="/courses/$courseId/study"
+            params={{ courseId: String(course.id) }}
+            title="Lessons, section checks, topic tests and a final mock exam"
+          >
+            <GraduationCap size={15} strokeWidth={1.75} /> Study path
+          </Link>
+        )}
         {course && <ReviewThisCourse courseId={course.id} />}
         {course?.meeting_url && (
           <a

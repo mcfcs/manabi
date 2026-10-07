@@ -33,6 +33,8 @@ import {
   useGenerationJob,
   useJob,
 } from "./common";
+import { ExamPlayer } from "./ExamPlayer";
+import { fuzzyEqual, matchEnumeration, normOutput } from "./quizGrading";
 import { SourcesPicker } from "./SourcesPicker";
 import "./quiz.css";
 
@@ -51,49 +53,6 @@ const TYPE_LABELS: Record<string, string> = {
 // student judge; auto-checked types compute a verdict client-side (with an
 // override link for wording edge cases); mcq/tf grade exactly.
 const SELF_GRADED = new Set(["short", "essay", "coding"]);
-
-// ── Client-side answer matching (deliberately lenient — the override
-// buttons are the escape hatch for wording edge cases) ────────────────────
-
-const norm = (s: string) =>
-  s
-    .toLowerCase()
-    .normalize("NFKC")
-    .replace(/[^\p{L}\p{N}\s]/gu, " ")
-    .replace(/\s+/g, " ")
-    .trim();
-
-function fuzzyEqual(a: string, b: string): boolean {
-  const na = norm(a);
-  const nb = norm(b);
-  if (!na || !nb) return false;
-  if (na === nb || na.includes(nb) || nb.includes(na)) return true;
-  const ta = na.split(" ");
-  const tb = new Set(nb.split(" "));
-  const overlap = ta.filter((t) => tb.has(t)).length;
-  return overlap / Math.max(ta.length, tb.size) >= 0.6;
-}
-
-// Exact-output compare: CRLF-safe, trailing spaces and blank lines ignored.
-const normOutput = (s: string) =>
-  s
-    .replace(/\r\n/g, "\n")
-    .split("\n")
-    .map((l) => l.trimEnd())
-    .join("\n")
-    .replace(/\n+$/, "")
-    .trim();
-
-/** Greedy 1:1 match of the student's lines against the answer items. */
-function matchEnumeration(userLines: string[], items: string[]): boolean[] {
-  const remaining = userLines.filter((l) => l.trim());
-  return items.map((item) => {
-    const i = remaining.findIndex((l) => fuzzyEqual(l, item));
-    if (i === -1) return false;
-    remaining.splice(i, 1);
-    return true;
-  });
-}
 
 // ── Taking a quiz ─────────────────────────────────────────────
 
@@ -941,6 +900,9 @@ export function QuizTab({
     });
   }
 
+  if (playing != null && activeQuiz.data?.exam) {
+    return <ExamPlayer quiz={activeQuiz.data} onExit={() => setPlaying(null)} />;
+  }
   if (playing != null && activeQuiz.data) {
     return (
       <QuizPlayer
@@ -1151,7 +1113,7 @@ export function QuizTab({
               value={count}
               onChange={(e) => setCount(Number(e.target.value))}
             >
-              {[5, 10, 15, 20].map((n) => (
+              {[5, 10, 15, 20, 30].map((n) => (
                 <option key={n} value={n}>
                   {n}
                 </option>

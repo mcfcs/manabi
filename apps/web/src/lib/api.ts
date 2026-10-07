@@ -839,6 +839,9 @@ export interface QuestionOut {
     | { kind: "output"; text: string; verified?: string };
   explanation: string | null;
   citations: CitationOut[];
+  /** What the question tests, and the module it came from (exam breakdown). */
+  topic?: string | null;
+  module_id?: number | null;
 }
 
 export interface QuizOut {
@@ -850,6 +853,9 @@ export interface QuizOut {
   generation_mode: GenerationMode | null;
   instructions: string | null;
   questions: QuestionOut[];
+  exam?: boolean;
+  /** Blind-audit counts recorded at generation time. */
+  audit?: Record<string, number> | null;
 }
 
 export interface QuizListItem {
@@ -860,4 +866,42 @@ export interface QuizListItem {
   attempt_count: number;
   best_score: number | null;
   generation_mode: GenerationMode | null;
+  module_id?: number | null;
+  scope_module_ids?: number[];
+  exam?: boolean;
+  last_score?: number | null;
+  role?: string | null;
+}
+
+// ── Study path (course) ─────────────────────────────────────────────
+
+export interface StudySectionOut {
+  index: number;
+  title: string;
+  block_count: number;
+  has_sources: boolean;
+  quiz_id: number | null;
+  best_score: number | null;
+}
+
+export interface StudyModuleOut {
+  id: number;
+  title: string;
+  has_material: boolean;
+  chunk_count: number;
+  summary_id: number | null;
+  sections: StudySectionOut[];
+  lecture_id: number | null;
+  lecture_segments: number;
+  checkpoint: QuizListItem | null;
+  language: string | null;
+  /** in-flight generation by slot ("checkpoint", "section:<i>", "summary", "lecture") */
+  pending?: Record<string, number>;
+}
+
+export interface StudyOut {
+  course_id: number;
+  modules: StudyModuleOut[];
+  finals: QuizListItem[];
+  pending_final?: number | null;
 }

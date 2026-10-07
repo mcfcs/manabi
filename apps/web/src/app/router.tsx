@@ -8,6 +8,7 @@ import {
 import { AssistantPage } from "../features/assistant/AssistantPage";
 import { CalendarPage } from "../features/calendar/CalendarPage";
 import { CoursePage } from "../features/courses/CoursePage";
+import { StudyPage } from "../features/study/StudyPage";
 import { HomePage } from "../features/courses/HomePage";
 import { ModuleWorkspace } from "../features/modules/ModuleWorkspace";
 import { SchedulePage } from "../features/schedule/SchedulePage";
@@ -36,6 +37,12 @@ const courseRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "/courses/$courseId",
   component: CoursePage,
+});
+
+const studyRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "/courses/$courseId/study",
+  component: StudyPage,
 });
 
 export type ModuleTab =
@@ -157,6 +164,7 @@ const assistantRoute = createRoute({
 const routeTree = rootRoute.addChildren([
   homeRoute,
   courseRoute,
+  studyRoute,
   moduleRoute,
   documentRoute,
   scheduleRoute,
