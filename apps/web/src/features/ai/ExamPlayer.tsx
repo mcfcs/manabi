@@ -425,7 +425,7 @@ function Results({
                 return (
                   <li key={String(mid)}>
                     <span className="exam-bar-label">{mid != null ? moduleTitles[mid] ?? "Module" : "Other"}</span>
-                    <span className="exam-bar" style={{ width: `${Math.max(p, 2)}%` }} data-low={p < 70 || undefined} />
+                    <span className="exam-meter" style={{ width: `${Math.max(p, 2)}%` }} data-low={p < 70 || undefined} />
                     <span className="exam-bar-num mono">
                       {v.right}/{v.total}
                     </span>

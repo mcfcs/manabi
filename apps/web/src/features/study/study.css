@@ -2,6 +2,7 @@
    panel on the right. Breakpoints per tokens.css. */
 
 .study-page {
+  width: 100%;
   max-width: 1180px;
   margin-inline: auto;
   display: flex;

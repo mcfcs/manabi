@@ -3,6 +3,7 @@
    tablet landscape 1024–1279, desktop ≥1280. */
 
 .exam {
+  width: 100%;
   max-width: 1120px;
   margin-inline: auto;
   display: flex;
@@ -436,13 +437,13 @@
   text-align: right;
   color: var(--ink-soft);
 }
-.exam-bar {
+.exam-meter {
   grid-area: bar;
   height: 6px;
   border-radius: 3px;
   background: var(--accent-blue);
 }
-.exam-bar[data-low] {
+.exam-meter[data-low] {
   background: var(--accent-red);
 }
 .exam-weak li {
