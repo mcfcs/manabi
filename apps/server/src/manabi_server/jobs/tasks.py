@@ -94,6 +94,8 @@ def score_support(artifact_id: int) -> None:
 
 
 MAX_REPLACEMENTS = 2  # per question: a topic that keeps producing UB gets dropped
+# `verified` stamps a later pass must not touch (run, retired, or hand-checked).
+SETTLED = ("executed", "rejected", "manual", "language-checked")
 
 
 def _queue_replacements(db, artifact, question_ids: list[int]) -> int:
@@ -200,7 +202,7 @@ def verify_quiz_outputs(artifact_id: int) -> int:
         )
         for q in questions:
             answer = dict(q.answer or {})
-            if str(answer.get("verified", "")).startswith(("executed", "rejected", "manual", "language-checked")):
+            if str(answer.get("verified", "")).startswith(SETTLED):
                 continue  # already settled by an earlier pass
             try:
                 chk = check_code_question(q.qtype, q.prompt or "", q.options, answer)
