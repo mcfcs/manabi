@@ -1594,6 +1594,14 @@ async def regenerate_question(job_id: int, question_id: int) -> None:
                 chunks = await load_context_chunks(
                     db, sorted(scope), document_ids=artifact.scope_document_ids
                 )
+            # An exam question belongs to one module: replace it from that
+            # module's material, or a Syntax & Translation slot comes back as
+            # a C stack question (observed).
+            if question.module_id is not None:
+                own = [c for c in chunks if c.module_id == question.module_id]
+                if not own:
+                    own = await load_context_chunks(db, [question.module_id])
+                chunks = own or chunks
             batch = batch_chunks(chunks)[0] if chunks else []
             ctx = build_context(batch, None) if batch else None
 
