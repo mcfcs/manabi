@@ -81,7 +81,9 @@ _HSPACE_RUN = re.compile(r"[ \t]+")
 
 
 def sanitize(text: str) -> str:
-    return _CONTROL_CHARS.sub("", text)
+    # A vertical tab is python-pptx's in-paragraph line break: keep it as a
+    # newline instead of deleting it (which glued "E" + "E" into "EE").
+    return _CONTROL_CHARS.sub("", text.replace("\x0b", "\n"))
 
 
 def fold_ligatures(text: str) -> str:
@@ -131,7 +133,7 @@ def _is_repeat(raw: str, skip: set[str] | None) -> bool:
 
 
 def _span_html(text: str, bold: bool, italic: bool, mono: bool = False) -> str:
-    out = html.escape(sanitize(text))
+    out = html.escape(fold_ligatures(sanitize(text)))
     if mono:
         out = f"<code>{out}</code>"  # code samples keep their monospace look
     if bold:
@@ -327,6 +329,10 @@ def _table_html(table_json: dict) -> str | None:
             rows = []
         if not rows and not columns:
             return None
+        from manabi_server.processing.pipeline import _is_index_header
+
+        if _is_index_header(columns):
+            columns = []  # pandas RangeIndex (0 | 1 | 2 …), not a real header
         head = "".join(f"<th>{html.escape(str(c))}</th>" for c in columns)
         body = "".join(
             "<tr>" + "".join(f"<td>{html.escape(sanitize(str(v)))}</td>" for v in row) + "</tr>"
@@ -336,6 +342,40 @@ def _table_html(table_json: dict) -> str | None:
         return f"<table>{thead}{body}</table>"
     except Exception:  # noqa: BLE001 — malformed table json degrades to nothing
         return None
+
+
+def _pptx_paragraph_spans(para) -> list[str]:
+    """A python-pptx paragraph's runs as styled HTML spans, with in-paragraph
+    line breaks (<a:br/>) kept as <br> rather than gluing the lines together."""
+    from pptx.text.text import _Run
+
+    spans: list[str] = []
+    try:
+        children = list(para._p.content_children)
+    except Exception:  # noqa: BLE001 — older python-pptx: runs only
+        children = [run._r for run in para.runs]
+    for child in children:
+        tag = str(getattr(child, "tag", ""))
+        if tag.endswith("}br"):
+            if spans and spans[-1] != "<br>":
+                spans.append("<br>")
+            continue
+        run = _Run(child, para) if tag.endswith("}r") else None
+        if run is None or not run.text.strip():
+            if run is not None and run.text and spans and spans[-1] != "<br>":
+                spans.append(" ")
+            continue
+        spans.append(
+            _span_html(
+                run.text,
+                bool(run.font.bold),
+                bool(run.font.italic),
+                any(m in (run.font.name or "").lower() for m in _MONO_FONT),
+            )
+        )
+    while spans and spans[-1] == "<br>":
+        spans.pop()
+    return spans
 
 
 def _pptx_pages_html(source_path) -> dict[int, str]:
@@ -366,18 +406,9 @@ def _pptx_pages_html(source_path) -> dict[int, str]:
                 raw = "".join(run.text for run in para.runs)
                 if _is_repeat(raw, skip):
                     continue
-                spans = [
-                    _span_html(
-                        run.text,
-                        bool(run.font.bold),
-                        bool(run.font.italic),
-                        any(m in (run.font.name or "").lower() for m in _MONO_FONT),
-                    )
-                    for run in para.runs
-                    if run.text.strip()
-                ]
-                if spans:
-                    parts.append(f"<p>{''.join(spans)}</p>")
+                spans = _pptx_paragraph_spans(para)
+                if any(s != "<br>" for s in spans):
+                    parts.append(f"<p>{''.join(spans).strip()}</p>")
         if parts:
             out[idx] = "".join(parts)
     return out

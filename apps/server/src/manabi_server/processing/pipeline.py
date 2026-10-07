@@ -13,6 +13,7 @@ import logging
 import re
 import subprocess
 import tempfile
+import threading
 from pathlib import Path
 
 from manabi_core.models import (
@@ -267,11 +268,19 @@ def _stage_structure(db: Session, doc: Document) -> None:
     # Re-join scanned drop-cap initials ("S creams" → "Screams"); safe no-op on
     # native text and non-drop-cap paragraphs.
     parsed["elements"] = _join_drop_caps(parsed["elements"])
+    if doc.kind == DocumentKind.pdf:
+        warning = _coverage_warning(parsed["elements"], source)
+        if warning:
+            log.warning("doc %s: %s", doc.id, warning)
+            # Shown only as a note: the UI surfaces `error` for failed docs,
+            # and run_pipeline clears it at the start of every extraction.
+            doc.error = f"warning: {warning}"
 
     notes_by_page: dict[int, str] = {}
     titles_by_page: dict[int, str] = {}
     if doc.kind == DocumentKind.pptx:
         notes_by_page, titles_by_page = _pptx_notes_and_titles(source)
+        _restore_pptx_line_breaks(parsed["elements"], source)
     else:
         # Derive page titles from SURVIVING headings (post-boilerplate strip),
         # so a repeated running head can never become a page title/heading_path.
@@ -311,19 +320,119 @@ def _stage_structure(db: Session, doc: Document) -> None:
     db.commit()
 
 
+COVERAGE_MIN_RATIO = 0.5  # a page's elements should carry ≥ half its PDF words
+COVERAGE_MIN_WORDS = 20  # …checked only on pages with real text
+
+
+def page_coverage_gaps(
+    element_words: dict[int, int], native_words: dict[int, int]
+) -> list[tuple[int, int, int]]:
+    """Pages whose extracted elements hold < COVERAGE_MIN_RATIO of the words the
+    PDF text layer has: [(page_no, element_words, native_words)]."""
+    gaps = []
+    for page_no, native in sorted(native_words.items()):
+        if native < COVERAGE_MIN_WORDS:
+            continue
+        got = element_words.get(page_no, 0)
+        if got < COVERAGE_MIN_RATIO * native:
+            gaps.append((page_no, got, native))
+    return gaps
+
+
+def _coverage_warning(elements: list[dict], source: Path) -> str | None:
+    """Per-page coverage check against the PDF text layer (never raises)."""
+    try:
+        import pymupdf
+
+        with pymupdf.open(str(source)) as pdf:
+            native = {i + 1: len(pdf[i].get_text().split()) for i in range(pdf.page_count)}
+    except Exception:  # noqa: BLE001 — diagnostics only
+        return None
+    got: dict[int, int] = {}
+    for el in elements:
+        page_no = int(el["page_no"])
+        got[page_no] = got.get(page_no, 0) + len((el.get("text") or "").split())
+    gaps = page_coverage_gaps(got, native)
+    if not gaps:
+        return None
+    listed = ", ".join(f"p{p} ({g}/{n} words)" for p, g, n in gaps[:12])
+    more = f" and {len(gaps) - 12} more" if len(gaps) > 12 else ""
+    return f"low text coverage on {len(gaps)} page(s): {listed}{more}"
+
+
+def _normalize_ws(text: str) -> str:
+    return " ".join(text.split())
+
+
+def _restore_pptx_line_breaks(elements: list[dict], source: Path) -> None:
+    """Docling's PPTX backend turns in-paragraph line breaks (<a:br/>, python-
+    pptx '\\v') into spaces, merging e.g. grammar productions 'E → E + T' and
+    'T → T * F' onto one line. Put the breaks back as newlines for elements
+    whose text matches a python-pptx paragraph that had them."""
+    try:
+        from pptx import Presentation
+
+        from manabi_server.processing.text_health import normalize_ligatures
+
+        by_slide: dict[int, dict[str, str]] = {}
+        prs = Presentation(str(source))
+        for idx, slide in enumerate(prs.slides, start=1):
+            mapping: dict[str, str] = {}
+
+            def walk(shapes, mapping=mapping):
+                for shape in shapes:
+                    if getattr(shape, "shapes", None) is not None and shape.shape_type == 6:
+                        walk(shape.shapes)  # group
+                        continue
+                    if not getattr(shape, "has_text_frame", False) or not shape.has_text_frame:
+                        continue
+                    for para in shape.text_frame.paragraphs:
+                        raw = normalize_ligatures(para.text)
+                        if "\v" not in raw:
+                            continue
+                        lines = [ln.strip() for ln in raw.split("\v")]
+                        mapping[_normalize_ws(raw.replace("\v", " "))] = "\n".join(
+                            ln for ln in lines if ln
+                        )
+
+            walk(slide.shapes)
+            if mapping:
+                by_slide[idx] = mapping
+    except Exception:  # noqa: BLE001 — cosmetic; never fail a parse
+        log.exception("pptx line-break restore skipped for %s", source.name)
+        return
+    for el in elements:
+        mapping = by_slide.get(int(el.get("page_no") or 0))
+        if not mapping or not el.get("text"):
+            continue
+        restored = mapping.get(_normalize_ws(el["text"]))
+        if restored:
+            el["text"] = restored
+
+
 def _heal_text(elements: list[dict], source: Path, doc: Document) -> list[dict]:
     from manabi_server.processing import layout
-    from manabi_server.processing.text_health import heal_elements, pymupdf_clip_text
+    from manabi_server.processing.text_health import (
+        heal_elements,
+        normalize_ligatures,
+        pymupdf_clip_code,
+        pymupdf_clip_text,
+    )
 
     if doc.kind != DocumentKind.pdf:
-        return heal_elements(elements, None)
+        # PPTX text is python-pptx-exact: fold ligatures/symbols only; keep
+        # Docling's own code labels but don't guess code from slide bullets.
+        for el in elements:
+            if el.get("text"):
+                el["text"] = normalize_ligatures(el["text"])
+        return elements
     try:
         import pymupdf
 
         with pymupdf.open(str(source)) as pdf:
             if not layout.has_native_text(pdf):
                 return heal_elements(elements, None)  # scans: OCR text, no span layer
-            healed = heal_elements(elements, pymupdf_clip_text(pdf))
+            healed = heal_elements(elements, pymupdf_clip_text(pdf), pymupdf_clip_code(pdf))
     except Exception:  # noqa: BLE001 — healing must never fail a parse
         log.exception("text healing skipped for doc %s", doc.id)
         return heal_elements(elements, None)
@@ -549,6 +658,12 @@ def _fix_reading_order(elements: list[dict], aggressive_columns: bool = False) -
 
 
 _converters: dict[bool, object] = {}
+# Docling converters are not safe to drive from two threads at once: the CPU
+# worker runs tasks concurrently (concurrency=2) and a shared converter then
+# fails whole page batches, which Docling reports only as PARTIAL_SUCCESS
+# (seen as entire page ranges silently missing from chunks). One conversion at
+# a time, process-wide; RLock so _get_converter can be built under it.
+_DOCLING_LOCK = threading.RLock()
 
 
 def _get_converter(full_page_ocr: bool = False):
@@ -561,6 +676,11 @@ def _get_converter(full_page_ocr: bool = False):
     correctly ("ONE", "Screams" rather than "NE", "creams"). It's slower and
     would override a real text layer, so it's used ONLY for scans — native-text
     PDFs keep the fast, exact default path."""
+    with _DOCLING_LOCK:
+        return _build_converter(full_page_ocr)
+
+
+def _build_converter(full_page_ocr: bool):
     if full_page_ocr not in _converters:
         import os
 
@@ -594,41 +714,38 @@ def _get_converter(full_page_ocr: bool = False):
 # instead of silently re-served on the next re-extraction.
 #   v2: rotated scans rasterized upright in normalize_rotation (was sideways).
 #   v3: scanned PDFs use full-page OCR (recovers dropped drop-cap initials).
-_PARSE_CACHE_VERSION = 3
+#   v4: partial Docling conversions are recovered page by page (and never
+#       cached); Docling `code` labels are kept as element type "code".
+_PARSE_CACHE_VERSION = 4
+
+# A page "has text" in the PDF layer when PyMuPDF finds at least this many
+# words on it; such a page must never end up with zero text elements.
+NATIVE_PAGE_MIN_WORDS = 5
 
 
 def _parse_cache_path(cache_key: str) -> Path:
     return files.storage_root() / "parse-cache" / f"v{_PARSE_CACHE_VERSION}-{cache_key}.json"
 
 
-def _docling_parse(source: Path, cache_key: str | None = None) -> dict:
-    """Parse via Docling, memoized on the file's content hash: the model pass
-    is deterministic per file, so retries and re-extractions (e.g. after a
-    chunking or cleanup change) skip minutes of CPU work."""
-    import json
+def _status_name(result) -> str:
+    status = getattr(result, "status", None)
+    return str(getattr(status, "value", status) or "").lower()
 
-    cache_path = _parse_cache_path(cache_key) if cache_key else None
-    if cache_path is not None and cache_path.exists():
-        try:
-            raw = json.loads(cache_path.read_text(encoding="utf-8"))
-            return {
-                "elements": raw["elements"],
-                "titles": {int(k): v for k, v in raw["titles"].items()},
-                "pages": set(raw["pages"]),
-            }
-        except Exception:  # noqa: BLE001 — corrupt cache → re-parse
-            log.warning("parse cache unreadable, re-parsing: %s", cache_path)
 
-    # Scans (no usable text layer) get full-page OCR so drop-cap initials survive;
-    # native-text PDFs use the fast default path (its real text layer is exact).
-    import pymupdf
+def _failed_pages(result) -> set[int]:
+    """1-based pages Docling attributes an error to (ErrorItem.page_no)."""
+    pages: set[int] = set()
+    for err in getattr(result, "errors", None) or []:
+        page_no = getattr(err, "page_no", None)
+        if isinstance(page_no, int) and page_no > 0:
+            pages.add(page_no)
+    return pages
 
-    from manabi_server.processing import layout
 
-    with pymupdf.open(str(source)) as _probe:
-        is_scan = not layout.has_native_text(_probe)
-    result = _get_converter(full_page_ocr=is_scan).convert(str(source))
-    dl_doc = result.document
+def _docling_elements(dl_doc) -> tuple[list[dict], dict[int, str], set[int]]:
+    """Flatten a DoclingDocument into our element dicts (+ page titles and the
+    set of pages that produced any item)."""
+    from manabi_server.processing.text_html import sanitize
 
     elements: list[dict] = []
     titles: dict[int, str] = {}
@@ -646,8 +763,6 @@ def _docling_parse(source: Path, cache_key: str | None = None) -> dict:
                 bbox = {"l": bb.l, "t": bb.t, "r": bb.r, "b": bb.b}
         pages_seen.add(page_no)
 
-        from manabi_server.processing.text_html import sanitize
-
         text = sanitize(getattr(item, "text", "") or "").strip()
         table = None
         if "table" in label:
@@ -659,6 +774,8 @@ def _docling_parse(source: Path, cache_key: str | None = None) -> dict:
                 pass
         elif "picture" in label or "figure" in label:
             element_type = "figure"
+        elif label == "code" or label.endswith(".code"):
+            element_type = "code"
         elif "section_header" in label or "title" in label or "heading" in label:
             # Demote pseudo-headings (lead-in lines Docling misclassifies,
             # e.g. "can be defined like this:") back to paragraphs.
@@ -682,8 +799,157 @@ def _docling_parse(source: Path, cache_key: str | None = None) -> dict:
         elements.append(
             {"type": element_type, "text": text, "page_no": page_no, "bbox": bbox, "table": table}
         )
+    return elements, titles, pages_seen
 
-    if cache_path is not None:
+
+def _pages_with_text(elements: list[dict]) -> set[int]:
+    return {int(el["page_no"]) for el in elements if (el.get("text") or "").strip()}
+
+
+def _pymupdf_page_elements(page, page_no: int) -> list[dict]:
+    """Last-resort elements for a page Docling could not convert: the PDF text
+    layer's blocks as paragraphs (code-looking blocks keep their lines), with
+    bboxes converted to Docling's bottom-left-origin convention."""
+    from manabi_server.processing.text_health import join_lines, looks_like_code
+    from manabi_server.processing.text_html import sanitize
+
+    height = float(page.rect.height)
+    out: list[dict] = []
+    for block in page.get_text("dict").get("blocks", []):
+        if block.get("type") != 0:
+            continue
+        lines = [
+            "".join(span.get("text", "") for span in line.get("spans", [])).rstrip()
+            for line in block.get("lines", [])
+        ]
+        raw = sanitize("\n".join(ln for ln in lines if ln.strip()))
+        if not raw.strip():
+            continue
+        x0, y0, x1, y1 = (float(v) for v in block["bbox"])
+        is_code = looks_like_code(raw)
+        out.append(
+            {
+                "type": "code" if is_code else "paragraph",
+                "text": raw.strip("\n") if is_code else join_lines(raw),
+                "page_no": page_no,
+                "bbox": {"l": x0, "t": height - y0, "r": x1, "b": height - y1},
+                "table": None,
+                "fallback": True,
+            }
+        )
+    return out
+
+
+def _convert_locked(converter, source: Path, **kwargs):
+    with _DOCLING_LOCK:
+        return converter.convert(str(source), **kwargs)
+
+
+def _docling_parse(source: Path, cache_key: str | None = None) -> dict:
+    """Parse via Docling, memoized on the file's content hash: the model pass
+    is deterministic per file, so retries and re-extractions (e.g. after a
+    chunking or cleanup change) skip minutes of CPU work.
+
+    Docling reports failed page batches only as PARTIAL_SUCCESS — it never
+    raises — so for PDFs every page Docling dropped (an error attributed to it,
+    or no text element while the PDF layer has words) is retried on its own via
+    `page_range`, then filled from the PyMuPDF text layer if it still fails. A
+    result with unrecovered Docling failures is never cached, so the next
+    re-extraction tries Docling again."""
+    import json
+
+    cache_path = _parse_cache_path(cache_key) if cache_key else None
+    if cache_path is not None and cache_path.exists():
+        try:
+            raw = json.loads(cache_path.read_text(encoding="utf-8"))
+            return {
+                "elements": raw["elements"],
+                "titles": {int(k): v for k, v in raw["titles"].items()},
+                "pages": set(raw["pages"]),
+            }
+        except Exception:  # noqa: BLE001 — corrupt cache → re-parse
+            log.warning("parse cache unreadable, re-parsing: %s", cache_path)
+
+    import pymupdf
+
+    from manabi_server.processing import layout
+
+    is_pdf = source.suffix.lower() == ".pdf"
+    native_words: dict[int, int] = {}
+    # Scans (no usable text layer) get full-page OCR so drop-cap initials survive;
+    # native-text PDFs use the fast default path (its real text layer is exact).
+    with pymupdf.open(str(source)) as _probe:
+        is_scan = not layout.has_native_text(_probe)
+        if is_pdf:
+            native_words = {
+                i + 1: len(_probe[i].get_text().split()) for i in range(_probe.page_count)
+            }
+    converter = _get_converter(full_page_ocr=is_scan)
+    result = _convert_locked(converter, source)
+    elements, titles, pages_seen = _docling_elements(result.document)
+
+    status = _status_name(result)
+    unresolved: set[int] = set()
+    if status and status != "success":
+        log.warning(
+            "docling conversion of %s returned %s (%d errors)",
+            source.name,
+            status,
+            len(getattr(result, "errors", None) or []),
+        )
+    if is_pdf and native_words:
+        failed = _failed_pages(result)
+        with_text = _pages_with_text(elements)
+        partial = status not in ("", "success")
+        suspects = sorted(
+            p
+            for p, words in native_words.items()
+            if p not in with_text
+            and (p in failed or words >= NATIVE_PAGE_MIN_WORDS or (partial and p not in pages_seen))
+        )
+        fallback_pages: list[int] = []
+        for page_no in suspects:
+            page_failed = True
+            try:
+                retry = _convert_locked(
+                    converter, source, page_range=(page_no, page_no), raises_on_error=False
+                )
+                page_failed = _status_name(retry) not in ("", "success")
+                r_elements, r_titles, r_seen = _docling_elements(retry.document)
+                r_elements = [el for el in r_elements if int(el["page_no"]) == page_no]
+            except Exception:  # noqa: BLE001 — a page retry must never fail the parse
+                log.exception("docling retry of page %s failed for %s", page_no, source.name)
+                r_elements, r_titles, r_seen = [], {}, set()
+            if any((el.get("text") or "").strip() for el in r_elements):
+                elements = [el for el in elements if int(el["page_no"]) != page_no] + r_elements
+                pages_seen |= {page_no} | r_seen
+                if page_no in r_titles:
+                    titles.setdefault(page_no, r_titles[page_no])
+                log.info("recovered page %s of %s via single-page retry", page_no, source.name)
+                continue
+            if page_failed or page_no in failed:
+                unresolved.add(page_no)
+            fallback_pages.append(page_no)
+        if fallback_pages:
+            with pymupdf.open(str(source)) as pdf:
+                for page_no in fallback_pages:
+                    extra = _pymupdf_page_elements(pdf[page_no - 1], page_no)
+                    if extra:
+                        elements.extend(extra)
+                        pages_seen.add(page_no)
+            log.warning(
+                "%s: %d page(s) filled from the PDF text layer (docling gave none): %s",
+                source.name,
+                len(fallback_pages),
+                fallback_pages[:20],
+            )
+        # Keep document order: page by page, Docling's order within a page.
+        order = {id(el): i for i, el in enumerate(elements)}
+        elements.sort(key=lambda el: (int(el["page_no"]), order[id(el)]))
+    elif status and status != "success":
+        unresolved.add(0)  # non-PDF partial result: don't cache it either
+
+    if cache_path is not None and not unresolved:
         try:
             cache_path.parent.mkdir(parents=True, exist_ok=True)
             cache_path.write_text(
@@ -698,14 +964,55 @@ def _docling_parse(source: Path, cache_key: str | None = None) -> dict:
             )
         except Exception:  # noqa: BLE001 — cache is an optimization only
             log.warning("could not write parse cache: %s", cache_path)
+    elif unresolved:
+        log.warning(
+            "not caching partial parse of %s (unresolved pages %s)",
+            source.name,
+            sorted(unresolved)[:20],
+        )
 
     return {"elements": elements, "titles": titles, "pages": pages_seen}
 
 
+def _is_index_header(columns) -> bool:
+    """pandas' default RangeIndex header ('0 | 1 | 2 | 3') — not real headers."""
+    try:
+        return bool(columns) and [str(c).strip() for c in columns] == [
+            str(i) for i in range(len(columns))
+        ]
+    except Exception:  # noqa: BLE001
+        return False
+
+
+def _clean_table_rows(rows) -> list[list[str]]:
+    """Table body rows as text cells: trailing empty cells trimmed, a row whose
+    non-empty cells all repeat one value (a spanning cell Docling copied into
+    every column) collapsed to that value, empty and exact-duplicate rows
+    dropped."""
+    out: list[list[str]] = []
+    seen: set[tuple[str, ...]] = set()
+    for row in rows or []:
+        cells = ["" if v is None else str(v).strip() for v in row]
+        while cells and not cells[-1]:
+            cells.pop()
+        filled = [c for c in cells if c]
+        if not filled:
+            continue
+        if len(filled) > 1 and len(set(filled)) == 1:
+            cells = [filled[0]]
+        key = tuple(cells)
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(cells)
+    return out
+
+
 def _linearize_table(table: dict) -> str:
     try:
-        header = " | ".join(str(c) for c in table.get("columns", []))
-        rows = "\n".join(" | ".join(str(v) for v in row) for row in table.get("data", []))
+        columns = table.get("columns", []) or []
+        header = "" if _is_index_header(columns) else " | ".join(str(c) for c in columns)
+        rows = "\n".join(" | ".join(row) for row in _clean_table_rows(table.get("data", [])))
         return f"{header}\n{rows}".strip()
     except Exception:  # noqa: BLE001
         return ""
@@ -714,6 +1021,7 @@ def _linearize_table(table: dict) -> str:
 def _pptx_notes_and_titles(source: Path) -> tuple[dict[int, str], dict[int, str]]:
     from pptx import Presentation
 
+    from manabi_server.processing.text_health import normalize_ligatures
     from manabi_server.processing.text_html import sanitize
 
     notes: dict[int, str] = {}
@@ -722,11 +1030,12 @@ def _pptx_notes_and_titles(source: Path) -> tuple[dict[int, str], dict[int, str]
     for idx, slide in enumerate(prs.slides, start=1):
         try:
             if slide.shapes.title is not None and slide.shapes.title.text.strip():
-                titles[idx] = sanitize(slide.shapes.title.text).strip()[:512]
+                title = normalize_ligatures(sanitize(slide.shapes.title.text))
+                titles[idx] = " ".join(title.split())[:512]
         except Exception:  # noqa: BLE001
             pass
         if slide.has_notes_slide:
-            text = sanitize(slide.notes_slide.notes_text_frame.text).strip()
+            text = normalize_ligatures(sanitize(slide.notes_slide.notes_text_frame.text)).strip()
             if text:
                 notes[idx] = text
     return notes, titles
