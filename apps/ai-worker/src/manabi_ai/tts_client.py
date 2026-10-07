@@ -283,9 +283,36 @@ def _probe_duration_ms(path: Path) -> int:
     return int(float(out.stdout.decode().strip() or "0") * 1000)
 
 
+TINY_GROUP_WORDS = 4
+
+
+def merge_tiny_groups(groups: list[str], max_chars: int = GROUP_CHARS) -> list[str]:
+    """Fold sentences under TINY_GROUP_WORDS words into a neighbour.
+
+    The v2ProPlus voice returns silence for a lone two-word utterance: every
+    new lecture opened with "Welcome back." as its own group, failed the
+    quality check three times, and the whole recording failed. Spoken with the
+    sentence after it, it is fine."""
+    out: list[str] = []
+    carry = ""
+    for g in groups:
+        g = f"{carry} {g}".strip() if carry else g
+        carry = ""
+        if len(g.split()) < TINY_GROUP_WORDS:
+            carry = g
+            continue
+        out.append(g)
+    if carry:
+        if out and len(out[-1]) + len(carry) + 1 <= max_chars * 2:
+            out[-1] = f"{out[-1]} {carry}"
+        else:
+            out.append(carry)
+    return out
+
+
 async def synthesize(text: str, *, verify: bool = False) -> tuple[bytes, int]:
     """Returns (mp3 bytes, duration_ms)."""
-    groups = split_sentences(text)
+    groups = merge_tiny_groups(split_sentences(text))
     if not groups:
         raise ValueError("empty text")
     with tempfile.TemporaryDirectory(prefix="manabi_tts_") as tmp:
