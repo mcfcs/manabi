@@ -769,6 +769,25 @@ def code_lang(code: str) -> str:
     return ""
 
 
+# Capital letters only: "(a)" is code (`max(a)`), "(A)" / "option B" is a label.
+_NAMES_A_LETTER = re.compile(r"\b(?i:option|choice|answer)\s*\(?[A-D]\)?(?!\w)|\([A-D]\)")
+
+
+def shuffle_mcq(item: dict) -> None:
+    """Reorder an mcq's options deterministically (keyed on its prompt) so the
+    right answer is not almost always A or B. Skipped when the explanation
+    names an option by letter, which a shuffle would make wrong."""
+    if item.get("qtype") != "mcq" or not isinstance(item.get("correct_option"), int):
+        return
+    text = f"{item.get('explanation') or ''} {item.get('working') or ''}"
+    if _NAMES_A_LETTER.search(text):
+        return
+    opts, key = quizplan.shuffle_options(
+        list(item.get("options") or []), item["correct_option"], item.get("prompt") or ""
+    )
+    item["options"], item["correct_option"] = opts, key
+
+
 def finalize_question(item: dict) -> dict:
     """Shape a raw generated question for storage: fold its code into the
     prompt, and fall back to the working when the clean explanation is empty.
@@ -1209,12 +1228,18 @@ async def generate_quiz(
                 for batch in batch_chunks(chunks):
                     units.append((module, batch))
 
-            # 2. Each unit owes questions in proportion to its material.
-            owed = quizplan.allocate(
-                count,
-                {i: sum(len(c.text) for c in b) for i, (_m, b) in enumerate(units)},
-                minimum=1,
-            )
+            # 2. What each unit owes. Modules count equally — a generated
+            # 40-question exam drew 20 from the one module with long readings
+            # when shares followed text length — and within a module, its
+            # context batches split that module's share by size.
+            module_order = list(dict.fromkeys(m.id for m, _b in units))
+            per_module = quizplan.allocate(count, {mid: 1 for mid in module_order}, minimum=1)
+            owed: dict[int, int] = {}
+            for mid in module_order:
+                mine = {
+                    i: sum(len(c.text) for c in b) for i, (m, b) in enumerate(units) if m.id == mid
+                }
+                owed.update(quizplan.allocate(per_module[mid], mine))
             candidates: list[tuple[int, ResolvedItem]] = []
             source_by_unit: dict[int, str] = {}
             index_by_unit: dict[int, dict] = {}
@@ -1397,6 +1422,7 @@ async def generate_quiz(
             )
             for ord_, (ui, resolved) in enumerate(final):
                 item = resolved.item
+                shuffle_mcq(item)
                 answer = _question_answer(item)
                 if item.get("_audit"):
                     answer = {**answer, "audit": item["_audit"]}
@@ -1648,6 +1674,7 @@ async def regenerate_question(job_id: int, question_id: int) -> None:
             )
 
             # Replace in place — same ord keeps the citation item_ref stable.
+            shuffle_mcq(new_item)
             question.prompt = new_item["prompt"]
             question.options = new_item.get("options") if question.qtype == "mcq" else None
             question.answer = _question_answer(new_item)

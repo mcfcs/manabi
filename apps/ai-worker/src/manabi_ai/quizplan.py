@@ -241,3 +241,32 @@ def select_by_quota(
             break
         chosen.add(i)
     return sorted(chosen)[:count]
+
+
+# ── Option order ─────────────────────────────────────────────────────────
+
+_REFERS_TO_OTHERS = re.compile(
+    r"\b(?:all|none|both|neither) of the (?:above|options|previous)\b"
+    r"|\b(?:both|only) \(?[a-d]\)? and \(?[a-d]\)?\b"
+    r"|\boptions? [a-d]\b",
+    re.I,
+)
+
+
+def shuffle_options(options: list[str], correct: int, seed: str) -> tuple[list[str], int]:
+    """Deterministically reorder an mcq's options and move its key with them.
+
+    Models put the right answer first or second far more often than chance —
+    a generated 40-question exam had six keys in a row on option A — and a
+    student learns the pattern instead of the material. Options that refer to
+    other options ("all of the above", "both A and B") keep the order."""
+    import random
+    import zlib
+
+    if len(options) < 2 or not 0 <= correct < len(options):
+        return options, correct
+    if any(_REFERS_TO_OTHERS.search(str(o)) for o in options):
+        return options, correct
+    order = list(range(len(options)))
+    random.Random(zlib.crc32(seed.encode("utf-8"))).shuffle(order)
+    return [options[i] for i in order], order.index(correct)

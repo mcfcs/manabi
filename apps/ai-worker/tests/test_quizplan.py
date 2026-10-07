@@ -120,3 +120,38 @@ def test_selection_honours_each_units_share():
     items = [(0, "mcq")] * 5 + [(1, "mcq")] * 5
     picked = select_by_quota(items, {0: 2, 1: 3}, {"mcq": 1}, 5)
     assert [items[i][0] for i in picked].count(1) == 3
+
+
+def test_shuffle_moves_the_key_with_its_option():
+    from manabi_ai.quizplan import shuffle_options
+
+    opts = ["right", "w1", "w2", "w3"]
+    new, key = shuffle_options(opts, 0, "q1")
+    assert new[key] == "right" and sorted(new) == sorted(opts)
+    assert shuffle_options(opts, 0, "q1") == (new, key)  # deterministic
+
+
+def test_shuffle_spreads_keys_across_positions():
+    from manabi_ai.quizplan import shuffle_options
+
+    keys = {shuffle_options(["a", "b", "c", "d"], 0, f"question {i}")[1] for i in range(40)}
+    assert len(keys) >= 3
+
+
+def test_options_that_refer_to_each_other_keep_their_order():
+    from manabi_ai.quizplan import shuffle_options
+
+    opts = ["x", "y", "Both A and B", "None of the above"]
+    assert shuffle_options(opts, 2, "s") == (opts, 2)
+
+
+def test_shuffle_mcq_skips_explanations_that_name_a_letter():
+    from manabi_ai.tasks_gen import shuffle_mcq
+
+    base = {"qtype": "mcq", "prompt": "p", "options": ["w", "x", "y", "z"], "correct_option": 0}
+    named = {**base, "explanation": "Option A is right because..."}
+    shuffle_mcq(named)
+    assert named["options"] == ["w", "x", "y", "z"]
+    code = {**base, "prompt": "q7", "explanation": "max(a) returns the larger value."}
+    shuffle_mcq(code)
+    assert code["options"][code["correct_option"]] == "w"
