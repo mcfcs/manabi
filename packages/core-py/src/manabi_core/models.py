@@ -951,6 +951,15 @@ class StudyTask(Base, TimestampMixin):
     due_date: Mapped[date | None] = mapped_column(Date)
     due_minute: Mapped[int | None] = mapped_column()
     done_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # Who set done_at: 'manual' (the user ticked/unticked it) | 'canvas' (the
+    # sync closed it because Canvas reported a submission). NULL = never set.
+    done_source: Mapped[str | None] = mapped_column(String(16))
+    # Latch: Canvas's "done" state has already been applied once. While it is
+    # set the sync leaves done_at alone, so a manual un-check survives re-syncs;
+    # it clears when Canvas stops saying done (redo request).
+    canvas_done_seen: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default="false"
+    )
     source: Mapped[str] = mapped_column(String(16), nullable=False, default="manual")
     canvas_assignment_id: Mapped[int | None] = mapped_column(BigInteger, unique=True)
     notified_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))

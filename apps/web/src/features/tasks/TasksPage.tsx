@@ -71,6 +71,11 @@ function dueLabel(task: TaskOut): string {
   return label;
 }
 
+// Who marked the task done — 'canvas' when the sync closed it on submission.
+function doneSource(task: TaskOut): string | null {
+  return (task as TaskOut & { done_source?: string | null }).done_source ?? null;
+}
+
 function TaskRow({ task }: { task: TaskOut }) {
   const queryClient = useQueryClient();
   const invalidate = () => {
@@ -104,7 +109,14 @@ function TaskRow({ task }: { task: TaskOut }) {
           {task.course_code}
         </span>
       )}
-      {task.source === "canvas" && <span className="task-canvas">canvas</span>}
+      {task.source === "canvas" &&
+        (task.done && doneSource(task) === "canvas" ? (
+          <span className="task-canvas" title="Closed automatically: Canvas reports it submitted">
+            submitted on canvas
+          </span>
+        ) : (
+          <span className="task-canvas">canvas</span>
+        ))}
       <span className="task-due mono">{dueLabel(task)}</span>
       <button
         className="icon-btn danger task-delete"
@@ -166,11 +178,23 @@ export function TasksPage() {
 
   const canvasSync = useMutation({
     mutationFn: () =>
-      api.post<{ created: number; updated: number; courses_checked: number }>(
-        "/api/tasks/canvas-sync",
-      ),
+      api.post<{
+        created: number;
+        updated: number;
+        closed?: number;
+        reopened?: number;
+        courses_checked: number;
+      }>("/api/tasks/canvas-sync"),
     onSuccess: (r) => {
-      setSyncNote(`${r.created} new, ${r.updated} updated from Canvas`);
+      const extra = [
+        r.closed ? `${r.closed} submitted` : "",
+        r.reopened ? `${r.reopened} reopened` : "",
+      ].filter(Boolean);
+      setSyncNote(
+        `${r.created} new, ${r.updated} updated` +
+          (extra.length ? `, ${extra.join(", ")}` : "") +
+          " from Canvas",
+      );
       invalidate();
       queryClient.invalidateQueries({ queryKey: ["settings"] });
     },

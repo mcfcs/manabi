@@ -58,6 +58,7 @@ async def lifespan(app: FastAPI):
     task.cancel()
     with contextlib.suppress(asyncio.CancelledError):
         await task
+    await canvas.aclose_canvas_client()
 
 
 app = FastAPI(

@@ -25,6 +25,7 @@ class TaskOut(BaseModel):
     due_date: date | None
     due_minute: int | None
     done: bool
+    done_source: str | None = None  # 'manual' | 'canvas' — who set done
     source: str
     created_at: datetime
 
@@ -57,6 +58,7 @@ def _task_out(t: StudyTask, course: Course | None) -> TaskOut:
         due_date=t.due_date,
         due_minute=t.due_minute,
         done=t.done_at is not None,
+        done_source=t.done_source,
         source=t.source,
         created_at=t.created_at,
     )
@@ -141,6 +143,7 @@ async def update_task(
         setattr(task, key, value)
     if done is not None:
         task.done_at = now_manila() if done else None
+        task.done_source = "manual"  # the sync never overrides a user's choice
     await db.commit()
     courses = await _courses_by_id(db, user)
     return _task_out(task, courses.get(task.course_id))
@@ -160,10 +163,73 @@ async def delete_task(
     return {"ok": True}
 
 
+def canvas_says_done(a: dict) -> bool:
+    """Canvas reports the student's work on this assignment as done:
+    submitted (incl. late / resubmitted), excused, or graded without being
+    flagged missing (on-paper / no-submission items graded by the teacher)."""
+    s = a.get("submission") or {}
+    if s.get("excused"):
+        return True
+    if s.get("submitted_at"):
+        return True  # covers submitted / late / resubmitted
+    st = s.get("workflow_state")
+    if st in ("submitted", "pending_review"):
+        return True
+    if st == "graded":
+        return not s.get("missing")  # a 0 for "missing" is not "you did it"
+    return False
+
+
+# Submission types Canvas's own `overdue` bucket ignores (nothing to hand in):
+# a past-due one of these is not imported as an overdue task.
+_NO_SUBMISSION_TYPES = {"none", "not_graded", "on_paper", "wiki_page", ""}
+
+
+def _expects_submission(a: dict) -> bool:
+    types = a.get("submission_types") or []
+    return any(t not in _NO_SUBMISSION_TYPES for t in types)
+
+
+def _parse_ts(raw: str | None) -> datetime | None:
+    if not raw:
+        return None
+    try:
+        return datetime.fromisoformat(raw.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+
+
+def apply_canvas_done(task: StudyTask, a: dict, now: datetime) -> str | None:
+    """Mirror Canvas's done state onto an existing task through the latch.
+    Returns 'closed' / 'reopened' when done_at changed, else None.
+
+    - Canvas says done, latch off → latch on; close the task if it is open.
+    - Canvas says done, latch on → nothing (a manual un-check survives).
+    - Canvas says not done, latch on (redo / deleted submission) → latch off;
+      reopen only if it was Canvas that closed it."""
+    if canvas_says_done(a):
+        if task.canvas_done_seen:
+            return None
+        task.canvas_done_seen = True
+        if task.done_at is None:
+            task.done_at = _parse_ts((a.get("submission") or {}).get("submitted_at")) or now
+            task.done_source = "canvas"
+            return "closed"
+        return None
+    if task.canvas_done_seen:
+        task.canvas_done_seen = False
+        if task.done_source == "canvas" and task.done_at is not None:
+            task.done_at = None
+            task.done_source = None
+            return "reopened"
+    return None
+
+
 async def sync_canvas_tasks(db: AsyncSession, user: User) -> dict:
-    """Pull upcoming + overdue assignments from every Canvas-linked course.
-    Canvas stays the source of truth for its own items: existing not-done
-    tasks get their title/due refreshed; done tasks are never resurrected.
+    """Pull every assignment (with the student's submission) from every
+    Canvas-linked course. Canvas stays the source of truth for its own items:
+    existing not-done tasks get their title/due refreshed, and a task is
+    closed once when Canvas first reports it submitted (see apply_canvas_done).
     Used by the endpoint AND the scheduler's auto-sync — the last-synced
     timestamp (advances only on success) and last error are recorded here
     so both paths share one bookkeeping code path."""
@@ -185,7 +251,7 @@ async def sync_canvas_tasks(db: AsyncSession, user: User) -> dict:
 
 
 async def _sync_canvas_tasks_inner(db: AsyncSession, user: User) -> dict:
-    from manabi_server.api.canvas import _canvas_get_all
+    from manabi_server.api.canvas import canvas_assignments, gather_limited
 
     courses = [
         c
@@ -196,51 +262,77 @@ async def _sync_canvas_tasks_inner(db: AsyncSession, user: User) -> dict:
         t.canvas_assignment_id: t
         for t in (
             await db.execute(
-                select(StudyTask).where(StudyTask.canvas_assignment_id.is_not(None))
+                select(StudyTask).where(
+                    StudyTask.user_id == user.id,
+                    StudyTask.canvas_assignment_id.is_not(None),
+                )
             )
         ).scalars()
     }
+    app = await db.get(AppSettings, 1)
+    now = now_manila()
+    # New tasks: anything not past due, or past due since the semester began
+    # (the old upcoming + overdue buckets). No semester row → last 60 days.
+    window_start = app.semester_start if app is not None else (now - timedelta(days=60)).date()
 
-    created = updated = 0
-    for course in courses:
-        assignments: dict[int, dict] = {}
-        for bucket in ("upcoming", "overdue"):
-            data = await _canvas_get_all(
-                f"/courses/{course.canvas_course_id}/assignments", {"bucket": bucket}
-            )
-            for a in data:
-                if isinstance(a, dict) and a.get("id"):
-                    assignments[a["id"]] = a
+    # One request per course (no bucket — the buckets hide submitted work),
+    # fetched concurrently. Any failure fails the sync so the error is recorded.
+    per_course = await gather_limited(
+        canvas_assignments(c.canvas_course_id) for c in courses
+    )
 
-        for aid, a in assignments.items():
-            due_raw = a.get("due_at")
-            if not due_raw:
+    created = updated = closed = reopened = 0
+    for course, assignments in zip(courses, per_course, strict=True):
+        for a in assignments:
+            aid = a.get("id")
+            if not aid:
                 continue
-            due_utc = datetime.fromisoformat(due_raw.replace("Z", "+00:00"))
-            due_local = due_utc.astimezone(MANILA)
+            due_utc = _parse_ts(a.get("due_at"))
+            due_local = due_utc.astimezone(MANILA) if due_utc else None
             title = (a.get("name") or f"Assignment {aid}").strip()[:512]
 
             task = existing.get(aid)
             if task is None:
-                db.add(
-                    StudyTask(
-                        user_id=user.id,
-                        title=title,
-                        course_id=course.id,
-                        due_date=due_local.date(),
-                        due_minute=minute_of(due_local),
-                        source="canvas",
-                        canvas_assignment_id=aid,
-                    )
+                if due_local is None or canvas_says_done(a):
+                    continue  # undated, or already done on Canvas
+                past_due = due_local < now
+                if past_due and (
+                    due_local.date() < window_start or not _expects_submission(a)
+                ):
+                    continue
+                task = StudyTask(
+                    user_id=user.id,
+                    title=title,
+                    course_id=course.id,
+                    due_date=due_local.date(),
+                    due_minute=minute_of(due_local),
+                    source="canvas",
+                    canvas_assignment_id=aid,
+                    canvas_done_seen=False,
                 )
+                db.add(task)
+                existing[aid] = task  # a Canvas course linked twice stays one task
                 created += 1
-            elif task.done_at is None:
+                continue
+
+            if task.done_at is None and due_local is not None:
                 task.title = title
                 task.due_date = due_local.date()
                 task.due_minute = minute_of(due_local)
                 updated += 1
+            change = apply_canvas_done(task, a, now)
+            if change == "closed":
+                closed += 1
+            elif change == "reopened":
+                reopened += 1
     await db.commit()
-    return {"created": created, "updated": updated, "courses_checked": len(courses)}
+    return {
+        "created": created,
+        "updated": updated,
+        "closed": closed,
+        "reopened": reopened,
+        "courses_checked": len(courses),
+    }
 
 
 @router.post("/canvas-sync", dependencies=[Depends(require_csrf)])

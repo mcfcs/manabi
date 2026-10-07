@@ -100,7 +100,7 @@ async def _tick(sessionmaker) -> None:
                 ).scalar_one_or_none()
                 if user is not None:
                     result = await sync_canvas_tasks(db, user)
-                    if result["created"]:
+                    if result["created"] or result["closed"] or result["reopened"]:
                         log.info("canvas auto-sync: %s", result)
             except Exception:  # noqa: BLE001 — canvas down must not kill ticks
                 log.exception("canvas task auto-sync failed")

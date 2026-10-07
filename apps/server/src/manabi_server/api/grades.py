@@ -13,6 +13,7 @@ from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from manabi_server import grades as g
+from manabi_server.api.canvas import canvas_assignments as _canvas_assignments
 from manabi_server.db import get_db
 from manabi_server.security import get_default_user, require_csrf
 
@@ -577,20 +578,6 @@ async def delete_item(
 
 
 # ── Canvas ──────────────────────────────────────────────────────────────────
-
-
-async def _canvas_assignments(canvas_course_id: int) -> list[dict]:
-    """Canvas assignments with the student's own submission attached.
-
-    `include[]=submission` is what carries score/points_possible; paginated so
-    courses with more than 100 assignments are not silently truncated."""
-    from manabi_server.api.canvas import _canvas_get_all
-
-    rows = await _canvas_get_all(
-        f"/courses/{canvas_course_id}/assignments",
-        {"include[]": "submission", "per_page": 100},
-    )
-    return [r for r in rows if isinstance(r, dict) and "id" in r]
 
 
 def _canvas_score(assignment: dict) -> tuple[float | None, float | None]:

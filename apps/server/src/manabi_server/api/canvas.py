@@ -2,6 +2,9 @@
 token never reaches the browser) and imported files enter the exact same
 validation + ingestion path as manual uploads."""
 
+import asyncio
+from collections.abc import Awaitable, Iterable
+
 import httpx
 from fastapi import APIRouter, Depends, HTTPException
 from manabi_core.models import Course, Module, User
@@ -61,20 +64,99 @@ class CanvasAuthError(HTTPException):
         )
 
 
-async def _canvas_get(path: str, params: dict | None = None) -> list | dict:
-    base, token = _canvas_config()
-    async with httpx.AsyncClient(timeout=30) as client:
-        r = await client.get(
-            f"{base}/api/v1{path}",
-            params={"per_page": 100, **(params or {})},
-            headers={"Authorization": f"Bearer {token}"},
+class CanvasRateLimited(HTTPException):
+    """Canvas throttled us (403 "Rate Limit Exceeded") and kept doing so after
+    the backoff. Never swallowed as "this tab is empty"."""
+
+    def __init__(self) -> None:
+        super().__init__(
+            status_code=503, detail="Canvas is rate-limiting requests — try again shortly"
         )
+
+
+# One keep-alive client per event loop: every Canvas call used to pay DNS +
+# TCP + TLS again (~0.35 s). pytest-asyncio runs a fresh loop per test, so the
+# client is rebuilt whenever the running loop (or the config) changes.
+_client: httpx.AsyncClient | None = None
+_client_key: tuple | None = None
+
+_RATE_LIMIT_BACKOFF = (1.0, 2.0, 4.0)  # seconds between retries
+
+
+def _get_client() -> httpx.AsyncClient:
+    global _client, _client_key
+    base, token = _canvas_config()
+    key = (id(asyncio.get_running_loop()), base, token)
+    if _client is None or _client.is_closed or _client_key != key:
+        _client = httpx.AsyncClient(
+            base_url=f"{base}/api/v1",
+            headers={"Authorization": f"Bearer {token}"},
+            timeout=httpx.Timeout(20, connect=5),
+            limits=httpx.Limits(
+                max_connections=8, max_keepalive_connections=8, keepalive_expiry=60
+            ),
+        )
+        _client_key = key
+    return _client
+
+
+async def aclose_canvas_client() -> None:
+    """Close the shared client (app shutdown)."""
+    global _client, _client_key
+    client, _client, _client_key = _client, None, None
+    if client is not None and not client.is_closed:
+        await client.aclose()
+
+
+def _is_rate_limited(r: httpx.Response) -> bool:
+    if r.status_code == 429:
+        return True
+    return r.status_code == 403 and "rate limit exceeded" in r.text.lower()
+
+
+async def _request(url: str, params: dict | None) -> httpx.Response:
+    """GET through the shared client; retries a rate-limited response after
+    1 s, 2 s and 4 s, then raises CanvasRateLimited. Auth/other errors raise."""
+    client = _get_client()
+    for delay in (*_RATE_LIMIT_BACKOFF, None):
+        r = await client.get(url, params=params)
+        if not _is_rate_limited(r):
+            break
+        if delay is None:
+            raise CanvasRateLimited()
+        await asyncio.sleep(delay)
     if r.status_code == 401:
         raise CanvasAuthError()
     if r.status_code >= 400:
         raise HTTPException(
             status_code=502, detail=f"Canvas error {r.status_code}: {r.text[:150]}"
         )
+    return r
+
+
+
+
+async def gather_limited[T](coros: Iterable[Awaitable[T]], n: int = 6) -> list[T]:
+    """asyncio.gather with at most `n` in flight. On the first failure the
+    rest are cancelled and the original exception propagates."""
+    sem = asyncio.Semaphore(n)
+
+    async def run(c: Awaitable[T]) -> T:
+        async with sem:
+            return await c
+
+    tasks = [asyncio.ensure_future(run(c)) for c in coros]
+    try:
+        return list(await asyncio.gather(*tasks))
+    except BaseException:
+        for t in tasks:
+            t.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
+        raise
+
+
+async def _canvas_get(path: str, params: dict | None = None) -> list | dict:
+    r = await _request(path, {"per_page": 100, **(params or {})})
     return r.json()
 
 
@@ -257,30 +339,33 @@ async def canvas_import(
 
 async def _canvas_get_all(path: str, params: dict | None = None) -> list:
     """Follow Canvas pagination (Link: rel=next) and concatenate every page."""
-    base, token = _canvas_config()
     results: list = []
-    url: str | None = f"{base}/api/v1{path}"
+    url: str = path
     p: dict | None = {"per_page": 100, **(params or {})}
-    async with httpx.AsyncClient(timeout=30) as client:
-        for _ in range(50):  # hard cap — never loop forever
-            r = await client.get(
-                url, params=p, headers={"Authorization": f"Bearer {token}"}
-            )
-            if r.status_code == 401:
-                raise CanvasAuthError()
-            if r.status_code >= 400:
-                raise HTTPException(
-                    status_code=502, detail=f"Canvas error {r.status_code}: {r.text[:150]}"
-                )
-            body = r.json()
-            if not isinstance(body, list):
-                return [body]
-            results.extend(body)
-            nxt = r.links.get("next", {}).get("url")
-            if not nxt:
-                break
-            url, p = nxt, None  # the next URL already carries its params
+    for _ in range(50):  # hard cap — never loop forever
+        r = await _request(url, p)
+        body = r.json()
+        if not isinstance(body, list):
+            return [body]
+        results.extend(body)
+        nxt = r.links.get("next", {}).get("url")
+        if not nxt:
+            break
+        url, p = nxt, None  # the next URL already carries its params
     return results
+
+
+async def canvas_assignments(canvas_course_id: int) -> list[dict]:
+    """Canvas assignments with the student's own submission attached (no
+    bucket — every assignment, submitted or not).
+
+    `include[]=submission` carries score/points_possible and the submission
+    state; paginated so courses with more than 100 assignments are not
+    silently truncated. Shared by grades and the task sync."""
+    rows = await _canvas_get_all(
+        f"/courses/{canvas_course_id}/assignments", {"include[]": "submission"}
+    )
+    return [r for r in rows if isinstance(r, dict) and "id" in r]
 
 
 async def _owned_course(course_id: int, user: User, db: AsyncSession) -> Course:
@@ -342,8 +427,8 @@ async def _safe_get_all(path: str, params: dict | None = None) -> list:
     section must not fail the whole sync."""
     try:
         return await _canvas_get_all(path, params)
-    except CanvasAuthError:
-        raise  # an expired token is not "this tab is empty"
+    except (CanvasAuthError, CanvasRateLimited):
+        raise  # an expired token / throttling is not "this tab is empty"
     except HTTPException:
         return []
 
@@ -353,8 +438,23 @@ async def canvas_structure(canvas_course_id: int) -> CanvasStructureOut:
     """The course's Canvas tree — modules→items + standalone pages/discussions +
     a syllabus flag — for the sync picker. Resilient: a locked section is simply
     empty rather than failing the request."""
-    raw = await _safe_get_all(
-        f"/courses/{canvas_course_id}/modules", {"include[]": "items"}
+    async def syllabus() -> bool:
+        try:
+            course = await _canvas_get(
+                f"/courses/{canvas_course_id}", {"include[]": "syllabus_body"}
+            )
+        except (CanvasAuthError, CanvasRateLimited):
+            raise
+        except HTTPException:
+            return False
+        return bool(isinstance(course, dict) and (course.get("syllabus_body") or "").strip())
+
+    # Four independent reads — fetched together instead of one after another.
+    raw, raw_pages, raw_discussions, has_syllabus = await asyncio.gather(
+        _safe_get_all(f"/courses/{canvas_course_id}/modules", {"include[]": "items"}),
+        _safe_get_all(f"/courses/{canvas_course_id}/pages"),
+        _safe_get_all(f"/courses/{canvas_course_id}/discussion_topics"),
+        syllabus(),
     )
     modules = [
         CanvasModuleOut(
@@ -380,23 +480,14 @@ async def canvas_structure(canvas_course_id: int) -> CanvasStructureOut:
     ]
     pages = [
         {"url": p.get("url"), "title": p.get("title") or p.get("url")}
-        for p in await _safe_get_all(f"/courses/{canvas_course_id}/pages")
+        for p in raw_pages
         if isinstance(p, dict) and p.get("url")
     ]
     discussions = [
         {"id": d.get("id"), "title": d.get("title") or "(untitled)"}
-        for d in await _safe_get_all(f"/courses/{canvas_course_id}/discussion_topics")
+        for d in raw_discussions
         if isinstance(d, dict) and d.get("id")
     ]
-    try:
-        course = await _canvas_get(
-            f"/courses/{canvas_course_id}", {"include[]": "syllabus_body"}
-        )
-        has_syllabus = bool(
-            isinstance(course, dict) and (course.get("syllabus_body") or "").strip()
-        )
-    except HTTPException:
-        has_syllabus = False
     return CanvasStructureOut(
         modules=modules, pages=pages, discussions=discussions, has_syllabus=has_syllabus
     )
