@@ -1165,6 +1165,7 @@ async def generate_quiz(
     exam: bool = False,
     audit: bool = True,
     role: str | None = None,
+    plan_id: int | None = None,
 ) -> None:
     """Plan → write → check → select.
 
@@ -1403,6 +1404,7 @@ async def generate_quiz(
                     "exam": exam,
                     "audit": audit_stats,
                     "role": role,
+                    "plan_id": plan_id,
                 },
                 model_name=settings.generation_model,
                 prompt_version=prompts.PROMPT_VERSION,

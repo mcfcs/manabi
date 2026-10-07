@@ -402,6 +402,31 @@ class QuizQuestion(Base):
     __table_args__ = (Index("ix_quiz_questions_artifact_id", "artifact_id"),)
 
 
+class StudyPlan(Base, TimestampMixin):
+    """A named, scoped study path inside a course (0042). Its tests are quiz
+    artifacts tagged `content.plan_id`; NULL document_ids = every material of
+    the chosen modules, NULL types = chosen from the material's shape."""
+
+    __tablename__ = "study_plans"
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    course_id: Mapped[int] = mapped_column(
+        BigInteger, ForeignKey("courses.id", ondelete="CASCADE"), nullable=False
+    )
+    name: Mapped[str] = mapped_column(String(160), nullable=False)
+    position: Mapped[int] = mapped_column(nullable=False, default=0)
+    module_ids: Mapped[list[int]] = mapped_column(ARRAY(BigInteger), nullable=False)
+    document_ids: Mapped[list[int] | None] = mapped_column(ARRAY(BigInteger))
+    types: Mapped[list[str] | None] = mapped_column(ARRAY(String(16)))
+    type_mix: Mapped[dict | None] = mapped_column(JSONB)
+    focus: Mapped[str | None] = mapped_column(Text)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False
+    )
+
+    __table_args__ = (Index("ix_study_plans_course_id", "course_id"),)
+
+
 class QuizAttempt(Base, TimestampMixin):
     __tablename__ = "quiz_attempts"
 

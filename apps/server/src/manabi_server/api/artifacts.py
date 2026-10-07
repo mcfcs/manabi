@@ -18,6 +18,7 @@ from manabi_core.models import (
     AIFeedbackKind,
     Artifact,
     ArtifactType,
+    Chunk,
     Citation,
     Course,
     Document,
@@ -1491,6 +1492,10 @@ class QuizConfigIn(BaseModel):
     # Scope a single-module quiz to one section of the module's latest summary
     # (the chunks that section cites).
     section: int | None = None
+    # A study plan this test belongs to. Unset fields (modules, materials,
+    # types, focus) are filled from the plan; types left blank on the plan are
+    # chosen from the material.
+    plan_id: int | None = None
 
 
 class QuestionOut(BaseModel):
@@ -1591,6 +1596,35 @@ async def create_quiz(
     user: User = Depends(get_default_user),
     db: AsyncSession = Depends(get_db),
 ) -> JobRef:
+    plan = None
+    fields = config.model_fields_set
+    if config.plan_id is not None:
+        from manabi_core.models import StudyPlan
+
+        plan = (
+            await db.execute(
+                select(StudyPlan)
+                .join(Course, Course.id == StudyPlan.course_id)
+                .where(StudyPlan.id == config.plan_id, Course.user_id == user.id)
+            )
+        ).scalar_one_or_none()
+        if plan is None:
+            raise HTTPException(status_code=404, detail="Study plan not found")
+        if not config.module_ids:
+            config.module_ids = [int(m) for m in plan.module_ids]
+        if not set(config.module_ids) <= {int(m) for m in plan.module_ids}:
+            raise HTTPException(status_code=422, detail="Module not in this study plan")
+        if "document_ids" not in fields and plan.document_ids is not None:
+            in_scope = set(
+                (
+                    await db.execute(
+                        select(Document.id).where(Document.module_id.in_(config.module_ids))
+                    )
+                ).scalars()
+            )
+            config.document_ids = [int(d) for d in plan.document_ids if int(d) in in_scope]
+        if "instructions" not in fields and plan.focus:
+            config.instructions = plan.focus
     if not config.module_ids:
         raise HTTPException(status_code=422, detail="Select at least one module")
     # ownership check on every module in scope
@@ -1610,29 +1644,59 @@ async def create_quiz(
     anchor = (
         await db.execute(select(Module).where(Module.id == config.module_ids[0]))
     ).scalar_one()
+    if plan is not None and "types" not in fields:
+        # The plan decides (or, left blank, the material does).
+        from manabi_server.api.study import resolve_mix
+        from manabi_server.services.study_plans import section_mix
+
+        mix = await resolve_mix(db, plan, config.module_ids, config.document_ids)
+        if config.section is not None:
+            mix = section_mix(mix)
+        config.types = list(mix)
+        if "type_mix" not in fields:
+            config.type_mix = mix
     types = [t for t in config.types if t in QUIZ_TYPES] or ["mcq"]
     type_mix = (
         {t: float(w) for t, w in config.type_mix.items() if t in types and w and w > 0}
         if config.type_mix
         else None
     ) or None
-    if (config.document_ids is not None or config.note_ids is not None) and len(
-        config.module_ids
-    ) != 1:
-        raise HTTPException(
-            status_code=422,
-            detail="Document/note scoping requires exactly one module",
-        )
+    if config.note_ids is not None and len(config.module_ids) != 1:
+        raise HTTPException(status_code=422, detail="Note scoping requires exactly one module")
     if len(config.module_ids) == 1:
         await _validate_scope(
             db, config.module_ids[0], config.document_ids, config.note_ids
         )
+    elif config.document_ids is not None:
+        # Materials across several modules (a study plan's chosen subset).
+        valid = set(
+            (
+                await db.execute(
+                    select(Document.id).where(
+                        Document.module_id.in_(config.module_ids),
+                        Document.deleted_at.is_(None),
+                    )
+                )
+            ).scalars()
+        )
+        if not set(config.document_ids) <= valid:
+            raise HTTPException(status_code=422, detail="Document not in these modules")
     role = config.role if config.role and _ROLE_RE.match(config.role) else None
     instructions = (config.instructions or "").strip()[:2000] or None
     if config.section is not None:
         if len(config.module_ids) != 1:
             raise HTTPException(status_code=422, detail="A section quiz needs exactly one module")
         chunk_ids = await _section_chunk_ids(db, config.module_ids[0], config.section)
+        if chunk_ids and config.document_ids is not None:
+            keep = set(config.document_ids)
+            doc_of = dict(
+                (
+                    await db.execute(
+                        select(Chunk.id, Chunk.document_id).where(Chunk.id.in_(chunk_ids))
+                    )
+                ).all()
+            )
+            chunk_ids = [c for c in chunk_ids if doc_of.get(c) in keep]
         if not chunk_ids:
             raise HTTPException(status_code=409, detail="That summary section cites no material")
         role = role or f"section:{config.section}"
@@ -1660,6 +1724,7 @@ async def create_quiz(
         exam=config.exam,
         audit=config.audit,
         role=role,
+        plan_id=plan.id if plan is not None else None,
     )
     return JobRef(job_id=job.id)
 
@@ -1784,191 +1849,6 @@ async def list_course_quizzes(
         .all()
     )
     return await _quiz_list_items(db, list(artifacts))
-
-
-class StudySectionOut(BaseModel):
-    index: int
-    title: str
-    block_count: int
-    has_sources: bool
-    quiz_id: int | None = None
-    best_score: float | None = None
-
-
-class StudyModuleOut(BaseModel):
-    id: int
-    title: str
-    has_material: bool
-    chunk_count: int
-    summary_id: int | None = None
-    sections: list[StudySectionOut] = []
-    lecture_id: int | None = None
-    lecture_segments: int = 0
-    checkpoint: QuizListItem | None = None
-    language: str | None = None  # code language found in the material, if any
-    # In-flight generation for this module's study slots, by slot key
-    # ("checkpoint", "section:<i>", "summary", "lecture") -> job id.
-    pending: dict[str, int] = {}
-
-
-class StudyOut(BaseModel):
-    course_id: int
-    modules: list[StudyModuleOut]
-    finals: list[QuizListItem]
-    pending_final: int | None = None  # job id of a mock exam being written
-
-
-def _study_slot(job: Job) -> tuple[int | None, str] | None:
-    """Which study-path slot an in-flight job fills, from its payload."""
-    payload = job.payload if isinstance(job.payload, dict) else {}
-    if job.job_type == "generate_quiz":
-        role = payload.get("role")
-        mods = payload.get("module_ids") or []
-        if role == "final" or payload.get("exam"):
-            return (None, "final")
-        if role and mods:
-            return (int(mods[0]), str(role))
-        return None
-    if job.job_type == "generate_summary" and job.module_id:
-        return (job.module_id, "summary")
-    if job.job_type == "teach_module" and job.module_id:
-        return (job.module_id, "lecture")
-    return None
-
-
-@router.get("/courses/{course_id}/study")
-async def course_study(
-    course_id: int,
-    user: User = Depends(get_default_user),
-    db: AsyncSession = Depends(get_db),
-) -> StudyOut:
-    """The course as a study path: per module, its summary sections (each
-    with its own quick check), Steven's lecture, the module checkpoint quiz;
-    then the final mock exams. Everything is derived from existing artifacts —
-    a quiz's place in the path is its `content.role`."""
-    from manabi_core.models import Chunk, Document
-
-    course = (
-        await db.execute(select(Course).where(Course.id == course_id, Course.user_id == user.id))
-    ).scalar_one_or_none()
-    if course is None:
-        raise HTTPException(status_code=404, detail="Course not found")
-    modules = (
-        (
-            await db.execute(
-                select(Module)
-                .where(Module.course_id == course.id, Module.is_general.is_(False))
-                .order_by(Module.position, Module.id)
-            )
-        )
-        .scalars()
-        .all()
-    )
-    quizzes = (
-        (
-            await db.execute(
-                select(Artifact)
-                .join(Module, Module.id == Artifact.module_id)
-                .where(Module.course_id == course.id, Artifact.artifact_type == ArtifactType.quiz)
-                .order_by(Artifact.id.desc())
-            )
-        )
-        .scalars()
-        .all()
-    )
-    items = {i.artifact_id: i for i in await _quiz_list_items(db, list(quizzes))}
-    finals = [items[a.id] for a in quizzes if (a.content or {}).get("role") == "final"]
-
-    from manabi_core.models import JobStatus
-
-    inflight = (
-        (
-            await db.execute(
-                select(Job)
-                .where(
-                    Job.user_id == user.id,
-                    Job.status.in_([JobStatus.queued, JobStatus.running]),
-                    Job.job_type.in_(["generate_quiz", "generate_summary", "teach_module"]),
-                )
-                .order_by(Job.id)
-            )
-        )
-        .scalars()
-        .all()
-    )
-    pending: dict[int | None, dict[str, int]] = {}
-    for job in inflight:
-        slot = _study_slot(job)
-        if slot is not None:
-            pending.setdefault(slot[0], {})[slot[1]] = job.id
-
-    out: list[StudyModuleOut] = []
-    for m in modules:
-        chunk_count = (
-            await db.execute(
-                select(func.count(Chunk.id))
-                .join(Document, Document.id == Chunk.document_id)
-                .where(
-                    Document.module_id == m.id,
-                    Document.deleted_at.is_(None),
-                    Document.ai_included.is_(True),
-                )
-            )
-        ).scalar_one()
-        summary = await _latest_artifact(db, m.id, ArtifactType.summary)
-        lecture = await _latest_artifact(db, m.id, ArtifactType.lecture)
-        language = (
-            profile_material(c.text for c in await load_context_chunks(db, [m.id])).language
-            if chunk_count
-            else None
-        )
-        mine = [a for a in quizzes if a.module_id == m.id]
-        # newest quiz per role wins
-        by_role: dict[str, Artifact] = {}
-        for a in mine:
-            r = (a.content or {}).get("role")
-            if r and r not in by_role:
-                by_role[r] = a
-        sections = []
-        for i, sec in enumerate(_summary_sections(summary)):
-            q = by_role.get(f"section:{i}")
-            sections.append(
-                StudySectionOut(
-                    index=i,
-                    title=str(sec.get("title") or f"Section {i + 1}"),
-                    block_count=len(sec.get("blocks", []) or []),
-                    has_sources=bool(_section_chunks(sec)),
-                    quiz_id=q.id if q else None,
-                    best_score=items[q.id].best_score if q else None,
-                )
-            )
-        cp = by_role.get("checkpoint")
-        segs = (lecture.content or {}).get("segments", []) if lecture else []
-        out.append(
-            StudyModuleOut(
-                id=m.id,
-                title=m.title,
-                has_material=chunk_count > 0,
-                chunk_count=chunk_count,
-                summary_id=summary.id if summary else None,
-                sections=sections,
-                lecture_id=lecture.id if lecture else None,
-                lecture_segments=len(segs) if isinstance(segs, list) else 0,
-                checkpoint=items[cp.id] if cp else None,
-                language=language,
-                pending=pending.get(m.id, {}),
-            )
-        )
-    module_ids = {m.id for m in modules}
-    final_job = pending.get(None, {}).get("final")
-    if final_job is not None:
-        job = next(j for j in inflight if j.id == final_job)
-        mods = {int(x) for x in (job.payload or {}).get("module_ids") or []}
-        if not mods & module_ids:
-            final_job = None  # another course's exam
-    return StudyOut(
-        course_id=course.id, modules=out, finals=finals, pending_final=final_job
-    )
 
 
 async def _get_owned_quiz(
