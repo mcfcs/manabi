@@ -10,6 +10,7 @@ import logging
 import math
 import re
 from datetime import UTC, datetime
+from types import SimpleNamespace
 
 from manabi_core.models import (
     AIFeedback,
@@ -1155,6 +1156,26 @@ async def _adjudicate(item: dict, answer: dict, solved: dict, source: str) -> di
         return None
 
 
+async def _plan_checkpoint_prompts(db: AsyncSession, plan_id: int) -> dict[int, list[str]]:
+    """The stems of a study plan's topic tests, per module. A plan's final
+    repeated a topic test's question word for word ("what value is passed to
+    the next layer when a neuron does not activate?"), so the final is told to
+    avoid them and drops any near-copy."""
+    rows = await db.execute(
+        select(QuizQuestion.module_id, QuizQuestion.prompt)
+        .join(Artifact, Artifact.id == QuizQuestion.artifact_id)
+        .where(
+            Artifact.content["plan_id"].as_integer() == plan_id,
+            Artifact.content["role"].as_string() != "final",
+        )
+    )
+    out: dict[int, list[str]] = {}
+    for module_id, prompt in rows.all():
+        if module_id is not None and prompt:
+            out.setdefault(int(module_id), []).append(prompt)
+    return out
+
+
 @app.task(name="manabi_ai.tasks.generate_quiz", queue="gpu", retry=1, pass_context=True)
 async def generate_quiz(
     context,
@@ -1199,6 +1220,9 @@ async def generate_quiz(
             }
             modules = [found[m] for m in order if m in found]
             mix = quizplan.normalize_mix(types, type_mix)
+            prior: dict[int, list[str]] = (
+                await _plan_checkpoint_prompts(db, plan_id) if role == "final" and plan_id else {}
+            )
 
             # Focused retrieval (server-side, topic-steered): partition the
             # hydrated chunks per module; a module the topic doesn't touch
@@ -1274,6 +1298,7 @@ async def generate_quiz(
                     exercise=exercise,
                     scope=scope,
                     label=module.title,
+                    avoid=prior.get(module.id),
                 )
                 dropped += d
                 candidates.extend((ui, k) for k in kept)
@@ -1320,7 +1345,10 @@ async def generate_quiz(
 
             # 3. Validate, dedup, audit.
             await _progress(db, job, 78, "Deduplicating")
-            candidates = dedup(usable(candidates))
+            earlier = [
+                SimpleNamespace(item={"prompt": p}) for stems in prior.values() for p in stems
+            ]
+            candidates = dedup(usable(candidates), earlier)
             audit_stats: dict = {}
             if audit and candidates:
                 candidates, audit_stats = await _audit_candidates(
@@ -1365,10 +1393,11 @@ async def generate_quiz(
                     exercise=exercise,
                     scope=scope,
                     label=units[ui][0].title if units else "practice",
-                    avoid=[c.item.get("prompt") or "" for _u, c in final],
+                    avoid=(prior.get(units[ui][0].id, []) if units else [])
+                    + [c.item.get("prompt") or "" for _u, c in final],
                 )
                 dropped += d
-                fresh = dedup(usable([(ui, k) for k in kept]), [c for _u, c in final])
+                fresh = dedup(usable([(ui, k) for k in kept]), earlier + [c for _u, c in final])
                 if audit and fresh:
                     fresh, more = await _audit_candidates(db, job, preview, fresh, source_by_unit)
                     for k, v in more.items():
