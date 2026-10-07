@@ -185,11 +185,17 @@ def _validate_and_trim_wav(content: bytes, text: str, speed: float = 1.0) -> byt
     return output.getvalue()
 
 
+# Silent takes are intermittent (sampling is seeded per request): "A main
+# function serves as the driver." failed three takes in a row inside a lecture
+# and passed twice straight after. Five takes before giving up.
+TAKE_ATTEMPTS = 5
+
+
 async def _request_wav(client: httpx.AsyncClient, text: str, *, verify: bool = False) -> bytes:
     """Retry failed takes with fresh sampling instead of caching missing speech."""
     settings = get_settings()
     last: Exception | None = None
-    for attempt in range(3):
+    for attempt in range(TAKE_ATTEMPTS):
         try:
             r = await client.get(
                 f"{settings.tts_url.rstrip('/')}/tts",
