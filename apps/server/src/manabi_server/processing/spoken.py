@@ -177,3 +177,19 @@ def humanize_names(text: str) -> str:
 
 def word_count(text: str) -> int:
     return len(re.findall(r"[A-Za-z0-9']+", text))
+
+
+_PLAIN_WORD = re.compile(r"^[(\"'“‘■•▪◦‣∙·●]*[A-Za-z][A-Za-z'’-]*[)\"'”’,.;:!?]*$")
+SPEAKABLE_MIN_WORD_SHARE = 0.5
+
+
+def speakable(text: str) -> bool:
+    """Is this mostly words a voice can read? Slide decks put code lines
+    (`processed_text = re.sub(r'[^\\x00-\\x7f]', …)`) and notation
+    (`[x1…xn] [x1…xn]`) in ordinary paragraphs; the voice mangles them, every
+    take fails verification, and they used to fail the whole narration."""
+    tokens = text.split()
+    if not tokens:
+        return False
+    plain = sum(1 for t in tokens if _PLAIN_WORD.match(t))
+    return plain / len(tokens) >= SPEAKABLE_MIN_WORD_SHARE

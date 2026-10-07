@@ -204,3 +204,14 @@ def test_captions_are_read_and_nothing_skipped_leaks(paper):
     assert caption.spoken_text.startswith("Figure 1. Rules and players")
     kept_kinds = {s.kind for s in script.segments}
     assert not (kept_kinds & set(SKIPPED_KINDS))
+
+
+def test_code_lines_and_notation_are_not_read_aloud():
+    from manabi_server.processing.spoken import speakable
+
+    # From an NLP deck whose narration failed on exactly these.
+    assert not speakable("processed_text = re.sub(r'[^\x00-\x7f]', r\", raw_text).")
+    assert not speakable("[x1…xn] [x1…xn] [x1…xn] [x1…xn] [x1…xn].")
+    assert speakable("Basic tier : $100/month for up to 10,000 tweets")
+    assert speakable("■bandwidth.")
+    assert speakable("Most resistance is of the subdued, subtle, and surreptitious type.")

@@ -24,6 +24,7 @@ from dataclasses import dataclass, field
 from manabi_server.processing.spoken import (
     clean_display_title,
     humanize_names,
+    speakable,
     to_spoken,
     word_count,
 )
@@ -449,6 +450,8 @@ def build_script(pdf_doc) -> Script:
             spoken = to_spoken(text, b.kind)
         if word_count(spoken) == 0 or (b.kind != "heading" and word_count(spoken) < 3):
             continue  # stray fragments (page numbers that slipped through, etc.)
+        if not speakable(spoken):
+            continue  # code lines and notation: shown on the page, not read aloud
         segments.append(Segment(len(segments), b.page_no, b.kind, text, spoken))
     return Script(
         segments=segments,
