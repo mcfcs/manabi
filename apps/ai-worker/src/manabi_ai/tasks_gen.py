@@ -791,6 +791,11 @@ def _question_answer(item: dict) -> dict | None:
             return {"kind": "mcq", "correct_option": correct}
         return None
     if qtype == "tf":
+        # A true/false item must be a statement. A real one asked "what is
+        # the memory address of p + 3?" and was keyed True.
+        stem = _FENCED_CODE.sub(" ", item.get("prompt") or "").strip()
+        if stem.endswith("?") and not re.search(r"true|false", stem, re.I):
+            return None
         if isinstance(item.get("correct_bool"), bool):
             return {"kind": "tf", "value": item["correct_bool"]}
         return None
@@ -926,9 +931,24 @@ async def _write_planned(
 
     kept_all: list[ResolvedItem] = []
     dropped = 0
-    for start in range(0, len(targets), _TARGETS_PER_CALL):
-        chunk_t = targets[start : start + _TARGETS_PER_CALL]
-        chunk_q = qtypes[start : start + _TARGETS_PER_CALL]
+    # Write each type's targets in their own calls, with the grammar narrowed
+    # to that one type. Mixed calls let the model answer an [output] target
+    # with an mcq (observed: 1 output of 8 when 4 were asked for).
+    calls: list[tuple[list[dict], list[str]]] = []
+    if planned:
+        for qt in dict.fromkeys(qtypes):
+            group = [t for t, q in zip(targets, qtypes, strict=True) if q == qt]
+            for start in range(0, len(group), _TARGETS_PER_CALL):
+                part = group[start : start + _TARGETS_PER_CALL]
+                calls.append((part, [qt] * len(part)))
+    else:
+        for start in range(0, len(targets), _TARGETS_PER_CALL):
+            end = start + _TARGETS_PER_CALL
+            calls.append((targets[start:end], qtypes[start:end]))
+    written = 0
+    for chunk_t, chunk_q in calls:
+        start = written
+        written += len(chunk_t)
         call_types = [t for t in types if t in set(chunk_q)] or types
         system = base_prompt.replace("{count}", str(len(chunk_t))).replace(
             "{types}", ", ".join(call_types)
@@ -1273,17 +1293,10 @@ async def generate_quiz(
             Pair = tuple[int, ResolvedItem]
 
             def select_final(pairs: list[Pair]) -> list[Pair]:
-                taken: list[Pair] = []
-                spare: list[Pair] = []
-                per_unit: dict[int, int] = {}
-                for u, c in pairs:
-                    if per_unit.get(u, 0) < owed.get(u, 0):
-                        taken.append((u, c))
-                        per_unit[u] = per_unit.get(u, 0) + 1
-                    else:
-                        spare.append((u, c))
-                taken.extend(spare[: max(0, count - len(taken))])
-                return taken[:count]
+                picked = quizplan.select_by_quota(
+                    [(u, c.item["qtype"]) for u, c in pairs], owed, mix, count
+                )
+                return [pairs[i] for i in picked]
 
             final = select_final(candidates)
 

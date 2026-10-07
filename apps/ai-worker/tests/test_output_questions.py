@@ -69,3 +69,16 @@ def test_other_question_types_are_unaffected_by_the_code_requirement():
     assert _question_answer(
         {"qtype": "mcq", "prompt": "No code", "options": ["a", "b"], "correct_option": 1}
     ) == {"kind": "mcq", "correct_option": 1}
+
+
+def test_a_true_false_item_must_be_a_statement():
+    # Real failure: "what is the memory address of p + 3?" keyed True.
+    assert _question_answer(
+        {"qtype": "tf", "prompt": "What is the address of p + 3?", "correct_bool": True}
+    ) is None
+    assert _question_answer(
+        {"qtype": "tf", "prompt": "p + 3 is 12 bytes past p.", "correct_bool": True}
+    ) == {"kind": "tf", "value": True}
+    assert _question_answer(
+        {"qtype": "tf", "prompt": "True or false: p + 3 is 12 bytes past p?", "correct_bool": True}
+    ) is not None

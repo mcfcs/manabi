@@ -96,3 +96,27 @@ def test_code_output_questions_are_left_to_the_compiler():
     assert executable_check_applies("mcq", "What does the program print?\n\n" + code)
     assert not executable_check_applies("mcq", "Which paradigm uses objects?")
     assert not executable_check_applies("tf", "This program prints 1.\n\n" + code)
+
+
+def test_selection_follows_the_mix_not_the_generation_order():
+    from manabi_ai.quizplan import select_by_quota
+
+    # mcq candidates came first; the mix asks for half output
+    items = [(0, "mcq")] * 6 + [(0, "output")] * 4
+    picked = select_by_quota(items, {0: 4}, {"output": 1, "mcq": 1}, 4)
+    assert [items[i][1] for i in picked].count("output") == 2
+
+
+def test_selection_fills_a_missing_type_from_the_rest():
+    from manabi_ai.quizplan import select_by_quota
+
+    items = [(0, "mcq")] * 5
+    assert len(select_by_quota(items, {0: 4}, {"output": 3, "mcq": 1}, 4)) == 4
+
+
+def test_selection_honours_each_units_share():
+    from manabi_ai.quizplan import select_by_quota
+
+    items = [(0, "mcq")] * 5 + [(1, "mcq")] * 5
+    picked = select_by_quota(items, {0: 2, 1: 3}, {"mcq": 1}, 5)
+    assert [items[i][0] for i in picked].count(1) == 3

@@ -202,3 +202,42 @@ def answers_agree(qtype: str, answer: dict, solved: dict) -> bool:
     if eq is not None:
         return eq
     return fuzzy_equal(key, got)
+
+
+# ── Choosing the final questions ─────────────────────────────────────────
+
+
+def select_by_quota(
+    items: list[tuple[int, str]], owed: dict[int, int], mix: dict[str, float], count: int
+) -> list[int]:
+    """Pick which candidates make the quiz. `items` are (unit, qtype) in
+    generation order; returns the chosen indexes in that order.
+
+    Each unit gives what it owes, split across types by `mix`; a unit short of
+    some type fills from its own other candidates, and a quiz still short
+    fills from any unit's spares. Taking candidates in plain order ignored the
+    mix whenever the plentiful type happened to come first."""
+    chosen: set[int] = set()
+    units = list(dict.fromkeys(u for u, _t in items))
+    for u in units:
+        need = owed.get(u, 0)
+        if need <= 0:
+            continue
+        mine = [i for i, (uu, _t) in enumerate(items) if uu == u]
+        quota = allocate(need, mix)
+        taken = 0
+        for t, q in quota.items():
+            for i in [i for i in mine if items[i][1] == t][:q]:
+                chosen.add(i)
+                taken += 1
+        for i in mine:
+            if taken >= need:
+                break
+            if i not in chosen:
+                chosen.add(i)
+                taken += 1
+    for i in range(len(items)):
+        if len(chosen) >= count:
+            break
+        chosen.add(i)
+    return sorted(chosen)[:count]
