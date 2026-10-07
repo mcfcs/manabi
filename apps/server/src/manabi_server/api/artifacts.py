@@ -1805,12 +1805,35 @@ class StudyModuleOut(BaseModel):
     lecture_id: int | None = None
     lecture_segments: int = 0
     checkpoint: QuizListItem | None = None
+    language: str | None = None  # code language found in the material, if any
+    # In-flight generation for this module's study slots, by slot key
+    # ("checkpoint", "section:<i>", "summary", "lecture") -> job id.
+    pending: dict[str, int] = {}
 
 
 class StudyOut(BaseModel):
     course_id: int
     modules: list[StudyModuleOut]
     finals: list[QuizListItem]
+    pending_final: int | None = None  # job id of a mock exam being written
+
+
+def _study_slot(job: Job) -> tuple[int | None, str] | None:
+    """Which study-path slot an in-flight job fills, from its payload."""
+    payload = job.payload if isinstance(job.payload, dict) else {}
+    if job.job_type == "generate_quiz":
+        role = payload.get("role")
+        mods = payload.get("module_ids") or []
+        if role == "final" or payload.get("exam"):
+            return (None, "final")
+        if role and mods:
+            return (int(mods[0]), str(role))
+        return None
+    if job.job_type == "generate_summary" and job.module_id:
+        return (job.module_id, "summary")
+    if job.job_type == "teach_module" and job.module_id:
+        return (job.module_id, "lecture")
+    return None
 
 
 @router.get("/courses/{course_id}/study")
@@ -1856,6 +1879,29 @@ async def course_study(
     items = {i.artifact_id: i for i in await _quiz_list_items(db, list(quizzes))}
     finals = [items[a.id] for a in quizzes if (a.content or {}).get("role") == "final"]
 
+    from manabi_core.models import JobStatus
+
+    inflight = (
+        (
+            await db.execute(
+                select(Job)
+                .where(
+                    Job.user_id == user.id,
+                    Job.status.in_([JobStatus.queued, JobStatus.running]),
+                    Job.job_type.in_(["generate_quiz", "generate_summary", "teach_module"]),
+                )
+                .order_by(Job.id)
+            )
+        )
+        .scalars()
+        .all()
+    )
+    pending: dict[int | None, dict[str, int]] = {}
+    for job in inflight:
+        slot = _study_slot(job)
+        if slot is not None:
+            pending.setdefault(slot[0], {})[slot[1]] = job.id
+
     out: list[StudyModuleOut] = []
     for m in modules:
         chunk_count = (
@@ -1871,6 +1917,11 @@ async def course_study(
         ).scalar_one()
         summary = await _latest_artifact(db, m.id, ArtifactType.summary)
         lecture = await _latest_artifact(db, m.id, ArtifactType.lecture)
+        language = (
+            profile_material(c.text for c in await load_context_chunks(db, [m.id])).language
+            if chunk_count
+            else None
+        )
         mine = [a for a in quizzes if a.module_id == m.id]
         # newest quiz per role wins
         by_role: dict[str, Artifact] = {}
@@ -1904,9 +1955,20 @@ async def course_study(
                 lecture_id=lecture.id if lecture else None,
                 lecture_segments=len(segs) if isinstance(segs, list) else 0,
                 checkpoint=items[cp.id] if cp else None,
+                language=language,
+                pending=pending.get(m.id, {}),
             )
         )
-    return StudyOut(course_id=course.id, modules=out, finals=finals)
+    module_ids = {m.id for m in modules}
+    final_job = pending.get(None, {}).get("final")
+    if final_job is not None:
+        job = next(j for j in inflight if j.id == final_job)
+        mods = {int(x) for x in (job.payload or {}).get("module_ids") or []}
+        if not mods & module_ids:
+            final_job = None  # another course's exam
+    return StudyOut(
+        course_id=course.id, modules=out, finals=finals, pending_final=final_job
+    )
 
 
 async def _get_owned_quiz(

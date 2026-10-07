@@ -32,6 +32,8 @@ _CODE_LINE = re.compile(
       | (?:def|class)\s+\w+\s*[(:]  # Python
       | (?:import|from)\s+\w+\s+import\b
       | print\s*\(
+      | (?:std::)?cout\s*<<         # C++ stream output
+      | class\s+\w+\s*(?::|\{|$)    # C++ class head
       | (?:for|while|if)\s*\(.*\)\s*\{?\s*$
       | \w+\s*=\s*\w+\s*[+\-*/]\s*\w+\s*;   # arithmetic assignment, C-style
       | return\s+[\w*&(].*;
@@ -42,6 +44,11 @@ _CODE_LINE = re.compile(
 # No space allowed before "[", so a citation like "Barnett [1]" is not an index.
 _POINTER = re.compile(r"(\*\s*\w+|\w+\[\s*\w*\s*\]|&\w+|->\s*\w+|\w+\s*\+\s*\d+)")
 _C_HINT = re.compile(r"\b(?:printf|scanf|malloc|char\s*\*|null[- ]terminat|pointer)\b", re.I)
+_CPP_HINT = re.compile(
+    r"\bcout\b|\bcin\b|std::|#include\s*<iostream>|\bvirtual\b|\bpublic\s*:|\bprivate\s*:"
+    r"|\bclass\s+\w+\s*\{|~\w+\s*\(",
+    re.I,
+)
 _PY_HINT = re.compile(r"\b(?:def\s|elif\b|self\.|len\(|range\()", re.I)
 
 # "X is defined as", "X refers to", "X is the process of" → identification/short
@@ -82,7 +89,7 @@ class MaterialProfile:
     definition_hits: int
     list_hits: int
     essay_hits: int
-    language: str | None  # "c" | "python" | None
+    language: str | None  # "c" | "cpp" | "python" | None
     suggestions: list[TypeSuggestion]
 
     @property
@@ -106,7 +113,10 @@ def profile_material(texts: Iterable[str]) -> MaterialProfile:
     language = None
     if code_lines:
         c, py = len(_C_HINT.findall(blob)), len(_PY_HINT.findall(blob))
-        if c or py:
+        cpp = len(_CPP_HINT.findall(blob))
+        if cpp and cpp >= max(2, c // 3):
+            language = "cpp"  # classes / cout dominate: an OOP-in-C++ deck
+        elif c or py:
             language = "c" if c >= py else "python"
 
     # Slide decks are the common case and they extract badly: the pointers
