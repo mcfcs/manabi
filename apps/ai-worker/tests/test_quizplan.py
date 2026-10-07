@@ -155,3 +155,8 @@ def test_shuffle_mcq_skips_explanations_that_name_a_letter():
     code = {**base, "prompt": "q7", "explanation": "max(a) returns the larger value."}
     shuffle_mcq(code)
     assert code["options"][code["correct_option"]] == "w"
+
+
+def test_assumed_semantics_go_to_the_audit_not_the_compiler():
+    p = "Assume call by value-result. What is printed?\n\n```c\nint main(){printf(\"%d\", 1);}\n```"
+    assert not executable_check_applies("output", p)

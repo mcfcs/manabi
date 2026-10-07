@@ -305,3 +305,25 @@ def test_output_with_a_nul_character_is_retired():
     p = "What is printed?\n\n```c\n#include <stdio.h>\nint main(void){ char c = 0; printf(\"x%cy\", c); return 0; }\n```"
     chk = check_code_question("output", p, None, {"kind": "output", "text": "xy"})
     assert chk.status == "rejected" and "non-printable" in chk.reason
+
+
+VALUE_RESULT = """Assume the function `change` uses call by value-result (copy-in/copy-out) semantics. What is the exact output of the program below?
+
+```c
+#include <stdio.h>
+int a = 5;
+void change(int x) { x++; a = 10; x++; }
+int main() { change(a); printf("%d\n", a); return 0; }
+```"""
+
+
+def test_assumed_non_c_semantics_are_not_settled_by_compiling():
+    # gcc prints 10 (call by value); under value-result the answer is 7.
+    chk = check_code_question("output", VALUE_RESULT, None, {"kind": "output", "text": "10"})
+    assert chk.status == "unverifiable" and "semantics" in chk.reason
+
+
+def test_a_reference_parameter_marks_cpp():
+    s = extract_snippet("```c\nvoid f(int &v) { v++; }\nint main(){ int n=1; f(n); }\n```")
+    assert s is not None and s.lang == "cpp"
+    assert guess_lang("if (x & mask) { y(); }") != "cpp"

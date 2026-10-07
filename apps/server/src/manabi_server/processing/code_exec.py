@@ -50,6 +50,20 @@ _CPP_MARKERS = re.compile(
     r"|\bstd::|\bcout\b|\bcin\b|\bendl\b|\bclass\s+\w+|\bnamespace\b"
     r"|\btemplate\s*<|\bvirtual\b|\bpublic\s*:|\bprivate\s*:|\bprotected\s*:"
     r"|\bnullptr\b|::"
+    # a reference parameter: f(int &x), g(const string& s)
+    r"|\(\s*(?:const\s+)?(?:int|char|double|float|long|bool|string|[A-Z]\w*)\s*&\s*\w+\s*[,)]"
+)
+
+# A stem asking the student to assume semantics C/C++ do not have: compiling
+# the code proves the C answer, which is the wrong answer to that question.
+# Real case: "Assume `change` uses call by value-result" — gcc printed 10
+# (call by value) and "verified" it; the asked-for answer is 7.
+HYPOTHETICAL_SEMANTICS = re.compile(
+    r"\b(?:assume|suppose|if)\b[^.?\n]{0,80}"
+    r"(?:call|pass(?:ed|ing)?)[- ]by[- ](?:value[- ]result|reference|name|sharing|copy[- ]restore)"
+    r"|value[- ]result|copy[- ]in|copy[- ]out|call[- ]by[- ]name"
+    r"|\bdynamic(?:ally)? scop",
+    re.I,
 )
 _C_MARKERS = re.compile(r"#include\s*<|\bprintf\s*\(|\bint\s+main\s*\(|\bputs\s*\(|\bputchar\s*\(")
 
@@ -383,6 +397,9 @@ def check_code_question(
         return CodeCheck("skip")
     if qtype != "output" and not _ASKS_OUTPUT.search(_FENCE.sub(" ", prompt or "")):
         return CodeCheck("skip")  # e.g. "what value does x hold" — not stdout
+    if HYPOTHETICAL_SEMANTICS.search(_FENCE.sub(" ", prompt or "")):
+        # The compiler can only answer for C/C++'s own semantics.
+        return CodeCheck("unverifiable", "asks to assume semantics C/C++ do not have")
 
     result = execute(snippet)
     if result.undefined:

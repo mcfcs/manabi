@@ -20,7 +20,7 @@ import unicodedata
 CODE_ONLY_TYPES = ("output", "coding")
 
 # Questions a blind solver can answer and we can compare mechanically.
-AUDITABLE_TYPES = ("mcq", "tf", "identification", "short")
+AUDITABLE_TYPES = ("mcq", "tf", "identification", "short", "output")
 
 
 # ── Allocation ───────────────────────────────────────────────────────────
@@ -118,10 +118,24 @@ def has_code(prompt: str) -> bool:
     return bool(_FENCE.search(prompt or ""))
 
 
+# Mirrors manabi_server.processing.code_exec.HYPOTHETICAL_SEMANTICS.
+_HYPOTHETICAL = re.compile(
+    r"\b(?:assume|suppose|if)\b[^.?\n]{0,80}"
+    r"(?:call|pass(?:ed|ing)?)[- ]by[- ](?:value[- ]result|reference|name|sharing|copy[- ]restore)"
+    r"|value[- ]result|copy[- ]in|copy[- ]out|call[- ]by[- ]name"
+    r"|\bdynamic(?:ally)? scop",
+    re.I,
+)
+
+
 def executable_check_applies(qtype: str, prompt: str) -> bool:
     """True when the app server will settle this question by running its
-    code (so a blind model solve would only add noise)."""
+    code (so a blind model solve would only add noise). A question asking the
+    student to assume semantics C does not have (call by value-result) cannot
+    be settled by compiling it, so it is audited by a model instead."""
     if not has_code(prompt):
+        return False
+    if _HYPOTHETICAL.search(_FENCE.sub(" ", prompt or "")):
         return False
     if qtype == "output":
         return True
