@@ -122,7 +122,7 @@ async def test_all_bad_takes_fail_instead_of_returning_the_longest(monkeypatch):
     async with httpx.AsyncClient(transport=httpx.MockTransport(reply)) as client:
         with pytest.raises(tts.TTSQualityError):
             await tts._request_wav(client, "This must be spoken.")
-    assert len(attempts) == 3
+    assert len(attempts) == tts.TAKE_ATTEMPTS
 
 
 @pytest.mark.asyncio
