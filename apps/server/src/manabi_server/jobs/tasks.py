@@ -95,29 +95,31 @@ def score_support(artifact_id: int) -> None:
 
 @app.task(name=VERIFY_OUTPUTS_TASK, queue="cpu", retry=1)
 def verify_quiz_outputs(artifact_id: int) -> int:
-    """Run the code in every `output` question and correct the ones that lie.
+    """Run the code in every code question and correct the keys that lie.
 
     Models are specifically unreliable here: asked what `sentence + 5` prints
     for "the quick brown fox", qwen3.5:27b named index 5 ('u') correctly in its
     own explanation and then answered "quick brown fox" — the substring from
     index 4. Compiling the same code answers "uick brown fox" every time.
 
-    A question whose code will not compile, or whose language we cannot run, is
-    left exactly as the model wrote it; only a *successful* run overrules it.
-    Returns how many answers were corrected.
+    Covers `output` questions, and `mcq`/`short` questions whose stem asks what
+    code prints (an mcq key is moved to the option the program really prints;
+    an mcq none of whose options is right becomes an `output` question). Code
+    with no defined output (undefined behaviour, copy elision) is retired:
+    `answer.verified = "rejected:…"` hides it from the quiz. Code that will not
+    compile is left exactly as the model wrote it — only a successful, defined
+    run overrules it. A corrected key leaves a walkthrough that argues for the
+    old answer, so those questions are queued for a fresh explanation.
+    Returns how many questions were changed (corrected, converted or retired).
     """
     from manabi_core.models import AIFeedback, AIFeedbackKind, Artifact, QuizQuestion
     from sqlalchemy import select
 
-    from manabi_server.processing.code_exec import (
-        execute,
-        extract_snippet,
-        normalize_output,
-        outputs_match,
-        printed_anything,
-    )
+    from manabi_server.jobs.queue import REEXPLAIN_QUESTIONS_TASK, defer_task_sync
+    from manabi_server.processing.code_exec import check_code_question, converted_prompt
 
-    corrected = agreed = unverified = 0
+    counts = {"agree": 0, "corrected": 0, "converted": 0, "rejected": 0, "unverifiable": 0}
+    reexplain: list[int] = []
     with db_session() as db:
         artifact = db.execute(
             select(Artifact).where(Artifact.id == artifact_id)
@@ -128,7 +130,7 @@ def verify_quiz_outputs(artifact_id: int) -> int:
             db.execute(
                 select(QuizQuestion).where(
                     QuizQuestion.artifact_id == artifact_id,
-                    QuizQuestion.qtype == "output",
+                    QuizQuestion.qtype.in_(("output", "mcq", "short")),
                 )
             )
             .scalars()
@@ -136,58 +138,74 @@ def verify_quiz_outputs(artifact_id: int) -> int:
         )
         for q in questions:
             answer = dict(q.answer or {})
-            snippet = extract_snippet(q.prompt or "")
-            if snippet is None:
+            if str(answer.get("verified", "")).startswith(("executed", "rejected")):
+                continue  # already settled by an earlier pass
+            chk = check_code_question(q.qtype, q.prompt or "", q.options, answer)
+            if chk.status == "skip":
+                continue
+            counts[chk.status] = counts.get(chk.status, 0) + 1
+            if chk.status == "unverifiable":
                 # Record WHY it could not be checked, rather than skipping in
-                # silence. `output` is graded by exact string equality with no
-                # self-grade override, so an unverified key marks a correct
-                # student wrong — the client falls back to self-grading unless
-                # this says "executed".
-                q.answer = {**answer, "verified": "unverifiable:no runnable code block"}
-                unverified += 1
+                # silence: an unverified `output` key self-grades on the client.
+                if q.qtype == "output":
+                    q.answer = {**answer, "verified": f"unverifiable:{chk.reason}"}
                 continue
-            result = execute(snippet)
-            if not result.ok:
-                q.answer = {**answer, "verified": f"unverifiable:{result.error}"}
-                unverified += 1
+            if chk.status == "agree":
+                q.answer = chk.answer
                 continue
-            if not printed_anything(result):
-                # Ran clean but printed nothing: the question is about something
-                # other than stdout, so "" is not the answer — leave the model's.
-                q.answer = {**answer, "verified": "unverifiable:program prints nothing"}
-                unverified += 1
+            if chk.status == "rejected":
+                q.answer = {**answer, "verified": f"rejected:{chk.reason}"}
+                db.add(
+                    AIFeedback(
+                        kind=AIFeedbackKind.answer_disputed,
+                        artifact_id=artifact_id,
+                        question_id=q.id,
+                        rejected={"prompt": q.prompt, "answer": answer},
+                        preferred={"retired": chk.reason, "verified_by": "compiler"},
+                        model_name=artifact.model_name,
+                        prompt_version=artifact.prompt_version,
+                    )
+                )
                 continue
-            claimed = answer.get("text", "")
-            if outputs_match(claimed, result.stdout):
-                q.answer = {**answer, "verified": "executed"}
-                agreed += 1
-                continue
-
-            real = normalize_output(result.stdout)
+            # corrected / converted: the run wins over the model.
             db.add(
                 AIFeedback(
                     kind=AIFeedbackKind.answer_disputed,
                     artifact_id=artifact_id,
                     question_id=q.id,
-                    rejected={"answer": q.answer, "explanation": q.explanation},
+                    rejected={
+                        "qtype": q.qtype,
+                        "options": q.options,
+                        "answer": answer,
+                        "explanation": q.explanation,
+                    },
                     preferred={
-                        "answer": {"kind": "output", "text": real},
-                        "verified_by": f"executed ({snippet.lang})",
+                        "qtype": chk.qtype or q.qtype,
+                        "answer": chk.answer,
+                        "verified_by": "executed",
                     },
                     model_name=artifact.model_name,
                     prompt_version=artifact.prompt_version,
                 )
             )
-            q.answer = {"kind": "output", "text": real, "verified": "executed"}
-            note = "Verified by running the code."
-            q.explanation = f"{(q.explanation or '').rstrip()}\n\n{note}".strip()
-            corrected += 1
+            if chk.status == "converted":
+                q.qtype = "output"
+                q.options = None
+                q.prompt = converted_prompt(q.prompt or "")
+            q.answer = chk.answer
+            q.explanation = (
+                f"The program prints:\n\n```\n{chk.real}\n```\n\n"
+                "(The original walkthrough reached a different answer, so it was "
+                "replaced; a corrected step-by-step explanation is being written.)"
+            )
+            reexplain.append(q.id)
         db.commit()
-        log.info(
-            "quiz %s outputs: %d agreed, %d corrected, %d unverifiable",
-            artifact_id,
-            agreed,
-            corrected,
-            unverified,
-        )
-    return corrected
+        log.info("quiz %s code checks: %s", artifact_id, counts)
+    if reexplain:
+        try:
+            defer_task_sync(
+                REEXPLAIN_QUESTIONS_TASK, "gpu", artifact_id=artifact_id, question_ids=reexplain
+            )
+        except Exception:  # noqa: BLE001 — the key is fixed; the prose can wait
+            log.exception("could not queue re-explanations for quiz %s", artifact_id)
+    return counts["corrected"] + counts["converted"] + counts["rejected"]

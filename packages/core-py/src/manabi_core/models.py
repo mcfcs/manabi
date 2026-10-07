@@ -392,6 +392,12 @@ class QuizQuestion(Base):
     options: Mapped[list | None] = mapped_column(JSONB)  # mcq choices
     answer: Mapped[dict] = mapped_column(JSONB, nullable=False)
     explanation: Mapped[str | None] = mapped_column(Text)
+    # What the question tests ("pointer arithmetic") and the module it was
+    # written from — the axes an exam result is broken down by (0041).
+    topic: Mapped[str | None] = mapped_column(String(120))
+    module_id: Mapped[int | None] = mapped_column(
+        BigInteger, ForeignKey("modules.id", ondelete="SET NULL")
+    )
 
     __table_args__ = (Index("ix_quiz_questions_artifact_id", "artifact_id"),)
 

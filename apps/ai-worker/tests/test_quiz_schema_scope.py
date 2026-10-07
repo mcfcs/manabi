@@ -45,10 +45,23 @@ def test_the_exercise_fork_narrows_too_and_keeps_its_relaxed_sources():
     assert "source_ids" not in schema["properties"]["questions"]["items"]["required"]
 
 
-def test_the_code_field_exists_and_is_optional():
-    item = prompts.QUIZ_SCHEMA["properties"]["questions"]["items"]
-    assert "code" in item["properties"]
-    assert "code" not in item["required"]  # grammar brittleness rule
+def test_fields_are_emitted_working_before_answer():
+    """Ollama's grammar writes required properties in schema order, then the
+    optional ones. With `code`, `options` and the answers optional the model
+    wrote its explanation before the code and options existed (verified
+    against the live node, 2026-10-07). Everything required, in this order,
+    makes it write code → prompt → options → working → answer → explanation.
+    All fields are flat (a nested required object is what broke decoding)."""
+    for schema in (prompts.QUIZ_SCHEMA, prompts.QUIZ_EXERCISE_SCHEMA):
+        item = schema["properties"]["questions"]["items"]
+        names = list(item["properties"])
+        assert names.index("code") < names.index("prompt") < names.index("options")
+        assert names.index("options") < names.index("working") < names.index("correct_option")
+        assert names.index("correct_text") < names.index("explanation")
+        for f in ("code", "options", "working", "correct_option", "correct_text", "explanation"):
+            assert f in item["required"]
+        for prop in item["properties"].values():
+            assert prop["type"] in ("string", "integer", "boolean", "array")
 
 
 # ── folding code into the prompt ──────────────────────────────────────────

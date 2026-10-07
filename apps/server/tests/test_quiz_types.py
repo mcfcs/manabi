@@ -98,16 +98,17 @@ def test_legacy_types_unchanged():
 # ── Schemas ───────────────────────────────────────────────────────────────
 
 
-def test_quiz_schemas_cover_all_types_with_optional_fields():
+def test_quiz_schemas_cover_all_types_with_flat_fields():
     for schema in (prompts.QUIZ_SCHEMA, prompts.QUIZ_EXERCISE_SCHEMA):
         item = schema["properties"]["questions"]["items"]
         assert set(item["properties"]["qtype"]["enum"]) == set(ALL_TYPES)
-        # new answer fields exist but are OPTIONAL (grammar-safety: required
-        # nested structures broke Ollama constrained decoding before)
-        assert "correct_items" in item["properties"]
-        assert "key_points" in item["properties"]
-        assert "correct_items" not in item["required"]
-        assert "key_points" not in item["required"]
+        # Answer fields are required with sentinel values ([] / "" / -1) so
+        # the grammar emits them AFTER the working (v11). They stay flat —
+        # a nested required object is what broke constrained decoding.
+        assert item["properties"]["correct_items"]["type"] == "array"
+        assert item["properties"]["key_points"]["items"]["type"] == "string"
+        assert "correct_items" in item["required"]
+        assert "key_points" in item["required"]
     # exercise fork still relaxes source_ids only
     ex_item = prompts.QUIZ_EXERCISE_SCHEMA["properties"]["questions"]["items"]
     assert "source_ids" not in ex_item["required"]
@@ -124,7 +125,7 @@ def test_server_allowlist_matches():
 
 
 def test_prompt_version_current():
-    assert prompts.PROMPT_VERSION == "v10"
+    assert prompts.PROMPT_VERSION == "v11"
 
 
 def test_quiz_prompts_describe_new_types():
@@ -242,7 +243,14 @@ def _question_db():
         ),
         # qtype matters now: an `output` question is settled by running its
         # code instead of deferring to the model (see _settle_output_dispute).
-        types.SimpleNamespace(id=9, artifact_id=3, qtype="short", prompt="Regex?"),
+        types.SimpleNamespace(
+            id=9,
+            artifact_id=3,
+            qtype="short",
+            prompt="Regex?",
+            options=None,
+            answer={"kind": "short", "text": "a*b*"},
+        ),
     )
 
 

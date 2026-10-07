@@ -5,7 +5,7 @@ outside the prompt: schema-constrained decoding, source-id resolution against
 the job's scope, and post-hoc support scoring.
 """
 
-PROMPT_VERSION = "v10"  # v10: definitional term candidates injected into SUMMARY_PROMPT
+PROMPT_VERSION = "v11"  # v11: quiz fields ordered so working precedes the answer
 
 _GROUNDING = """RULES — follow strictly:
 - Use ONLY the numbered SOURCE MATERIAL. Do not add outside knowledge.
@@ -266,62 +266,98 @@ FLASHCARDS_SCHEMA = {
     "required": ["cards"],
 }
 
+# Field-by-field guide shared by both quiz prompts. The schema emits the
+# fields in exactly this order, so the model writes the code, then the
+# options, then its working, and only THEN commits to an answer.
+_QUIZ_FIELDS = """How to fill each question's fields — they are written in this order:
+- "qtype": one of the allowed types.
+- "topic": the specific concept or skill tested, 2-6 words (e.g. "pointer
+  arithmetic", "operator precedence", "constructor order", "left recursion").
+- "code": for any question about code, the COMPLETE program — every #include
+  it needs and a main() — exactly as the student must read it, one statement
+  per line. "" when the question involves no code. Never put the code in
+  "prompt" as well.
+- "prompt": the question itself. When there is code, refer to "the program
+  below" — it is shown under the prompt.
+- "options": exactly 4 options for "mcq"; [] for every other type.
+- "working": your step-by-step derivation, written BEFORE you state the
+  answer: for code, trace it line by line (variable values, pointer targets,
+  loop iterations, every character printed); for theory, the reasoning from
+  the definitions. This is your scratchpad.
+- "correct_option": the 0-based index of the right option for "mcq", else -1.
+- "correct_bool": the answer for "tf" (false for other types).
+- "correct_text": the answer for short / identification / output / essay
+  (model answer) / coding (reference solution in a ``` fence); else "".
+- "correct_items": every item for "enumeration"; else [].
+- "key_points": 2-5 grading criteria for "essay"; else [].
+- "explanation": the clean explanation the student reads after answering —
+  2-6 short lines, consistent with the answer, no hesitation or
+  self-correction ("wait", "let me re-check" belong in "working", never here).
+The answer fields must be READ OFF your working. If the working and the
+answer you were about to give disagree, THE WORKING WINS."""
+
+_CODE_RULES = """Rules for questions that involve code:
+- Use the language the material uses (C for C topics, C++ for classes /
+  objects / cout). Write real, compilable code: double quotes for strings,
+  single quotes for chars, "\\n" for a newline. The extracted SOURCE text may
+  show code damaged (strings in single quotes, "\\ n" for "\\n", missing
+  arrows) — never copy that damage; write valid code.
+- The printed output must be FULLY DETERMINED by the language. Never use:
+  modifying a variable twice in one expression (i++ + i++, x = x++,
+  --x + x--), reading uninitialised variables, reading past an array's end,
+  signed overflow, printing addresses, sizeof(long), or returning a local
+  object by value from a class with a copy constructor (copy elision makes
+  the output compiler-dependent). Such questions are discarded.
+- Assume a typical 64-bit gcc/g++: int is 4 bytes, char 1, double 8,
+  pointers 8.
+- Where the material states a simplification the language standard
+  contradicts (e.g. "a cast is required on malloc's result" - C converts
+  void * implicitly; C++ needs the cast), do not make a true/false or mcq
+  item hinge on it; if you do test it, the explanation must give both the
+  material's statement and the standard's rule.
+- Exam-style "what does this print" questions are the goal: printf/cout
+  formatting, ++/-- (in separate statements), integer division and %,
+  operator precedence, char arithmetic, scope and shadowing, loops with
+  break/continue, switch fall-through, pass-by-value vs pointer, pointer
+  arithmetic, arrays and strings, malloc/free, structs and ->, constructor
+  and destructor order, inheritance and virtual functions — whichever the
+  material covers.
+- For "mcq" about code output, every option must be an exact possible output
+  written exactly as it would print; distractors are the outputs of
+  realistic mistakes (off-by-one, wrong precedence, forgetting fall-through).
+- An "output" question's "correct_text" is the exact characters printed —
+  partial words, spaces and line breaks included. Exact means exact: a
+  pointer at index 5 of "the quick brown fox" prints "uick brown fox", NOT
+  the tidier "quick brown fox"."""
+
 QUIZ_PROMPT = f"""You are writing {{count}} quiz questions for a university module.
 
 {_GROUNDING}
 
-Question guidelines:
-- Allowed types (use a mix of exactly these): {{types}}.
+Question types (use exactly these): {{types}}.
 - "mcq": 4 plausible options, exactly one correct. Distractors must be
   realistic misconceptions, not obvious throwaways.
 - "tf": a statement that is clearly true or false per the sources.
-- "short": answerable in one sentence or phrase; put the answer in
-  "correct_text" — a question without it is discarded.
+- "short": answerable in one sentence, phrase or value.
 - "enumeration": when the sources list several related items, ask the student
-  to name ALL of them; put every item in "correct_items", one string each,
-  named exactly as in the sources. Fewer than 2 items = discarded.
+  to name ALL of them, named exactly as in the sources. Fewer than 2 items =
+  discarded.
 - "identification": state a definition or description from the sources and
-  ask which term/concept it names; put the exact term in "correct_text".
-- "essay": an open question needing a few sentences of synthesis; put a model
-  answer in "correct_text" and 2-5 grading criteria in "key_points".
+  ask which term/concept it names; the answer is the exact term.
+- "essay": an open question needing a few sentences of synthesis.
 - "coding": ask the student to WRITE code — only when the material is
-  code-oriented; put a complete reference solution in "correct_text" inside a
-  fenced ``` block. Any starter/context code the student needs goes in "code".
-- "output": show a code snippet or computation and ask for its EXACT output —
-  only when the material is code/computation-oriented; put the exact expected
-  output in "correct_text".
-  * PUT THE SNIPPET IN THE "code" FIELD. That is what it is for. A question
-    that says "the following code" without the code is discarded — the student
-    cannot answer it and the code cannot be checked. (You may instead inline a
-    fenced ```c / ```python block in the prompt; the "code" field is simpler.)
-  * The snippet MUST actually PRINT something — it needs a printf/print whose
-    result is visible. "What is stored in the array afterwards" is not an
-    output question; ask what the program prints, or pick another type.
-  * The program's output must be FULLY DETERMINISTIC. Never write an output
-    question whose result is a memory address, an uninitialised value, a random
-    number, the current time, or anything platform-specific. If you cannot state
-    the exact characters printed, choose different code — "exact output" and
-    "<some address>" cannot both be true, and such a question is discarded.
-- COMPUTING AN "output" ANSWER — do this literally, not from intuition:
-  1. Work the code through one step at a time and write that reasoning in the
-     explanation: index positions, pointer targets, loop iterations, variable
-     values after each step.
-  2. Build "correct_text" by READING OFF your own step-by-step trace,
-     character by character. Do NOT restate it from memory afterwards.
-  3. Then re-read the trace and confirm the answer still matches it. If your
-     trace and your answer disagree, THE TRACE WINS — rewrite the answer.
-  The usual failure is not miscounting, it is tidying: a pointer at index 5 of
-  "the quick brown fox" is at 'u', so the output is "uick brown fox", NOT the
-  neater-looking "quick brown fox". Off-by-one toward a word boundary, a round
-  number, or a whole line is the single most common error here. Never round an
-  answer toward what looks tidy — exact means exact, including partial words,
-  leading spaces and missing punctuation.
-- Each question includes a brief explanation of the correct answer.
+  code-oriented.
+- "output": show a program and ask for its EXACT printed output — only when
+  the material is code/computation-oriented.
+
+{_QUIZ_FIELDS}
+
+{_CODE_RULES}
+
+- Each question tests ONE thing, and no two questions test the same thing.
 - VARY the question stems: never open more than one question with the same
   phrase (e.g. "According to the source material…" or "Which of the
   following…") — repeated openings read as duplicates and are discarded.
-- FORMATTING: put any code in a fenced ``` code block with ONE statement per
-  line — never run several statements together on one line.
 
 Produce JSON matching the schema with exactly {{count}} questions."""
 
@@ -336,53 +372,50 @@ ALL_QUIZ_TYPES = (
     "output",
 )
 
-QUIZ_SCHEMA = {
-    "type": "object",
-    "properties": {
-        "questions": {
-            "type": "array",
-            "minItems": 1,
-            "items": {
-                "type": "object",
-                "properties": {
-                    # Optional, per the grammar-brittleness rule: a required
-                    # nested/extra field has collapsed constrained decoding
-                    # before. An `output` question that leaves it empty and has
-                    # no fence in the prompt is discarded instead.
-                    "code": {"type": "string"},
-                    "qtype": {
-                        "type": "string",
-                        "enum": [
-                            "mcq",
-                            "tf",
-                            "short",
-                            "enumeration",
-                            "identification",
-                            "essay",
-                            "coding",
-                            "output",
-                        ],
-                    },
-                    "prompt": {"type": "string"},
-                    "options": {"type": "array", "items": {"type": "string"}},
-                    "correct_option": {"type": "integer"},
-                    "correct_bool": {"type": "boolean"},
-                    "correct_text": {"type": "string"},
-                    "correct_items": {"type": "array", "items": {"type": "string"}},
-                    "key_points": {"type": "array", "items": {"type": "string"}},
-                    "explanation": {"type": "string"},
-                    "source_ids": {
-                        "type": "array",
-                        "minItems": 1,
-                        "items": {"type": "integer"},
-                    },
-                },
-                "required": ["qtype", "prompt", "explanation", "source_ids"],
-            },
-        }
-    },
-    "required": ["questions"],
-}
+
+def _quiz_schema(*, sourced: bool) -> dict:
+    """Every field required, in a deliberate order. Ollama's grammar emits
+    required properties in schema order and optional ones after them — with
+    `explanation` required and `code`/`options`/answers optional, the model
+    used to write its explanation BEFORE the code and the options existed,
+    then pick an answer. Required-with-sentinels ("" / [] / -1) fixes the
+    order: code → prompt → options → working → answer → explanation. All
+    fields are flat scalars or string arrays (a nested required object has
+    collapsed constrained decoding before; flat required fields have not)."""
+    props: dict = {
+        "qtype": {"type": "string", "enum": list(ALL_QUIZ_TYPES)},
+        "topic": {"type": "string"},
+        "code": {"type": "string"},
+        "prompt": {"type": "string"},
+        "options": {"type": "array", "items": {"type": "string"}},
+        "working": {"type": "string"},
+        "correct_option": {"type": "integer"},
+        "correct_bool": {"type": "boolean"},
+        "correct_text": {"type": "string"},
+        "correct_items": {"type": "array", "items": {"type": "string"}},
+        "key_points": {"type": "array", "items": {"type": "string"}},
+        "explanation": {"type": "string"},
+        "source_ids": {"type": "array", "items": {"type": "integer"}},
+    }
+    required = list(props)
+    if sourced:
+        props["source_ids"]["minItems"] = 1
+    else:
+        required.remove("source_ids")
+    return {
+        "type": "object",
+        "properties": {
+            "questions": {
+                "type": "array",
+                "minItems": 1,
+                "items": {"type": "object", "properties": props, "required": required},
+            }
+        },
+        "required": ["questions"],
+    }
+
+
+QUIZ_SCHEMA = _quiz_schema(sourced=True)
 
 
 # ── Exercise mode (synthesized practice items) ────────────────────────────
@@ -452,36 +485,31 @@ questions for a university module.
 
 {_EXERCISE_RULES}
 
-Question guidelines:
-- Allowed types (use a mix of exactly these): {{types}}.
-- "mcq": 4 plausible options, exactly one correct ("correct_option").
-  Distractors must be the results of realistic mistakes (off-by-one, wrong
-  evaluation order), not obvious throwaways.
-- "tf": a concrete claim about a given snippet/computation that is clearly
-  true or false; set "correct_bool".
-- "short": answerable with a specific value, output, or short phrase; put
-  that exact answer in "correct_text" — a question without it is discarded.
+Question types (use exactly these): {{types}}.
+- "mcq": 4 plausible options, exactly one correct. Distractors must be the
+  results of realistic mistakes (off-by-one, wrong evaluation order), not
+  obvious throwaways.
+- "tf": a concrete claim about a given program/computation/rule that is
+  clearly true or false.
+- "short": answerable with a specific value, output, or short phrase.
 - "enumeration": ask the student to name ALL members of a set the topic
-  defines (steps, operators, rules, categories); put every item in
-  "correct_items", one string each. Fewer than 2 items = discarded.
-- "identification": describe a concept precisely and ask which term it names;
-  put the exact term in "correct_text".
-- "essay": an open exercise needing a few sentences of applied reasoning; put
-  a model answer in "correct_text" and 2-5 grading criteria in "key_points".
-- "coding": ask the student to WRITE an original snippet solving a small,
-  fully-specified task on the topic; put a complete reference solution in
-  "correct_text" inside a fenced ``` block.
-- "output": synthesize an original snippet/computation and ask for its EXACT
-  output; put the exact expected output in "correct_text". The natural
-  exercise type for code tracing.
-- Explanation: the step-by-step working, one step per line, ending with a
-  final line "Answer: ...".
+  defines (steps, operators, rules, categories). Fewer than 2 items =
+  discarded.
+- "identification": describe a concept precisely and ask which term it names.
+- "essay": an open exercise needing a few sentences of applied reasoning.
+- "coding": ask the student to WRITE an original program solving a small,
+  fully-specified task on the topic.
+- "output": an original program; ask for its EXACT printed output. The
+  natural exercise type for code tracing.
+
+{_QUIZ_FIELDS}
+
+{_CODE_RULES}
+
+- Each question tests ONE thing, and no two questions test the same thing.
+  Vary the scenario, the given values and the construct being tested.
 - VARY the question stems: never open more than one question with the same
-  phrase — repeated openings read as duplicates and are discarded. Vary the
-  scenario and the given values between exercises.
-- FORMATTING: put any code in a fenced ``` code block with ONE statement per
-  line — never run several statements together on one line. Prose stays
-  outside the fence.
+  phrase — repeated openings read as duplicates and are discarded.
 
 Produce JSON matching the schema with exactly {{count}} questions."""
 
@@ -537,7 +565,119 @@ def _optional_sources(schema: dict, item_key: str) -> dict:
 
 
 FLASHCARDS_EXERCISE_SCHEMA = _optional_sources(FLASHCARDS_SCHEMA, "cards")
-QUIZ_EXERCISE_SCHEMA = _optional_sources(QUIZ_SCHEMA, "questions")
+QUIZ_EXERCISE_SCHEMA = _quiz_schema(sourced=False)
+
+
+# ── Quiz planning: distinct targets first, then one question per target ───
+
+QUIZ_PLAN_PROMPT = """You are planning a university exam on the SOURCE MATERIAL.
+
+List {count} DISTINCT things an exam could test from this material — each a
+specific concept, rule, construct or skill, not a whole chapter. Spread them
+across the WHOLE material in its order (do not cluster on the first pages),
+and never list two targets that would produce the same question.
+
+For each target:
+- "topic": 2-6 words naming it (e.g. "pointer arithmetic on arrays",
+  "switch fall-through", "LL(1) left factoring", "copy constructor").
+- "skill": one sentence saying exactly what the question will make the
+  student do (trace, compute, identify, compare, apply a rule to a new case).
+- "code_based": true when the best question shows a short C/C++ program and
+  asks what it prints (or asks the student to write code); false for
+  definitions, theory, history and comparisons.
+{focus}
+Produce JSON matching the schema with exactly {count} targets."""
+
+QUIZ_PLAN_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "targets": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+                "type": "object",
+                "properties": {
+                    "topic": {"type": "string"},
+                    "skill": {"type": "string"},
+                    "code_based": {"type": "boolean"},
+                },
+                "required": ["topic", "skill", "code_based"],
+            },
+        }
+    },
+    "required": ["targets"],
+}
+
+# Appended to a quiz prompt when the questions are written against a plan.
+TARGETS_BLOCK = """
+
+TARGETS — write exactly one question for each target below, in this order,
+using the type given in brackets. The question must test that target's skill:
+{targets}"""
+
+
+# ── Blind audit: answer the questions without seeing the key ──────────────
+
+AUDIT_SOLVE_PROMPT = """You are a careful top student taking an exam. Answer every
+numbered question below on your own.
+
+- Work each one out step by step in "working" first, from the SOURCE
+  MATERIAL when it is given and from careful reasoning otherwise; only then
+  give the answer.
+- "n": the question's number.
+- "answer_option": for multiple choice, the 0-based index of the option you
+  choose (else -1).
+- "answer_bool": for true/false, your answer (false for other types).
+- "answer_text": for identification / short answer, your answer in a few
+  words (else "").
+- Regular expressions use the course's formal notation: | for union,
+  juxtaposition for concatenation, * and + for repetition, ε for the empty
+  string.
+
+Produce JSON matching the schema with one answer per question."""
+
+AUDIT_SOLVE_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "answers": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+                "type": "object",
+                "properties": {
+                    "n": {"type": "integer"},
+                    "working": {"type": "string"},
+                    "answer_option": {"type": "integer"},
+                    "answer_bool": {"type": "boolean"},
+                    "answer_text": {"type": "string"},
+                },
+                "required": ["n", "working", "answer_option", "answer_bool", "answer_text"],
+            },
+        }
+    },
+    "required": ["answers"],
+}
+
+
+# ── Re-explaining a question whose key was corrected by running the code ──
+
+REEXPLAIN_PROMPT = """A quiz question's original explanation reached the wrong
+answer. The program below was compiled and run; ACTUAL OUTPUT is what it
+really prints — it is ground truth and is not up for debate.
+
+Write the explanation a student reads after answering: trace the program
+step by step (variable values, pointer targets, loop iterations, each
+character printed) so that the trace arrives exactly at ACTUAL OUTPUT. Point
+out the step a student is most likely to get wrong. 3-10 short lines, no
+hesitation or self-correction.
+
+Produce JSON matching the schema."""
+
+REEXPLAIN_SCHEMA = {
+    "type": "object",
+    "properties": {"explanation": {"type": "string"}},
+    "required": ["explanation"],
+}
 
 
 # ── Teacher: Steven A. Starphase ──────────────────────────────────────────

@@ -7,6 +7,7 @@ artifact + citations → defer support-scoring on the cpu queue.
 """
 
 import logging
+import math
 import re
 from datetime import UTC, datetime
 
@@ -34,7 +35,7 @@ from procrastinate.exceptions import JobAborted
 from sqlalchemy import delete, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from manabi_ai import prompts
+from manabi_ai import prompts, quizplan
 from manabi_ai.app import app
 from manabi_ai.config import get_settings
 from manabi_ai.context import (
@@ -744,9 +745,41 @@ def fold_code_into_prompt(item: dict) -> None:
     prompt = item.get("prompt") or ""
     if "```" in prompt:  # already inline — nothing to do
         return
-    lang = "c" if item.get("qtype") in ("output", "coding") else ""
-    fence = code if code.startswith("```") else f"```{lang}\n{code}\n```"
+    # Tag every fence with its real language — an untagged mcq snippet could
+    # not be run, and C++ fenced as ```c would not compile.
+    fence = code if code.startswith("```") else f"```{code_lang(code)}\n{code}\n```"
     item["prompt"] = f"{prompt.rstrip()}\n\n{fence}"
+
+
+_CPP_HINT = re.compile(
+    r"#include\s*<(?:iostream|string|vector|iomanip|sstream|memory)>|\bstd::|\bcout\b"
+    r"|\bcin\b|\bclass\s+\w+|\bvirtual\b|\bpublic\s*:|\bprivate\s*:|\bnamespace\b|::"
+)
+_PY_HINT = re.compile(r"^\s*(?:def |print\(|for \w+ in |import )", re.M)
+
+
+def code_lang(code: str) -> str:
+    """The fence tag for a snippet: cpp, c, python — or "" when unsure."""
+    if _CPP_HINT.search(code):
+        return "cpp"
+    if re.search(r"#include|printf\s*\(|\bint\s+main\s*\(|;\s*$", code, re.M):
+        return "c"
+    if _PY_HINT.search(code):
+        return "python"
+    return ""
+
+
+def finalize_question(item: dict) -> dict:
+    """Shape a raw generated question for storage: fold its code into the
+    prompt, and fall back to the working when the clean explanation is empty.
+    Mutates and returns `item`."""
+    fold_code_into_prompt(item)
+    explanation = (item.get("explanation") or "").strip()
+    if not explanation:
+        item["explanation"] = (item.get("working") or "").strip()
+    topic = (item.get("topic") or "").strip()
+    item["topic"] = topic[:120] or None
+    return item
 
 
 def _question_answer(item: dict) -> dict | None:
@@ -812,6 +845,265 @@ def _question_answer(item: dict) -> dict | None:
     return None
 
 
+_TARGETS_PER_CALL = 6  # questions written per call against a plan
+_OVERSAMPLE = 1.3  # targets planned per question owed (validation/dedup/audit eat some)
+_AUDIT_PER_CALL = 6
+
+
+def _targets_lines(targets: list[dict], qtypes: list[str]) -> str:
+    return "\n".join(
+        f"{i}. [{qt}] {(t.get('topic') or '').strip()} — {(t.get('skill') or '').strip()}"
+        for i, (t, qt) in enumerate(zip(targets, qtypes, strict=True), start=1)
+    )
+
+
+async def _write_planned(
+    db: AsyncSession,
+    job: Job,
+    preview,
+    *,
+    base_prompt: str,
+    source_text: str,
+    index_map: dict,
+    types: list[str],
+    mix: dict[str, float],
+    need: int,
+    instructions: str | None,
+    exercise: bool,
+    scope: set[int],
+    label: str,
+    avoid: list[str] | None = None,
+) -> tuple[list[ResolvedItem], int]:
+    """Plan `need`×oversample distinct targets from one context, give each a
+    type, then write one question per target. Falls back to an unplanned ask
+    when the plan comes back empty."""
+    n_targets = max(need + 1, math.ceil(need * _OVERSAMPLE))
+    avoid_block = (
+        "\n\nDo NOT duplicate or trivially rephrase any of these existing questions:\n"
+        + "\n".join(f"- {p[:120]}" for p in avoid[-30:])
+        if avoid
+        else ""
+    )
+    await _progress(db, job, job.progress_pct or 10, f"Planning questions — {label}")
+    focus = (
+        f"\nThe student asked for this focus — plan only targets within it:\n{instructions}\n"
+        if instructions
+        else ""
+    )
+    # The mix decides how many targets must be code: without saying so, a
+    # planner on a pointers lecture marked most targets theory and the
+    # requested output questions spilled into mcq.
+    code_share = sum(w for t, w in mix.items() if t in quizplan.CODE_ONLY_TYPES) / max(
+        1e-9, sum(mix.values())
+    )
+    code_need = math.ceil(n_targets * code_share)
+    if code_need:
+        focus += (
+            f"\nAt least {code_need} of the {n_targets} targets MUST be code_based: a skill "
+            "best tested by showing a short program and asking exactly what it prints.\n"
+        )
+    targets: list[dict] = []
+    try:
+        plan = await generate_structured(
+            prompts.QUIZ_PLAN_PROMPT.replace("{count}", str(n_targets)).replace("{focus}", focus)
+            + avoid_block,
+            source_text,
+            prompts.QUIZ_PLAN_SCHEMA,
+            preview,
+            response_headroom=3072,
+        )
+        targets = [
+            t for t in plan.get("targets", []) if (t.get("topic") or "").strip()
+        ][:n_targets]
+    except GenerationError:
+        log.warning("quiz plan failed for %s — writing unplanned", label)
+    if not targets:
+        targets = [{"topic": "", "skill": "", "code_based": True}] * n_targets
+        planned = False
+    else:
+        planned = True
+    qtypes = quizplan.assign_types([bool(t.get("code_based")) for t in targets], mix)
+
+    kept_all: list[ResolvedItem] = []
+    dropped = 0
+    for start in range(0, len(targets), _TARGETS_PER_CALL):
+        chunk_t = targets[start : start + _TARGETS_PER_CALL]
+        chunk_q = qtypes[start : start + _TARGETS_PER_CALL]
+        call_types = [t for t in types if t in set(chunk_q)] or types
+        system = base_prompt.replace("{count}", str(len(chunk_t))).replace(
+            "{types}", ", ".join(call_types)
+        )
+        if planned:
+            system += prompts.TARGETS_BLOCK.replace("{targets}", _targets_lines(chunk_t, chunk_q))
+        system += avoid_block
+        await _progress(
+            db,
+            job,
+            job.progress_pct or 10,
+            f"Writing questions {start + 1}-{start + len(chunk_t)} of {len(targets)} — {label}",
+        )
+        try:
+            result = await generate_structured(
+                system,
+                source_text,
+                prompts.quiz_schema_for(call_types, exercise=exercise),
+                preview,
+                response_headroom=_GEN_RESPONSE_HEADROOM,
+            )
+        except GenerationError as exc:
+            # One bad batch must not sink a 50-question exam; the top-up
+            # pass refills the shortfall.
+            log.warning("quiz batch failed (%s): %s", label, exc)
+            continue
+        raw = result.get("questions", [])
+        for i, q in enumerate(raw):
+            finalize_question(q)
+            if not q.get("topic") and planned and i < len(chunk_t):
+                q["topic"] = (chunk_t[i].get("topic") or "")[:120] or None
+        kept, d = resolve_items(raw, index_map, scope, require_sources=not exercise)
+        dropped += d
+        kept_all.extend(kept)
+    return kept_all, dropped
+
+
+def _audit_block(items: list[ResolvedItem]) -> str:
+    lines = []
+    for n, r in enumerate(items, start=1):
+        q = r.item
+        label = {"mcq": "multiple choice", "tf": "true/false"}.get(q["qtype"], "short answer")
+        lines.append(f"QUESTION {n} ({label}):\n{q.get('prompt', '').strip()}")
+        if q["qtype"] == "mcq":
+            for i, opt in enumerate(q.get("options") or []):
+                lines.append(f"  [{i}] {opt}")
+    return "\n\n".join(lines)
+
+
+def _solved_display(qtype: str, solved: dict, options: list | None) -> str:
+    if qtype == "mcq":
+        i = solved.get("answer_option")
+        opts = options or []
+        return f"option {i}: {opts[i]}" if isinstance(i, int) and 0 <= i < len(opts) else "?"
+    if qtype == "tf":
+        return "true" if solved.get("answer_bool") else "false"
+    return solved.get("answer_text") or ""
+
+
+def _apply_solve(item: dict, solved: dict) -> bool:
+    """Move a question's key to the blind solver's answer. False when the
+    solve cannot be expressed as a key for this question."""
+    qtype = item["qtype"]
+    if qtype == "mcq":
+        i = solved.get("answer_option")
+        if isinstance(i, int) and 0 <= i < len(item.get("options") or []):
+            item["correct_option"] = i
+            return True
+        return False
+    if qtype == "tf":
+        item["correct_bool"] = bool(solved.get("answer_bool"))
+        return True
+    text = (solved.get("answer_text") or "").strip()
+    if text:
+        item["correct_text"] = text
+        return True
+    return False
+
+
+async def _audit_candidates(
+    db: AsyncSession,
+    job: Job,
+    preview,
+    candidates: list[tuple[int, ResolvedItem]],
+    source_by_unit: dict[int, str],
+) -> tuple[list[tuple[int, ResolvedItem]], dict]:
+    """Solve every objective, non-executable question blind and compare with
+    its key. A disagreement goes to an adjudicator that sees both answers; the
+    key is kept, moved to the solver's answer, or the question is dropped.
+
+    Code-output questions are skipped — the app server runs their code, which
+    beats any model. Returns the surviving candidates and audit counts."""
+    stats = {"audited": 0, "agreed": 0, "upheld": 0, "corrected": 0, "dropped": 0}
+    todo: dict[int, list[ResolvedItem]] = {}
+    for ui, r in candidates:
+        q = r.item
+        if q["qtype"] in quizplan.AUDITABLE_TYPES and not quizplan.executable_check_applies(
+            q["qtype"], q.get("prompt") or ""
+        ):
+            todo.setdefault(ui, []).append(r)
+    total = sum(len(v) for v in todo.values())
+    done = 0
+    dropped_ids: set[int] = set()
+    for ui, items in todo.items():
+        source = source_by_unit.get(ui) or _NO_SOURCES_TEXT
+        for start in range(0, len(items), _AUDIT_PER_CALL):
+            batch = items[start : start + _AUDIT_PER_CALL]
+            await _progress(
+                db, job, 82, f"Checking answers {done + 1}-{done + len(batch)} of {total}"
+            )
+            done += len(batch)
+            try:
+                solved = await generate_structured(
+                    prompts.AUDIT_SOLVE_PROMPT,
+                    source + "\n\n" + _audit_block(batch),
+                    prompts.AUDIT_SOLVE_SCHEMA,
+                    preview,
+                    response_headroom=4096,
+                )
+            except GenerationError as exc:
+                log.warning("quiz audit batch failed: %s", exc)
+                continue
+            by_n = {a.get("n"): a for a in solved.get("answers", []) if isinstance(a, dict)}
+            for n, r in enumerate(batch, start=1):
+                a = by_n.get(n)
+                if a is None:
+                    continue  # unsolved — keep, unaudited
+                stats["audited"] += 1
+                answer = _question_answer(r.item) or {}
+                if quizplan.answers_agree(r.item["qtype"], answer, a):
+                    stats["agreed"] += 1
+                    r.item["_audit"] = "agreed"
+                    continue
+                verdict = await _adjudicate(r.item, answer, a, source)
+                if verdict is None:
+                    continue  # adjudication failed — keep the key as written
+                if verdict.get("stored_answer_correct"):
+                    stats["upheld"] += 1
+                    r.item["_audit"] = "upheld"
+                elif verdict.get("user_answer_correct") and _apply_solve(r.item, a):
+                    stats["corrected"] += 1
+                    r.item["_audit"] = "corrected"
+                    why = (verdict.get("verdict") or "").strip()
+                    work = (a.get("working") or "").strip()
+                    r.item["explanation"] = "\n\n".join(x for x in (why, work) if x)
+                else:
+                    stats["dropped"] += 1
+                    dropped_ids.add(id(r))
+    kept = [(ui, r) for ui, r in candidates if id(r) not in dropped_ids]
+    return kept, stats
+
+
+async def _adjudicate(item: dict, answer: dict, solved: dict, source: str) -> dict | None:
+    options = item.get("options") if item["qtype"] == "mcq" else None
+    block = (
+        f"QUESTION ({item['qtype']}):\n{item.get('prompt', '')}\n\n"
+        + (f"OPTIONS: {options}\n\n" if options else "")
+        + f"STORED ANSWER: {_answer_display(answer, options)}\n"
+        + f"STORED EXPLANATION: {item.get('working') or item.get('explanation') or '(none)'}\n\n"
+        + f"STUDENT'S ANSWER: {_solved_display(item['qtype'], solved, options)}\n"
+        + f"STUDENT'S WORKING: {solved.get('working') or '(none)'}\n\n"
+        + source
+    )
+    try:
+        return await generate_structured(
+            prompts.VERIFY_QUESTION_PROMPT,
+            block,
+            prompts.VERIFY_QUESTION_SCHEMA,
+            response_headroom=2048,
+        )
+    except GenerationError as exc:
+        log.warning("adjudication failed: %s", exc)
+        return None
+
+
 @app.task(name="manabi_ai.tasks.generate_quiz", queue="gpu", retry=1, pass_context=True)
 async def generate_quiz(
     context,
@@ -824,25 +1116,41 @@ async def generate_quiz(
     instructions: str | None = None,
     mode: str = "sources",
     chunk_ids: list[int] | None = None,
+    type_mix: dict | None = None,
+    exam: bool = False,
+    audit: bool = True,
+    role: str | None = None,
 ) -> None:
+    """Plan → write → check → select.
+
+    The material is split into units (module × context batch); each unit owes
+    a share of `count` proportional to its size. Per unit, a planning call
+    lists distinct targets, each target gets a type from `type_mix`, and one
+    question is written per target. Objective questions are then solved blind
+    and disputed keys adjudicated (`audit`); code questions are checked by
+    running their code afterwards on the cpu queue. An `exam` is the same quiz
+    spanning modules, kept in module order."""
     settings = get_settings()
     exercise = mode == "exercise"
     async with session_factory()() as db:
         job = await _start(db, job_id)
         preview = _preview_writer(db, job)
         try:
-            scope = {int(m) for m in module_ids}
+            order = [int(m) for m in module_ids]
+            scope = set(order)
             notes = await _load_notes_text(db, list(scope), note_ids=note_ids)
-            modules = (await db.execute(select(Module).where(Module.id.in_(scope)))).scalars().all()
-            per_module = min(
-                _MAX_QUESTIONS_PER_CALL,
-                max(2, round(count * 1.4 / len(scope))),  # oversample for dedup
-            )
+            found = {
+                m.id: m
+                for m in (
+                    await db.execute(select(Module).where(Module.id.in_(scope)))
+                ).scalars()
+            }
+            modules = [found[m] for m in order if m in found]
+            mix = quizplan.normalize_mix(types, type_mix)
 
             # Focused retrieval (server-side, topic-steered): partition the
             # hydrated chunks per module; a module the topic doesn't touch
-            # simply contributes nothing. Hydration doesn't module-filter —
-            # re-filter as defense in depth.
+            # simply contributes nothing.
             focus_by_module: dict[int, list[ScopedChunk]] | None = None
             if chunk_ids:
                 hydrated = [
@@ -856,19 +1164,14 @@ async def generate_quiz(
             base_prompt = prompts.EXERCISE_QUIZ_PROMPT if exercise else prompts.QUIZ_PROMPT
             if instructions:
                 base_prompt += prompts.FOCUS_BLOCK.replace("{instructions}", instructions)
-
             # Exercise stems legitimately look alike ("Trace this code…" with
-            # different snippets) — a loose 0.8 similarity dedup eats real
-            # variants, so practice quizzes dedup at 0.9.
+            # different snippets) — practice quizzes dedup at 0.9.
             dedup_threshold = 0.9 if exercise else 0.8
-            # Enum narrowed to the requested types: the grammar then makes a
-            # wrong type impossible rather than merely discouraged.
-            quiz_schema = prompts.quiz_schema_for(types, exercise=exercise)
-            candidates: list[ResolvedItem] = []
+
+            # 1. The material as units (module, batch of chunks).
+            units: list[tuple[Module, list[ScopedChunk]]] = []
             used_chunks: list[ScopedChunk] = []
-            last_ctx = None  # last built context — reused by the top-up pass
-            dropped = 0
-            for mi, module in enumerate(modules):
+            for module in modules:
                 await _abort_if_requested(db, job, context)
                 if focus_by_module is not None:
                     chunks = focus_by_module.get(module.id, [])
@@ -877,119 +1180,150 @@ async def generate_quiz(
                 if not chunks:
                     continue
                 used_chunks.extend(chunks)
-                for bi, batch in enumerate(batch_chunks(chunks)):
-                    await _progress(
-                        db,
-                        job,
-                        10 + int(60 * mi / len(modules)),
-                        f"Writing questions — {module.title}",
-                    )
-                    ctx = build_context(batch, notes if mi == 0 and bi == 0 else None)
-                    last_ctx = ctx
-                    result = await generate_structured(
-                        base_prompt.replace("{count}", str(per_module)).replace(
-                            "{types}", ", ".join(types)
-                        ),
-                        ctx.source_text,
-                        quiz_schema,
-                        preview,
-                        response_headroom=_GEN_RESPONSE_HEADROOM,
-                    )
-                    for q in result.get("questions", []):
-                        fold_code_into_prompt(q)
-                    kept, d = resolve_items(
-                        result.get("questions", []),
-                        ctx.index_map,
-                        scope,
-                        require_sources=not exercise,
-                    )
-                    dropped += d
-                    candidates.extend(kept)
+                for batch in batch_chunks(chunks):
+                    units.append((module, batch))
 
-            if exercise and not used_chunks:
-                # Topic-only practice quiz: no material in scope at all.
-                await _progress(db, job, 40, "Writing practice questions")
-                result = await generate_structured(
-                    base_prompt.replace(
-                        "{count}", str(min(count + 2, _MAX_QUESTIONS_PER_CALL))
-                    ).replace("{types}", ", ".join(types)),
-                    _NO_SOURCES_TEXT,
-                    prompts.quiz_schema_for(types, exercise=True),
-                    preview,
-                    response_headroom=_GEN_RESPONSE_HEADROOM,
-                )
-                for q in result.get("questions", []):
-                    fold_code_into_prompt(q)
-                kept, d = resolve_items(
-                    result.get("questions", []), {}, scope, require_sources=False
-                )
-                dropped += d
-                candidates.extend(kept)
-
-            await _progress(db, job, 78, "Deduplicating and balancing")
-            candidates = [
-                c
-                for c in candidates
-                if c.item.get("qtype") in types and _question_answer(c.item) is not None
-            ]
-            candidates = dedup_questions(candidates, dedup_threshold)
-            # round-robin balance across types up to count
-            by_type: dict[str, list[ResolvedItem]] = {t: [] for t in types}
-            for c in candidates:
-                by_type[c.item["qtype"]].append(c)
-            final: list[ResolvedItem] = []
-            while len(final) < count and any(by_type.values()):
-                for t in types:
-                    if by_type[t] and len(final) < count:
-                        final.append(by_type[t].pop(0))
-
-            # Top up: the answer/type filters and dedup routinely eat into the
-            # oversample — re-ask for the shortfall instead of shipping a
-            # short quiz. Persistent (up to 4 rounds) but breaks as soon as a
-            # round contributes nothing: the material has run dry and further
-            # asks would only produce more duplicates. (Sourced mode needs a
-            # context to cite; exercise mode can top up even topic-only.)
-            topup_rounds = 0
-            while len(final) < count and topup_rounds < 4 and (exercise or last_ctx is not None):
+            # 2. Each unit owes questions in proportion to its material.
+            owed = quizplan.allocate(
+                count,
+                {i: sum(len(c.text) for c in b) for i, (_m, b) in enumerate(units)},
+                minimum=1,
+            )
+            candidates: list[tuple[int, ResolvedItem]] = []
+            source_by_unit: dict[int, str] = {}
+            index_by_unit: dict[int, dict] = {}
+            dropped = 0
+            for ui, (module, batch) in enumerate(units):
                 await _abort_if_requested(db, job, context)
-                topup_rounds += 1
-                shortfall = count - len(final)
-                await _progress(db, job, 80, f"Topping up questions ({len(final)}/{count})")
-                avoid = (
-                    "\n".join(f"- {(c.item.get('prompt') or '')[:120]}" for c in final[-30:])
-                    or "(none)"
-                )
-                result = await generate_structured(
-                    base_prompt.replace(
-                        "{count}", str(min(shortfall + 2, _MAX_QUESTIONS_PER_CALL))
-                    ).replace("{types}", ", ".join(types))
-                    + "\n\nDo NOT duplicate or trivially rephrase any of these "
-                    "existing questions:\n" + avoid,
-                    last_ctx.source_text if last_ctx else _NO_SOURCES_TEXT,
-                    quiz_schema,
+                if owed.get(ui, 0) <= 0:
+                    continue
+                ctx = build_context(batch, notes if ui == 0 else None)
+                source_by_unit[ui] = ctx.source_text
+                index_by_unit[ui] = ctx.index_map
+                job.progress_pct = 10 + int(65 * ui / max(1, len(units)))
+                kept, d = await _write_planned(
+                    db,
+                    job,
                     preview,
-                    response_headroom=_GEN_RESPONSE_HEADROOM,
-                )
-                for q in result.get("questions", []):
-                    fold_code_into_prompt(q)
-                kept, d = resolve_items(
-                    result.get("questions", []),
-                    last_ctx.index_map if last_ctx else {},
-                    scope,
-                    require_sources=not exercise,
+                    base_prompt=base_prompt,
+                    source_text=ctx.source_text,
+                    index_map=ctx.index_map,
+                    types=types,
+                    mix=mix,
+                    need=owed[ui],
+                    instructions=instructions,
+                    exercise=exercise,
+                    scope=scope,
+                    label=module.title,
                 )
                 dropped += d
-                fresh = [
-                    c
-                    for c in kept
+                candidates.extend((ui, k) for k in kept)
+
+            if exercise and not units:
+                # Topic-only practice quiz: no material in scope at all.
+                ui = 0
+                owed = {0: count}
+                source_by_unit[0] = _NO_SOURCES_TEXT
+                index_by_unit[0] = {}
+                job.progress_pct = 15
+                kept, d = await _write_planned(
+                    db,
+                    job,
+                    preview,
+                    base_prompt=base_prompt,
+                    source_text=_NO_SOURCES_TEXT,
+                    index_map={},
+                    types=types,
+                    mix=mix,
+                    need=count,
+                    instructions=instructions,
+                    exercise=True,
+                    scope=scope,
+                    label="practice",
+                )
+                dropped += d
+                candidates.extend((0, k) for k in kept)
+
+            def usable(pairs: list[tuple[int, ResolvedItem]]) -> list[tuple[int, ResolvedItem]]:
+                return [
+                    (u, c)
+                    for u, c in pairs
                     if c.item.get("qtype") in types and _question_answer(c.item) is not None
                 ]
-                # dedup against what we already kept: survivors after the
-                # existing block are the genuinely new ones
-                fresh = dedup_questions(final + fresh, dedup_threshold)[len(final) :]
+
+            def dedup(
+                pairs: list[tuple[int, ResolvedItem]], against: list[ResolvedItem] | None = None
+            ) -> list[tuple[int, ResolvedItem]]:
+                base = list(against or [])
+                survivors = dedup_questions(base + [c for _u, c in pairs], dedup_threshold)
+                alive = {id(c) for c in survivors[len(base) :]}
+                return [(u, c) for u, c in pairs if id(c) in alive]
+
+            # 3. Validate, dedup, audit.
+            await _progress(db, job, 78, "Deduplicating")
+            candidates = dedup(usable(candidates))
+            audit_stats: dict = {}
+            if audit and candidates:
+                candidates, audit_stats = await _audit_candidates(
+                    db, job, preview, candidates, source_by_unit
+                )
+
+            # 4. Select: each unit gives what it owes; shortfalls are filled
+            # from other units' spares, in unit order.
+            Pair = tuple[int, ResolvedItem]
+
+            def select_final(pairs: list[Pair]) -> list[Pair]:
+                taken: list[Pair] = []
+                spare: list[Pair] = []
+                per_unit: dict[int, int] = {}
+                for u, c in pairs:
+                    if per_unit.get(u, 0) < owed.get(u, 0):
+                        taken.append((u, c))
+                        per_unit[u] = per_unit.get(u, 0) + 1
+                    else:
+                        spare.append((u, c))
+                taken.extend(spare[: max(0, count - len(taken))])
+                return taken[:count]
+
+            final = select_final(candidates)
+
+            # 5. Top up: re-plan for the shortfall in the units that fell
+            # furthest behind, until full or a round adds nothing.
+            topup_rounds = 0
+            while len(final) < count and topup_rounds < 3 and source_by_unit:
+                await _abort_if_requested(db, job, context)
+                topup_rounds += 1
+                have: dict[int, int] = {}
+                for u, _c in final:
+                    have[u] = have.get(u, 0) + 1
+                ui = max(source_by_unit, key=lambda u: owed.get(u, 0) - have.get(u, 0))
+                shortfall = count - len(final)
+                await _progress(db, job, 88, f"Topping up questions ({len(final)}/{count})")
+                kept, d = await _write_planned(
+                    db,
+                    job,
+                    preview,
+                    base_prompt=base_prompt,
+                    source_text=source_by_unit[ui],
+                    index_map=index_by_unit[ui],
+                    types=types,
+                    mix=mix,
+                    need=shortfall,
+                    instructions=instructions,
+                    exercise=exercise,
+                    scope=scope,
+                    label=units[ui][0].title if units else "practice",
+                    avoid=[c.item.get("prompt") or "" for _u, c in final],
+                )
+                dropped += d
+                fresh = dedup(usable([(ui, k) for k in kept]), [c for _u, c in final])
+                if audit and fresh:
+                    fresh, more = await _audit_candidates(db, job, preview, fresh, source_by_unit)
+                    for k, v in more.items():
+                        audit_stats[k] = audit_stats.get(k, 0) + v
                 if not fresh:
                     log.info(
-                        "quiz top-up ran dry after %d rounds (%d/%d questions)",
+                        "quiz top-up ran dry after %d rounds (%d/%d)",
                         topup_rounds,
                         len(final),
                         count,
@@ -997,25 +1331,37 @@ async def generate_quiz(
                     break
                 final.extend(fresh[: count - len(final)])
 
-            anchor_id = int(module_ids[0])
-            anchor = next(m for m in modules if m.id == anchor_id)
-            title = f"Quiz — {len(final)} questions"
+            # Exams read in module order (stable within a module).
+            final.sort(key=lambda pair: pair[0])
+
+            anchor_id = order[0]
+            anchor = found[anchor_id]
+            kind = "Mock exam" if exam or role == "final" else "Quiz"
+            if role == "checkpoint":
+                kind = "Topic test"
+            elif role and role.startswith("section:"):
+                kind = "Section check"
+            title = f"{kind} — {len(final)} questions"
             if len(scope) > 1:
                 title += f" · {len(scope)} modules"
             if instructions:
                 title += " · " + instructions[:40] + ("…" if len(instructions) > 40 else "")
-            elif exercise:
+            elif exercise and not exam:
                 title += " · practice"
             artifact = Artifact(
                 module_id=anchor_id,
                 artifact_type=ArtifactType.quiz,
-                scope_module_ids=sorted(scope),
+                scope_module_ids=order,
                 title=title,
-                content={"types": types},
+                content={
+                    "types": types,
+                    "type_mix": mix,
+                    "exam": exam,
+                    "audit": audit_stats,
+                    "role": role,
+                },
                 model_name=settings.generation_model,
                 prompt_version=prompts.PROMPT_VERSION,
-                # Fingerprint over the chunks actually offered to the model
-                # (scoped/focused set), so staleness compares like with like.
                 source_chunk_ids=[c.id for c in used_chunks],
                 source_fingerprint=source_fingerprint(used_chunks),
                 module_version_at_gen=anchor.content_version,
@@ -1027,9 +1373,14 @@ async def generate_quiz(
             )
             db.add(artifact)
             await db.flush()
-            elements_by_chunk = await _elements_for_chunks(db, [c for r in final for c in r.chunks])
-            for ord_, resolved in enumerate(final):
+            elements_by_chunk = await _elements_for_chunks(
+                db, [c for _u, r in final for c in r.chunks]
+            )
+            for ord_, (ui, resolved) in enumerate(final):
                 item = resolved.item
+                answer = _question_answer(item)
+                if item.get("_audit"):
+                    answer = {**answer, "audit": item["_audit"]}
                 db.add(
                     QuizQuestion(
                         artifact_id=artifact.id,
@@ -1037,8 +1388,10 @@ async def generate_quiz(
                         qtype=item["qtype"],
                         prompt=item["prompt"],
                         options=item.get("options") if item["qtype"] == "mcq" else None,
-                        answer=_question_answer(item),
+                        answer=answer,
                         explanation=item.get("explanation"),
+                        topic=item.get("topic"),
+                        module_id=units[ui][0].id if units else None,
                     )
                 )
                 excerpt = f"{item['prompt']} {item.get('explanation', '')}"
@@ -1229,7 +1582,7 @@ async def regenerate_question(job_id: int, question_id: int) -> None:
                     response_headroom=2048,  # single question + working
                 )
                 for q in result.get("questions", []):
-                    fold_code_into_prompt(q)
+                    finalize_question(q)
                 kept, _d = resolve_items(
                     result.get("questions", []),
                     ctx.index_map if ctx else {},
@@ -1280,6 +1633,7 @@ async def regenerate_question(job_id: int, question_id: int) -> None:
             question.options = new_item.get("options") if question.qtype == "mcq" else None
             question.answer = _question_answer(new_item)
             question.explanation = new_item.get("explanation")
+            question.topic = new_item.get("topic") or question.topic
             await db.execute(
                 delete(Citation).where(
                     Citation.artifact_id == artifact.id,
@@ -2002,7 +2356,7 @@ async def sample_question(
             scope = set(module_ids)
             picked: dict | None = None
             for item in result.get("questions", []):
-                fold_code_into_prompt(item)
+                finalize_question(item)
                 kept, _ = resolve_items([item], ctx.index_map, scope, require_sources=True)
                 if kept and _question_answer(kept[0].item) is not None:
                     picked = kept[0].item
@@ -2033,3 +2387,53 @@ async def sample_question(
             log.exception("sample question failed")
             await db.rollback()
             await _fail(db, job, exc)
+
+
+@app.task(name="manabi_ai.tasks.reexplain_questions", queue="gpu", retry=1)
+async def reexplain_questions(artifact_id: int, question_ids: list[int]) -> None:
+    """Rewrite the walkthrough of questions whose key the compiler corrected.
+
+    The verifier fixes the key by running the code, but the model's original
+    explanation still argues for the wrong answer — the worst thing a student
+    can study from. Given the program and its ACTUAL output (ground truth), a
+    fresh trace is written that arrives at that output. No job row: this is
+    housekeeping queued by the cpu verifier, and the key is already right."""
+    async with session_factory()() as db:
+        questions = (
+            (
+                await db.execute(
+                    select(QuizQuestion).where(
+                        QuizQuestion.artifact_id == artifact_id,
+                        QuizQuestion.id.in_([int(q) for q in question_ids]),
+                    )
+                )
+            )
+            .scalars()
+            .all()
+        )
+        for q in questions:
+            answer = q.answer or {}
+            if answer.get("verified") != "executed":
+                continue
+            if q.qtype == "mcq":
+                i = answer.get("correct_option")
+                opts = q.options or []
+                actual = str(opts[i]) if isinstance(i, int) and 0 <= i < len(opts) else ""
+            else:
+                actual = answer.get("text") or ""
+            if not actual:
+                continue
+            try:
+                result = await generate_structured(
+                    prompts.REEXPLAIN_PROMPT,
+                    f"QUESTION:\n{q.prompt}\n\nACTUAL OUTPUT:\n```\n{actual}\n```",
+                    prompts.REEXPLAIN_SCHEMA,
+                    response_headroom=1536,
+                )
+            except GenerationError as exc:
+                log.warning("re-explanation failed for question %s: %s", q.id, exc)
+                continue
+            text = (result.get("explanation") or "").strip()
+            if text:
+                q.explanation = f"{text}\n\n(Answer verified by compiling and running the code.)"
+        await db.commit()

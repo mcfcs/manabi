@@ -119,3 +119,140 @@ def test_printed_anything_requires_visible_output():
     assert printed_anything(execute(Snippet("python", "x = 1"))) is False
     assert printed_anything(execute(Snippet("python", "print('')"))) is False
     assert printed_anything(execute(Snippet("python", "print('hi')"))) is True
+
+
+# ── Real failures from the 2026-10-07 audit of 81 stored questions ──────────
+
+from manabi_server.processing.code_exec import (  # noqa: E402
+    check_code_question,
+    converted_prompt,
+    cpp_compiler,
+    guess_lang,
+    match_options,
+)
+
+needs_cc = pytest.mark.skipif(c_compiler() is None, reason="no C compiler")
+needs_cxx = pytest.mark.skipif(cpp_compiler() is None, reason="no C++ compiler")
+
+
+@needs_cc
+def test_unsequenced_modification_is_undefined_not_an_answer():
+    # q28: `y = --x + (x--)` was keyed "x=18, y=39, z=39"; gcc prints 38.
+    r = execute(Snippet("c", 'int x = 20, y; y = --x + (x--); printf("%d %d\\n", x, y);'))
+    assert r.ok is False
+    assert r.undefined and "undefined" in r.undefined
+
+
+@needs_cc
+def test_reading_past_an_array_is_undefined():
+    # q101: the loop reads arr[3]; -O0 and -O2 builds disagree (or gcc warns).
+    src = "int arr[] = {1, 2, 3};\nint *p = arr;\nwhile (*p < 5) {\n printf(\"%d\", *p);\n p++;\n}"
+    r = execute(Snippet("c", src))
+    assert r.ok is False
+
+
+@needs_cc
+def test_a_single_printed_space_is_output():
+    # q83: `ptrs[1][3]` of "Hello World" from +2 is ' ' — it was marked
+    # "prints nothing" because whitespace was normalized away first.
+    from manabi_server.processing.code_exec import printed_anything
+
+    src = 'char *text = "Hello World";\nchar *p = text + 2;\nprintf("%c\\n", p[3]);'
+    r = execute(Snippet("c", src))
+    assert r.ok, r.error
+    assert printed_anything(r)
+
+
+def test_cpp_in_a_c_fence_is_compiled_as_cpp():
+    s = extract_snippet('```c\n#include <iostream>\nint main(){ std::cout << 1; }\n```')
+    assert s is not None and s.lang == "cpp"
+    assert guess_lang('printf("%d", 3);') == "c"
+    assert guess_lang("cout << x;") == "cpp"
+    assert guess_lang("just prose") is None
+
+
+@needs_cxx
+def test_cpp_constructor_destructor_order_runs():
+    src = """#include <iostream>
+using namespace std;
+class A { public: A(){ cout << "A"; } ~A(){ cout << "~A"; } };
+class B : public A { public: B(){ cout << "B"; } ~B(){ cout << "~B"; } };
+int main() { B b; return 0; }"""
+    r = execute(Snippet("cpp", src))
+    assert r.ok, r.error
+    assert normalize_output(r.stdout) == "AB~B~A"
+
+
+@needs_cxx
+def test_output_that_depends_on_copy_elision_has_no_single_answer():
+    # q108: keyed "Init Copy End\nEnd"; g++ elides the copy and prints "Init End".
+    src = """#include <iostream>
+using namespace std;
+class Item {
+public:
+    Item() { cout << "Init "; }
+    Item(const Item& i) { cout << "Copy "; }
+    ~Item() { cout << "End" << endl; }
+};
+Item makeItem() { Item temp; return temp; }
+int main() { Item x = makeItem(); return 0; }"""
+    r = execute(Snippet("cpp", src))
+    assert r.ok is False and r.undefined and "copy elision" in r.undefined
+
+
+def test_sizeof_long_is_not_checked_on_a_machine_where_it_differs():
+    r = execute(Snippet("c", 'printf("%zu", sizeof(long));'))
+    assert r.ok is False and "platform" in (r.error or "")
+
+
+def test_options_match_quoted_and_whitespace_variants():
+    assert match_options(["`10 20`", "20 10", "10\n20"], "10 20\n") == [0]
+    assert match_options(["1 2 3", "3 2 1"], "1\n2\n3\n") == [0]
+    assert match_options(["'A'", "B"], "A") == [0]
+
+
+MCQ_PROMPT = "What does this print?\n\n```c\nint a[] = {5, 10, 8};\nint *p = a;\nprintf(\"%d\\n\", *(p + 1));\n```"
+
+
+@needs_cc
+def test_a_wrong_mcq_key_is_corrected_to_the_printed_option():
+    chk = check_code_question("mcq", MCQ_PROMPT, ["5", "10", "8", "6"], {"kind": "mcq", "correct_option": 0})
+    assert chk.status == "corrected"
+    assert chk.answer == {"kind": "mcq", "correct_option": 1, "verified": "executed"}
+
+
+@needs_cc
+def test_a_right_mcq_key_is_marked_verified():
+    chk = check_code_question("mcq", MCQ_PROMPT, ["5", "10", "8", "6"], {"kind": "mcq", "correct_option": 1})
+    assert chk.status == "agree" and chk.answer["verified"] == "executed"
+
+
+@needs_cc
+def test_an_mcq_with_no_matching_option_becomes_an_output_question():
+    chk = check_code_question("mcq", MCQ_PROMPT, ["5", "11", "8", "6"], {"kind": "mcq", "correct_option": 1})
+    assert chk.status == "converted" and chk.qtype == "output"
+    assert chk.answer == {"kind": "output", "text": "10", "verified": "executed"}
+
+
+@needs_cc
+def test_a_wrong_short_output_key_is_corrected():
+    chk = check_code_question("short", MCQ_PROMPT, None, {"kind": "short", "text": "5"})
+    assert chk.status == "corrected" and chk.answer["text"] == "10"
+
+
+@needs_cc
+def test_a_value_question_that_does_not_ask_for_printed_output_is_left_alone():
+    p = "What value does x hold at the end?\n\n```c\nint x = 3;\nx += 2;\nprintf(\"%d\", x * 0);\n```"
+    assert check_code_question("short", p, None, {"kind": "short", "text": "5"}).status == "skip"
+
+
+@needs_cc
+def test_an_undefined_output_question_is_rejected():
+    p = "What is printed?\n\n```c\nint i = 1;\nprintf(\"%d\\n\", i++ + i++);\n```"
+    assert check_code_question("output", p, None, {"kind": "output", "text": "3"}).status == "rejected"
+
+
+def test_converted_prompt_rewords_which_of_the_following():
+    assert converted_prompt("Which of the following is the output of this code?").startswith(
+        "What is the exact output"
+    )

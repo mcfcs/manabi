@@ -7,6 +7,7 @@ the module's current AI-eligible chunk set.
 """
 
 import asyncio
+import re
 from datetime import UTC, datetime
 from typing import Annotated, Literal
 
@@ -59,15 +60,22 @@ from manabi_server.jobs.queue import (
     defer_task,
 )
 from manabi_server.processing.code_exec import (
-    execute,
-    extract_snippet,
-    normalize_output,
+    check_code_question,
+    converted_prompt,
     outputs_match,
-    printed_anything,
 )
 from manabi_server.security import get_default_user, require_csrf
 
 router = APIRouter(prefix="/api", tags=["artifacts"])
+
+
+MAX_QUIZ_QUESTIONS = 80  # a long mock exam; per-call batching keeps it within budget
+
+
+def is_retired(answer: dict | None) -> bool:
+    """A question whose code has no defined output (undefined behaviour, copy
+    elision) is kept for the record but never shown — it has no right answer."""
+    return str((answer or {}).get("verified", "")).startswith("rejected")
 
 
 # ── Shared shapes ─────────────────────────────────────────────────────────
@@ -1472,6 +1480,17 @@ class QuizConfigIn(BaseModel):
     note_ids: list[int] | None = None
     instructions: str | None = None
     mode: Literal["sources", "exercise"] = "sources"
+    # Relative weight per type, e.g. {"output": 4, "mcq": 3, "tf": 1}; None =
+    # an even spread over `types`.
+    type_mix: dict[str, float] | None = None
+    exam: bool = False  # a mock exam: spans modules, kept in module order
+    audit: bool = True  # blind-solve objective questions and adjudicate keys
+    # Where the quiz sits in the course study path: "section:<i>" (a check on
+    # one summary section), "checkpoint" (the module's topic test) or "final".
+    role: str | None = None
+    # Scope a single-module quiz to one section of the module's latest summary
+    # (the chunks that section cites).
+    section: int | None = None
 
 
 class QuestionOut(BaseModel):
@@ -1483,6 +1502,8 @@ class QuestionOut(BaseModel):
     answer: dict
     explanation: str | None
     citations: list[CitationOut]
+    topic: str | None = None
+    module_id: int | None = None
 
 
 class QuizOut(BaseModel):
@@ -1494,6 +1515,8 @@ class QuizOut(BaseModel):
     generation_mode: str | None
     instructions: str | None
     questions: list[QuestionOut]
+    exam: bool = False
+    audit: dict | None = None  # blind-audit counts from generation
 
 
 class QuizListItem(BaseModel):
@@ -1504,6 +1527,11 @@ class QuizListItem(BaseModel):
     attempt_count: int
     best_score: float | None
     generation_mode: str | None = None
+    module_id: int | None = None
+    scope_module_ids: list[int] = []
+    exam: bool = False
+    last_score: float | None = None
+    role: str | None = None
 
 
 class AttemptIn(BaseModel):
@@ -1583,6 +1611,11 @@ async def create_quiz(
         await db.execute(select(Module).where(Module.id == config.module_ids[0]))
     ).scalar_one()
     types = [t for t in config.types if t in QUIZ_TYPES] or ["mcq"]
+    type_mix = (
+        {t: float(w) for t, w in config.type_mix.items() if t in types and w and w > 0}
+        if config.type_mix
+        else None
+    ) or None
     if (config.document_ids is not None or config.note_ids is not None) and len(
         config.module_ids
     ) != 1:
@@ -1594,14 +1627,21 @@ async def create_quiz(
         await _validate_scope(
             db, config.module_ids[0], config.document_ids, config.note_ids
         )
+    role = config.role if config.role and _ROLE_RE.match(config.role) else None
     instructions = (config.instructions or "").strip()[:2000] or None
-    chunk_ids = (
-        await _focus_chunk_ids(
-            db, config.module_ids, instructions, config.document_ids
+    if config.section is not None:
+        if len(config.module_ids) != 1:
+            raise HTTPException(status_code=422, detail="A section quiz needs exactly one module")
+        chunk_ids = await _section_chunk_ids(db, config.module_ids[0], config.section)
+        if not chunk_ids:
+            raise HTTPException(status_code=409, detail="That summary section cites no material")
+        role = role or f"section:{config.section}"
+    else:
+        chunk_ids = (
+            await _focus_chunk_ids(db, config.module_ids, instructions, config.document_ids)
+            if instructions
+            else None
         )
-        if instructions
-        else None
-    )
     job = await _enqueue_generation(
         db,
         user,
@@ -1610,14 +1650,91 @@ async def create_quiz(
         GENERATE_QUIZ_TASK,
         module_ids=config.module_ids,
         types=types,
-        count=max(3, min(30, config.count)),
+        count=max(3, min(MAX_QUIZ_QUESTIONS, config.count)),
         document_ids=config.document_ids,
         note_ids=config.note_ids,
         instructions=instructions,
         mode=config.mode,
         chunk_ids=chunk_ids,
+        type_mix=type_mix,
+        exam=config.exam,
+        audit=config.audit,
+        role=role,
     )
     return JobRef(job_id=job.id)
+
+
+_ROLE_RE = re.compile(r"^(?:checkpoint|final|section:\d{1,3})$")
+
+
+def _summary_sections(artifact: Artifact | None) -> list[dict]:
+    if artifact is None or not isinstance(artifact.content, dict):
+        return []
+    return [s for s in artifact.content.get("sections", []) if isinstance(s, dict)]
+
+
+def _section_chunks(section: dict) -> list[int]:
+    seen: list[int] = []
+    for block in section.get("blocks", []) or []:
+        for cid in block.get("chunk_ids", []) or []:
+            if isinstance(cid, int) and cid not in seen:
+                seen.append(cid)
+    return seen
+
+
+async def _section_chunk_ids(db: AsyncSession, module_id: int, index: int) -> list[int]:
+    sections = _summary_sections(await _latest_artifact(db, module_id, ArtifactType.summary))
+    if not 0 <= index < len(sections):
+        raise HTTPException(status_code=404, detail="No such summary section")
+    return _section_chunks(sections[index])
+
+
+async def _quiz_list_items(db: AsyncSession, artifacts: list[Artifact]) -> list[QuizListItem]:
+    out = []
+    for a in artifacts:
+        questions = [
+            row
+            for row in (
+                await db.execute(
+                    select(QuizQuestion.id, QuizQuestion.answer).where(
+                        QuizQuestion.artifact_id == a.id
+                    )
+                )
+            ).all()
+            if not is_retired(row.answer)
+        ]
+        attempts = (
+            (
+                await db.execute(
+                    select(QuizAttempt)
+                    .where(
+                        QuizAttempt.artifact_id == a.id,
+                        QuizAttempt.finished_at.is_not(None),
+                    )
+                    .order_by(QuizAttempt.finished_at.desc())
+                )
+            )
+            .scalars()
+            .all()
+        )
+        content = a.content if isinstance(a.content, dict) else {}
+        out.append(
+            QuizListItem(
+                artifact_id=a.id,
+                title=a.title,
+                generated_at=a.created_at,
+                question_count=len(questions),
+                attempt_count=len(attempts),
+                best_score=max((x.score for x in attempts if x.score is not None), default=None),
+                generation_mode=a.generation_mode,
+                module_id=a.module_id,
+                scope_module_ids=[int(m) for m in (a.scope_module_ids or [])],
+                exam=bool(content.get("exam")),
+                last_score=attempts[0].score if attempts else None,
+                role=content.get("role"),
+            )
+        )
+    return out
 
 
 @router.get("/modules/{module_id}/quizzes")
@@ -1638,37 +1755,158 @@ async def list_quizzes(
         .scalars()
         .all()
     )
-    out = []
-    for a in artifacts:
-        questions = (
+    return await _quiz_list_items(db, list(artifacts))
+
+
+@router.get("/courses/{course_id}/quizzes")
+async def list_course_quizzes(
+    course_id: int,
+    user: User = Depends(get_default_user),
+    db: AsyncSession = Depends(get_db),
+) -> list[QuizListItem]:
+    """Every quiz in a course — the exam-prep page lists mock exams and the
+    per-module quizzes side by side."""
+    artifacts = (
+        (
             await db.execute(
-                select(QuizQuestion.id).where(QuizQuestion.artifact_id == a.id)
+                select(Artifact)
+                .join(Module, Module.id == Artifact.module_id)
+                .join(Course, Course.id == Module.course_id)
+                .where(
+                    Course.id == course_id,
+                    Course.user_id == user.id,
+                    Artifact.artifact_type == ArtifactType.quiz,
+                )
+                .order_by(Artifact.id.desc())
             )
-        ).all()
-        attempts = (
-            (
-                await db.execute(
-                    select(QuizAttempt).where(
-                        QuizAttempt.artifact_id == a.id,
-                        QuizAttempt.finished_at.is_not(None),
-                    )
+        )
+        .scalars()
+        .all()
+    )
+    return await _quiz_list_items(db, list(artifacts))
+
+
+class StudySectionOut(BaseModel):
+    index: int
+    title: str
+    block_count: int
+    has_sources: bool
+    quiz_id: int | None = None
+    best_score: float | None = None
+
+
+class StudyModuleOut(BaseModel):
+    id: int
+    title: str
+    has_material: bool
+    chunk_count: int
+    summary_id: int | None = None
+    sections: list[StudySectionOut] = []
+    lecture_id: int | None = None
+    lecture_segments: int = 0
+    checkpoint: QuizListItem | None = None
+
+
+class StudyOut(BaseModel):
+    course_id: int
+    modules: list[StudyModuleOut]
+    finals: list[QuizListItem]
+
+
+@router.get("/courses/{course_id}/study")
+async def course_study(
+    course_id: int,
+    user: User = Depends(get_default_user),
+    db: AsyncSession = Depends(get_db),
+) -> StudyOut:
+    """The course as a study path: per module, its summary sections (each
+    with its own quick check), Steven's lecture, the module checkpoint quiz;
+    then the final mock exams. Everything is derived from existing artifacts —
+    a quiz's place in the path is its `content.role`."""
+    from manabi_core.models import Chunk, Document
+
+    course = (
+        await db.execute(select(Course).where(Course.id == course_id, Course.user_id == user.id))
+    ).scalar_one_or_none()
+    if course is None:
+        raise HTTPException(status_code=404, detail="Course not found")
+    modules = (
+        (
+            await db.execute(
+                select(Module)
+                .where(Module.course_id == course.id, Module.is_general.is_(False))
+                .order_by(Module.position, Module.id)
+            )
+        )
+        .scalars()
+        .all()
+    )
+    quizzes = (
+        (
+            await db.execute(
+                select(Artifact)
+                .join(Module, Module.id == Artifact.module_id)
+                .where(Module.course_id == course.id, Artifact.artifact_type == ArtifactType.quiz)
+                .order_by(Artifact.id.desc())
+            )
+        )
+        .scalars()
+        .all()
+    )
+    items = {i.artifact_id: i for i in await _quiz_list_items(db, list(quizzes))}
+    finals = [items[a.id] for a in quizzes if (a.content or {}).get("role") == "final"]
+
+    out: list[StudyModuleOut] = []
+    for m in modules:
+        chunk_count = (
+            await db.execute(
+                select(func.count(Chunk.id))
+                .join(Document, Document.id == Chunk.document_id)
+                .where(
+                    Document.module_id == m.id,
+                    Document.deleted_at.is_(None),
+                    Document.ai_included.is_(True),
                 )
             )
-            .scalars()
-            .all()
-        )
+        ).scalar_one()
+        summary = await _latest_artifact(db, m.id, ArtifactType.summary)
+        lecture = await _latest_artifact(db, m.id, ArtifactType.lecture)
+        mine = [a for a in quizzes if a.module_id == m.id]
+        # newest quiz per role wins
+        by_role: dict[str, Artifact] = {}
+        for a in mine:
+            r = (a.content or {}).get("role")
+            if r and r not in by_role:
+                by_role[r] = a
+        sections = []
+        for i, sec in enumerate(_summary_sections(summary)):
+            q = by_role.get(f"section:{i}")
+            sections.append(
+                StudySectionOut(
+                    index=i,
+                    title=str(sec.get("title") or f"Section {i + 1}"),
+                    block_count=len(sec.get("blocks", []) or []),
+                    has_sources=bool(_section_chunks(sec)),
+                    quiz_id=q.id if q else None,
+                    best_score=items[q.id].best_score if q else None,
+                )
+            )
+        cp = by_role.get("checkpoint")
+        segs = (lecture.content or {}).get("segments", []) if lecture else []
         out.append(
-            QuizListItem(
-                artifact_id=a.id,
-                title=a.title,
-                generated_at=a.created_at,
-                question_count=len(questions),
-                attempt_count=len(attempts),
-                best_score=max((x.score for x in attempts if x.score is not None), default=None),
-                generation_mode=a.generation_mode,
+            StudyModuleOut(
+                id=m.id,
+                title=m.title,
+                has_material=chunk_count > 0,
+                chunk_count=chunk_count,
+                summary_id=summary.id if summary else None,
+                sections=sections,
+                lecture_id=lecture.id if lecture else None,
+                lecture_segments=len(segs) if isinstance(segs, list) else 0,
+                checkpoint=items[cp.id] if cp else None,
             )
         )
-    return out
+    return StudyOut(course_id=course.id, modules=out, finals=finals)
 
 
 async def _get_owned_quiz(
@@ -1708,7 +1946,9 @@ async def get_quiz(
         .scalars()
         .all()
     )
+    questions = [q for q in questions if not is_retired(q.answer)]
     citations = await _citations_by_ref(db, artifact.id)
+    content = artifact.content if isinstance(artifact.content, dict) else {}
     return QuizOut(
         artifact_id=artifact.id,
         title=artifact.title,
@@ -1727,9 +1967,13 @@ async def get_quiz(
                 answer=q.answer,
                 explanation=q.explanation,
                 citations=citations.get(f"q:{q.ord}", []),
+                topic=q.topic,
+                module_id=q.module_id,
             )
             for q in questions
         ],
+        exam=bool(content.get("exam")),
+        audit=content.get("audit") or None,
     )
 
 
@@ -1887,17 +2131,23 @@ async def read_quiz_sample(
     text = _sample_answer_text(answer, q.get("options"))
     verified: str | None = None
 
-    if q.get("qtype") == "output":
-        snippet = await asyncio.to_thread(extract_snippet, q.get("prompt") or "")
-        if snippet is not None:
-            result = await asyncio.to_thread(execute, snippet)
-            if result.ok and printed_anything(result):
-                real = normalize_output(result.stdout)
-                verified = "executed"
-                if not outputs_match(text, result.stdout):
-                    text = real  # the run wins over the model, as everywhere else
-            else:
-                verified = f"unverifiable:{result.error or 'program prints nothing'}"
+    chk = await asyncio.to_thread(
+        check_code_question, q.get("qtype") or "", q.get("prompt") or "", q.get("options"), answer
+    )
+    if chk.status in ("agree", "corrected", "converted"):
+        verified = "executed"
+        if chk.status != "agree":  # the run wins over the model, as everywhere else
+            opts = chk.options if chk.qtype else q.get("options")
+            text = _sample_answer_text(chk.answer or {}, opts)
+            if chk.qtype:
+                q = {
+                    **q,
+                    "qtype": chk.qtype,
+                    "options": None,
+                    "prompt": converted_prompt(q.get("prompt") or ""),
+                }
+    elif chk.status in ("unverifiable", "rejected"):
+        verified = f"{chk.status}:{chk.reason}"
     return SampleOut(
         qtype=q.get("qtype") or "",
         prompt=q.get("prompt") or "",
@@ -1915,30 +2165,55 @@ class ChallengeIn(BaseModel):
 async def _settle_output_dispute(
     db: AsyncSession, user: User, question: QuizQuestion, user_answer: str
 ) -> int | None:
-    """Decide an `output` dispute by executing the code. Returns the id of an
-    already-finished job carrying the verdict, or None when the code cannot be
-    run and a model has to adjudicate after all.
+    """Decide a dispute about a code question by executing the code. Returns
+    the id of an already-finished job carrying the verdict, or None when the
+    code cannot settle it and a model has to adjudicate after all.
 
+    Covers `output` questions and `mcq`/`short` stems asking what code prints.
     Writes a finished Job rather than answering inline so the client's existing
     poll-a-job flow is unchanged.
     """
-    if question.qtype != "output":
+    if question.qtype not in ("output", "mcq", "short"):
         return None
-    snippet = await asyncio.to_thread(extract_snippet, question.prompt or "")
-    if snippet is None:
-        return None
-    result = await asyncio.to_thread(execute, snippet)
-    if not result.ok or not printed_anything(result):
-        return None  # nothing printed -> the code cannot settle this one
+    answer = dict(question.answer or {})
+    chk = await asyncio.to_thread(
+        check_code_question, question.qtype, question.prompt or "", question.options, answer
+    )
+    if chk.status not in ("agree", "corrected", "converted", "rejected"):
+        return None  # nothing ran (or nothing printed) -> the code cannot settle it
 
-    real = normalize_output(result.stdout)
-    stored = (question.answer or {}).get("text", "")
-    stored_ok = outputs_match(stored, result.stdout)
-    user_ok = outputs_match(user_answer, result.stdout)
+    real = chk.real or ""
+    stored_ok = chk.status == "agree"
+    if question.qtype == "mcq" and chk.status != "converted":
+        right = (chk.answer or {}).get("correct_option")
+        opts = question.options or []
+        user_ok = isinstance(right, int) and right < len(opts) and (
+            user_answer.strip() == str(opts[right]).strip()
+            or outputs_match(user_answer, real)
+        )
+        right_text = str(opts[right]) if isinstance(right, int) and right < len(opts) else real
+    else:
+        user_ok = outputs_match(user_answer, real) if real else False
+        right_text = real
 
-    if not stored_ok:
+    if chk.status == "rejected":
+        verdict_text = (
+            f"Compiled and ran it: {chk.reason}. This question has no single right "
+            "answer, so it has been retired from the quiz."
+        )
+        question.answer = {**answer, "verified": f"rejected:{chk.reason}"}
+        stored_ok = False
+        user_ok = False
+        right_text = ""
+    else:
+        verdict_text = (
+            f"Ran the code: it prints {real!r}. "
+            + ("The stored answer was right. " if stored_ok else "The stored answer was wrong. ")
+            + ("Your answer matches." if user_ok else "Your answer does not match.")
+        )
+    if chk.status in ("corrected", "converted"):
         # The key was wrong. Correct it here so the same question cannot mark
-        # the next person wrong too, and keep the pair as a training label.
+        # the next attempt wrong too, and keep the pair as a training label.
         artifact = (
             await db.execute(select(Artifact).where(Artifact.id == question.artifact_id))
         ).scalar_one_or_none()
@@ -1947,26 +2222,24 @@ async def _settle_output_dispute(
                 kind=AIFeedbackKind.answer_disputed,
                 artifact_id=question.artifact_id,
                 question_id=question.id,
-                rejected={"answer": question.answer, "explanation": question.explanation},
-                preferred={
-                    "answer": {"kind": "output", "text": real},
-                    "verified_by": f"executed ({snippet.lang}) on challenge",
-                },
+                rejected={"qtype": question.qtype, "answer": answer,
+                          "explanation": question.explanation},
+                preferred={"qtype": chk.qtype or question.qtype, "answer": chk.answer,
+                           "verified_by": "executed on challenge"},
                 model_name=artifact.model_name if artifact else None,
                 prompt_version=artifact.prompt_version if artifact else None,
             )
         )
-        question.answer = {"kind": "output", "text": real}
+        if chk.status == "converted":
+            question.qtype = "output"
+            question.options = None
+            question.prompt = converted_prompt(question.prompt or "")
+        question.answer = chk.answer
         question.explanation = (
             f"{(question.explanation or '').rstrip()}\n\n"
-            "Corrected by compiling and running the code."
+            f"Corrected by compiling and running the code: it prints `{real}`."
         ).strip()
 
-    verdict_text = (
-        f"Ran the code: it prints {real!r}. "
-        + ("The stored answer was right. " if stored_ok else "The stored answer was wrong. ")
-        + ("Your answer matches." if user_ok else "Your answer does not match.")
-    )
     job = Job(
         user_id=user.id,
         job_type="verify_question",
@@ -1982,7 +2255,7 @@ async def _settle_output_dispute(
                 "stored_answer_correct": stored_ok,
                 "user_answer_correct": user_ok,
                 "explanation": verdict_text,
-                "corrected_answer": "" if stored_ok else real,
+                "corrected_answer": "" if stored_ok else right_text,
             }
         },
     )
