@@ -256,3 +256,44 @@ def test_converted_prompt_rewords_which_of_the_following():
     assert converted_prompt("Which of the following is the output of this code?").startswith(
         "What is the exact output"
     )
+
+
+
+# ── A complete program that does not compile (live OOP topic test, 2026-10-07) ─
+
+BROKEN = """What is the exact output of the program below?
+
+```cpp
+#include <iostream>
+using namespace std;
+class A {
+public:
+    void f() { cout << 1; }
+};
+void A::f() { cout << 2; }
+int main() { A a; a.f(); return 0; }
+```"""
+
+
+@needs_cxx
+def test_a_complete_program_that_does_not_compile_is_retired():
+    chk = check_code_question("output", BROKEN, None, {"kind": "output", "text": "1"})
+    assert chk.status == "rejected" and "does not compile" in chk.reason
+
+
+@needs_cxx
+def test_a_compile_error_key_is_right_when_the_program_does_not_compile():
+    chk = check_code_question(
+        "mcq", BROKEN.replace("exact output", "output"),
+        ["1", "2", "12", "Compilation error"],
+        {"kind": "mcq", "correct_option": 0},
+    )
+    assert chk.status == "corrected" and chk.answer["correct_option"] == 3
+
+
+@needs_cxx
+def test_a_cpp_program_that_forgot_iostream_still_runs():
+    src = "int main() { cout << 7 << endl; return 0; }"
+    r = execute(Snippet("cpp", src))
+    assert r.ok, r.error
+    assert normalize_output(r.stdout) == "7"

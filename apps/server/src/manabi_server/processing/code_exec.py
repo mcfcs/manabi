@@ -126,9 +126,14 @@ def _wrap(lang: str, source: str) -> str:
     """Questions sometimes quote a fragment, not a program — no includes, no
     main. Wrap it so it compiles, unless it already brings its own main."""
     if re.search(r"\bmain\s*\(", source):
+        # A complete program that forgot its includes is still a program.
         if lang == "c" and not re.search(r"#include\s*<stdio\.h>", source):
-            # A complete program that forgot its include is still a program.
             return "#include <stdio.h>\n#include <stdlib.h>\n#include <string.h>\n" + source
+        if lang == "cpp" and not re.search(r"#include\s*<iostream>", source):
+            pre = "#include <iostream>\n#include <string>\n#include <cstring>\n"
+            if not re.search(r"using\s+namespace\s+std", source):
+                pre += "using namespace std;\n"
+            return pre + source
         return source
     body = source.strip()
     if not body.endswith(";") and not body.endswith("}"):
@@ -299,6 +304,9 @@ _ASKS_OUTPUT = re.compile(
     r"\b(?:outputs?|print(?:s|ed)?|display(?:s|ed)?|cout|printf|console|screen|shown)\b",
     re.I,
 )
+_COMPILE_ERR = re.compile(
+    r"compil\w*\s+error|does not compile|won't compile|fails to compile", re.I
+)
 _WHICH_OF = re.compile(
     r"\bwhich of the following (?:is|would be|will be|best describes|correctly shows)"
     r"(?: the)?(?: exact| correct)?\s+",
@@ -378,6 +386,27 @@ def check_code_question(
     result = execute(snippet)
     if result.undefined:
         return CodeCheck("rejected", result.undefined)
+    if not result.ok and (result.error or "").startswith("compile failed") and re.search(
+        r"\bmain\s*\(", snippet.source
+    ):
+        # A complete program that does not compile cannot be traced. Unless the
+        # key itself says so ("compilation error"), the question is broken.
+        first = next(
+            (ln.strip() for ln in (result.error or "").splitlines() if "error" in ln),
+            "the program does not compile",
+        )
+        if qtype in ("output", "short") and _COMPILE_ERR.search(answer.get("text", "")):
+            return CodeCheck("agree", answer={**answer, "verified": "executed"})
+        if qtype == "mcq":
+            hits = [i for i, o in enumerate(options or []) if _COMPILE_ERR.search(str(o))]
+            if len(hits) == 1:
+                status = "agree" if answer.get("correct_option") == hits[0] else "corrected"
+                return CodeCheck(
+                    status,
+                    "the program does not compile",
+                    answer={"kind": "mcq", "correct_option": hits[0], "verified": "executed"},
+                )
+        return CodeCheck("rejected", f"the program does not compile: {first[-160:]}")
     if not result.ok:
         return CodeCheck("unverifiable", result.error or "could not run")
     if not printed_anything(result):
