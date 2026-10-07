@@ -324,9 +324,16 @@ function QuizPlayer({
 
   return (
     <div className="quiz-player">
+      <div className="quiz-progress" aria-hidden>
+        <span style={{ transform: `scaleX(${(index + 1) / quiz.questions.length})` }} />
+      </div>
       <div className="review-meta">
-        <span className="mono">
-          {index + 1} / {quiz.questions.length}
+        <span className="quiz-meta-left">
+          <span className="mono">
+            {index + 1} / {quiz.questions.length}
+          </span>
+          <span className="quiz-type-label">{TYPE_LABELS[question.qtype] ?? question.qtype}</span>
+          {question.topic && <span className="quiz-topic-label">{question.topic}</span>}
         </span>
         <span className="quiz-meta-actions">
           <button
@@ -403,7 +410,8 @@ function QuizPlayer({
                 disabled={checked}
                 onClick={() => check(String(i))}
               >
-                {opt}
+                <span className="quiz-option-key">{String.fromCharCode(65 + i)}</span>
+                <Markdown className="quiz-option-md">{opt}</Markdown>
               </button>
             );
           })}

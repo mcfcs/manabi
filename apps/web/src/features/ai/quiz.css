@@ -236,6 +236,10 @@
 }
 
 .quiz-option {
+  display: grid;
+  grid-template-columns: 26px minmax(0, 1fr);
+  gap: var(--s-3);
+  align-items: start;
   padding: var(--s-3) var(--s-4);
   border: 1px solid var(--rule);
   border-radius: var(--radius);
@@ -244,6 +248,83 @@
   font: inherit;
   color: var(--ink);
   min-height: var(--touch-target);
+  cursor: pointer;
+  transition: border-color var(--t-fast) var(--ease), background var(--t-fast) var(--ease);
+}
+.quiz-options.tf .quiz-option {
+  grid-template-columns: minmax(0, 1fr);
+  text-align: center;
+}
+.quiz-option-key {
+  display: inline-grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  border: 1px solid var(--rule);
+  background: var(--paper);
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--ink-soft);
+}
+.quiz-option.correct .quiz-option-key {
+  background: var(--accent-blue);
+  border-color: var(--accent-blue);
+  color: var(--surface-raised);
+}
+.quiz-option.incorrect .quiz-option-key {
+  background: var(--accent-red);
+  border-color: var(--accent-red);
+  color: var(--surface-raised);
+}
+.quiz-option-md {
+  min-width: 0;
+  padding-top: 1px;
+  overflow-wrap: anywhere;
+}
+.quiz-option-md p {
+  margin: 0;
+}
+.quiz-option-md pre {
+  margin: 0;
+  white-space: pre-wrap;
+}
+
+/* Thin progress line above the player's meta row */
+.quiz-progress {
+  height: 2px;
+  margin-bottom: var(--s-3);
+  background: var(--rule);
+  border-radius: 1px;
+  overflow: hidden;
+}
+.quiz-progress span {
+  display: block;
+  height: 100%;
+  background: var(--accent-red);
+  transform-origin: left center;
+  transition: transform var(--t-med) var(--ease);
+}
+@media (prefers-reduced-motion: reduce) {
+  .quiz-progress span {
+    transition: none;
+  }
+}
+.quiz-meta-left {
+  display: inline-flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: var(--s-1) var(--s-3);
+  min-width: 0;
+}
+.quiz-type-label {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--accent-red);
+}
+.quiz-topic-label {
+  font-size: 13px;
+  color: var(--ink-faint);
 }
 .quiz-option:hover:not(:disabled) {
   border-color: var(--accent-blue);
