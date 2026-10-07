@@ -1715,6 +1715,14 @@ async def regenerate_question(job_id: int, question_id: int) -> None:
                         and _question_answer(cand.item) is not None
                         and not any(_near_duplicate(stem, p, 0.8) for p in existing)
                     ):
+                        # Solved blind like any generated question: a
+                        # replacement used to reach the student unchecked.
+                        source = ctx.source_text if ctx else _NO_SOURCES_TEXT
+                        survived, _stats = await _audit_candidates(
+                            db, job, preview, [(0, cand)], {0: source}
+                        )
+                        if not survived:
+                            continue
                         new_item, resolved_chunks = cand.item, cand.chunks
                         break
                 if new_item is not None:
@@ -1753,7 +1761,9 @@ async def regenerate_question(job_id: int, question_id: int) -> None:
             shuffle_mcq(new_item)
             question.prompt = new_item["prompt"]
             question.options = new_item.get("options") if question.qtype == "mcq" else None
-            question.answer = _question_answer(new_item)
+            question.answer = _question_answer(new_item) or {}
+            if new_item.get("_audit"):
+                question.answer = {**question.answer, "audit": new_item["_audit"]}
             question.explanation = new_item.get("explanation")
             question.topic = new_item.get("topic") or question.topic
             await db.execute(
