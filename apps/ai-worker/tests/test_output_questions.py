@@ -82,3 +82,11 @@ def test_a_true_false_item_must_be_a_statement():
     assert _question_answer(
         {"qtype": "tf", "prompt": "True or false: p + 3 is 12 bytes past p?", "correct_bool": True}
     ) is not None
+
+
+def test_a_true_false_item_is_not_a_disguised_mcq():
+    stem = (
+        "Which of the following statements correctly describes stack growth?\n\n"
+        "A) It grows up.\nB) It grows down.\nC) Neither.\nD) Both."
+    )
+    assert _question_answer({"qtype": "tf", "prompt": stem, "correct_bool": False}) is None

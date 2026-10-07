@@ -796,6 +796,12 @@ def _question_answer(item: dict) -> dict | None:
         stem = _FENCED_CODE.sub(" ", item.get("prompt") or "").strip()
         if stem.endswith("?") and not re.search(r"true|false", stem, re.I):
             return None
+        # ...and not a multiple-choice question in disguise (a real one listed
+        # options A) to D) inside a tf stem).
+        if re.search(r"which of the following", stem, re.I) or len(
+            re.findall(r"^\s*[A-D][).]\s", stem, re.M)
+        ) >= 2:
+            return None
         if isinstance(item.get("correct_bool"), bool):
             return {"kind": "tf", "value": item["correct_bool"]}
         return None

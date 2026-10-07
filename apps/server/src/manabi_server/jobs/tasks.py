@@ -93,6 +93,67 @@ def score_support(artifact_id: int) -> None:
         db.commit()
 
 
+MAX_REPLACEMENTS = 2  # per question: a topic that keeps producing UB gets dropped
+
+
+def _queue_replacements(db, artifact, question_ids: list[int]) -> int:
+    """Ask the GPU for an in-place replacement of each retired question, so a
+    quiz does not quietly come up short. The replacement is regenerated with
+    the same type and scope and verified again; after MAX_REPLACEMENTS the
+    question stays retired (the material keeps producing undefined code)."""
+    from manabi_core.models import (
+        AIFeedback,
+        AIFeedbackKind,
+        Course,
+        Job,
+        JobQueue,
+        Module,
+    )
+    from sqlalchemy import func, select
+
+    from manabi_server.jobs.queue import REGENERATE_QUESTION_TASK, defer_task_sync
+
+    if not question_ids:
+        return 0
+    user_id = db.execute(
+        select(Course.user_id)
+        .join(Module, Module.course_id == Course.id)
+        .where(Module.id == artifact.module_id)
+    ).scalar_one_or_none()
+    if user_id is None:
+        return 0
+    queued = 0
+    for qid in question_ids:
+        done = db.execute(
+            select(func.count(AIFeedback.id)).where(
+                AIFeedback.question_id == qid,
+                AIFeedback.kind == AIFeedbackKind.question_regenerated,
+            )
+        ).scalar_one()
+        if done >= MAX_REPLACEMENTS:
+            continue
+        job = Job(
+            user_id=user_id,
+            job_type="regenerate_question",
+            queue=JobQueue.gpu,
+            payload={"question_id": qid, "reason": "retired by the code check"},
+            module_id=artifact.module_id,
+        )
+        db.add(job)
+        db.flush()
+        try:
+            job.procrastinate_job_id = defer_task_sync(
+                REGENERATE_QUESTION_TASK, "gpu", job_id=job.id, question_id=qid
+            )
+        except Exception:  # noqa: BLE001 — a missing replacement is not fatal
+            log.exception("could not queue a replacement for question %s", qid)
+            db.rollback()
+            continue
+        db.commit()
+        queued += 1
+    return queued
+
+
 @app.task(name=VERIFY_OUTPUTS_TASK, queue="cpu", retry=1)
 def verify_quiz_outputs(artifact_id: int) -> int:
     """Run the code in every code question and correct the keys that lie.
@@ -120,6 +181,7 @@ def verify_quiz_outputs(artifact_id: int) -> int:
 
     counts = {"agree": 0, "corrected": 0, "converted": 0, "rejected": 0, "unverifiable": 0}
     reexplain: list[int] = []
+    retired: list[int] = []
     with db_session() as db:
         artifact = db.execute(
             select(Artifact).where(Artifact.id == artifact_id)
@@ -166,6 +228,7 @@ def verify_quiz_outputs(artifact_id: int) -> int:
                         prompt_version=artifact.prompt_version,
                     )
                 )
+                retired.append(q.id)
                 continue
             # corrected / converted: the run wins over the model.
             db.add(
@@ -201,6 +264,9 @@ def verify_quiz_outputs(artifact_id: int) -> int:
             reexplain.append(q.id)
         db.commit()
         log.info("quiz %s code checks: %s", artifact_id, counts)
+        replace = _queue_replacements(db, artifact, retired)
+    if replace:
+        log.info("quiz %s: asked for %d replacement question(s)", artifact_id, replace)
     if reexplain:
         try:
             defer_task_sync(
