@@ -52,9 +52,11 @@ async def synthesize_lecture(context, job_id: int, artifact_id: int) -> None:
                 await db.execute(select(Artifact).where(Artifact.id == artifact_id))
             ).scalar_one()
             segments = (artifact.content or {}).get("segments", [])
+            # .scalars() yields the indexes themselves (ints), not rows — this
+            # used to read `.segment_index` off each and crash on any resume.
             existing = {
-                r.segment_index
-                for r in (
+                int(idx)
+                for idx in (
                     await db.execute(
                         select(LectureAudio.segment_index).where(
                             LectureAudio.artifact_id == artifact_id
