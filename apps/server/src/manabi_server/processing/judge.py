@@ -149,6 +149,31 @@ def judge(language: str, code: str, tests: list[dict], limit_ms: int = 2000) -> 
     return Judgement(verdict, passed, len(results), results=results)
 
 
+_PREDICATE_RUNNER = """
+import sys
+{code}
+for line in sys.stdin.read().split("\\n")[:-1]:
+    print("1" if member(line) else "0")
+"""
+
+
+def predicate_answers(code: str, words: list[str], limit_ms: int = 10_000) -> list[bool] | str:
+    """Run a model-written `def member(w): ...` on every word (one per line,
+    "" for ε) in a sandboxed Python subprocess. The list of answers, or an
+    error message."""
+    program = _PREDICATE_RUNNER.replace("{code}", code)
+    with tempfile.TemporaryDirectory(prefix="manabi-judge-") as tmp:
+        cwd = Path(tmp)
+        argv, _ = _compile("python", program, cwd)
+        status, out, error, _ms = _run_one(argv, "".join(w + "\n" for w in words), cwd, limit_ms)
+    if status != "ok":
+        return f"the membership test fails: {error or status}"
+    lines = out.split("\n")[: len(words)]
+    if len(lines) != len(words) or any(x not in ("0", "1") for x in lines):
+        return "the membership test does not answer for every string"
+    return [x == "1" for x in lines]
+
+
 @dataclass
 class Expected:
     ok: bool

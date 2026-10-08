@@ -41,6 +41,27 @@ def validate(
     tests, problem = formal.build_tests(ref_kind, reference, list(spec.get("alphabet") or []))
     if problem:
         return Validation(False, problem)
+    # The key must describe the statement's language. A generated "equal
+    # numbers of a's and b's" grammar missed 90 balanced strings (aabbba…),
+    # so a student's correct grammar would have been marked wrong. The model
+    # also writes the language as a plain membership test, straight from the
+    # statement; key and test must agree on every string checked.
+    test_code = (spec.get("membership_test") or "").strip()
+    if not test_code:
+        return Validation(False, "no membership test was written")
+    words = ["" if t["s"] == "ε" else t["s"] for t in tests]
+    answers = judge.predicate_answers(test_code, words)
+    if isinstance(answers, str):
+        return Validation(False, answers)
+    for t, says in zip(tests, answers, strict=True):
+        if says != t["accept"]:
+            key_says = "accepts" if t["accept"] else "rejects"
+            test_says = "accepts" if says else "rejects"
+            return Validation(
+                False,
+                f"your reference {key_says} `{t['s']}` but your membership test {test_says} it "
+                "— one of them does not match the statement",
+            )
     # The statement's examples must agree with the key: a generated task said
     # "abab is invalid" while its own grammar (S -> a S b S | ε) accepts it.
     accepts = formal.recognizer(ref_kind, reference)
@@ -56,6 +77,7 @@ def validate(
                 return Validation(
                     False, f"`{s}` is listed as {verb} but your reference {actual} it"
                 )
+
     def norm(s: str) -> str:
         s = s.strip()
         return "ε" if s in formal.EPSILON or s == "" else s

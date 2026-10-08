@@ -66,6 +66,7 @@ THEORY_SCHEMA = {
         "topic": {"type": "string"},
         "statement": {"type": "string"},
         "alphabet": {"type": "array", "items": {"type": "string"}, "minItems": 1},
+        "membership_test": {"type": "string"},
         "reference": {"type": "string"},
         "examples_accepted": {"type": "array", "items": {"type": "string"}},
         "examples_rejected": {"type": "array", "items": {"type": "string"}},
@@ -76,6 +77,7 @@ THEORY_SCHEMA = {
         "topic",
         "statement",
         "alphabet",
+        "membership_test",
         "reference",
         "examples_accepted",
         "examples_rejected",
@@ -142,6 +144,13 @@ Rules — the answer is judged automatically by testing strings:
   notation if useful), e.g. "all strings over {a, b} with an even number of
   a's". It must not contain the answer, and must NOT list example strings —
   put examples in the two fields below instead; each one is checked.
+- "membership_test": a Python function, written straight from the
+  statement and independently of your reference:
+      def member(w):
+          return <True exactly when the string w is in the language>
+  `w` is a str of alphabet characters ("" is the empty string). Keep it
+  simple and obviously right (counting, w.endswith, a small loop). It is run
+  on every short string and must agree with your reference on all of them.
 - "examples_accepted": 3 strings IN the language ("ε" for the empty string).
 - "examples_rejected": 3 strings NOT in the language. Think carefully: every
   example is tested against your reference and a wrong one rejects the task.
@@ -240,6 +249,7 @@ async def generate_problem(
                 problem.spec = {
                     "alphabet": [a.strip() for a in out.get("alphabet") or [] if a.strip()],
                     "hint": out.get("hint") or "",
+                    "membership_test": out.get("membership_test") or "",
                     "examples_accepted": [str(x) for x in out.get("examples_accepted") or []][:5],
                     "examples_rejected": [str(x) for x in out.get("examples_rejected") or []][:5],
                     "reference_kind": "grammar" if problem.kind == "grammar" else "regex",

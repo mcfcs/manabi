@@ -83,7 +83,7 @@ class ProblemOut(ProblemSummary):
 
 def _public_spec(p: PracticeProblem) -> dict:
     spec = dict(p.spec or {})
-    for hidden in ("test_inputs", "sample_inputs", "reference_kind", "revealed"):
+    for hidden in ("test_inputs", "sample_inputs", "reference_kind", "revealed", "membership_test"):
         spec.pop(hidden, None)
     return spec
 
