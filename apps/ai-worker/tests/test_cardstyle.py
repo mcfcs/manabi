@@ -71,3 +71,13 @@ def test_an_unclosed_code_fence_is_closed_not_discarded():
     assert front.endswith("\n```")
     assert cardstyle.problem("code", front, "56") is None
     assert cardstyle.tidy_front("No code here.") == "No code here."
+
+
+def test_slide_labels_are_not_terms():
+    front = "A prompt to review previously learned concepts before the new lesson."
+    assert cardstyle.problem("term", front, "Recall")
+    assert cardstyle.problem("term", "The formal explanation of a concept.", "Definition")
+    assert (
+        cardstyle.problem("term", "Creates a new object from an existing one.", "Copy constructor")
+        is None
+    )

@@ -27,7 +27,9 @@ RULES = {
 - Front: a precise description, clue or definition taken from the sources.
   It must NOT contain the answer word(s) or an obvious form of them.
 - Back: ONLY the exact term or name as the sources write it (1-6 words).
-  No sentence, no explanation, no "It is...".""",
+  No sentence, no explanation, no "It is...".
+- The term is a concept of the course, never a slide label such as
+  "Recall", "Outline", "Definition", "Summary" or "Example".""",
     "definition": """Card style — DEFINITION:
 - Front: one term or concept name exactly as the sources write it (a few
   words, no question sentence).
@@ -55,6 +57,24 @@ RULES = {
   else.""",
 }
 
+# Slide furniture an OOP deck offered as "terms" ("Recall", "Definition").
+_SLIDE_LABELS = {
+    "recall",
+    "definition",
+    "definitions",
+    "outline",
+    "summary",
+    "overview",
+    "introduction",
+    "review",
+    "example",
+    "examples",
+    "objectives",
+    "agenda",
+    "recap",
+    "notes",
+    "questions",
+}
 _FENCE = re.compile(r"```[A-Za-z0-9_+#-]*[ \t]*\n.*?\S.*?```", re.DOTALL)
 _NON_DETERMINISTIC = re.compile(r"<[^>\n]*address[^>\n]*>|garbage|undefined|random", re.I)
 
@@ -104,6 +124,8 @@ def problem(style: str, front: str, back: str) -> str | None:
         nb = _norm(back)
         if nb and f" {nb} " in f" {_norm(front)} ":  # whole words: "C" ≠ "procedural"
             return "front gives the answer away"
+        if nb in _SLIDE_LABELS:
+            return "a slide label is not a term"
         return None
     if style == "definition":
         if len(_words(front)) > DEFINITION_FRONT_MAX_WORDS:
