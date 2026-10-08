@@ -28,7 +28,7 @@ def test_course_in_accepts_optional_canvas_id():
     assert CourseIn(code="A", name="B", canvas_course_id=7).model_dump()["canvas_course_id"] == 7
 
 
-def test_course_out_carries_id_and_derived_url():
+def test_course_out_carries_id_and_derived_url(canvas_configured):
     course = types.SimpleNamespace(
         id=1,
         code="CSCI 70",

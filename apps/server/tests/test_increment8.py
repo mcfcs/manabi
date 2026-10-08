@@ -164,7 +164,7 @@ class TestCanvasImportValidation:
             )
         assert exc.value.status_code == 422
 
-    async def test_rejects_wrong_magic_bytes(self, monkeypatch):
+    async def test_rejects_wrong_magic_bytes(self, monkeypatch, canvas_configured):
         """A file named .pdf whose bytes are not %PDF is refused (same magic
         check as manual uploads)."""
         from manabi_server.api import canvas
