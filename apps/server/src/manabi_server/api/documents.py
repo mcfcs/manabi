@@ -450,7 +450,19 @@ async def retry_processing(
     db: AsyncSession = Depends(get_db),
 ) -> DocumentOut:
     if doc.extract_status not in (ExtractStatus.failed, ExtractStatus.ready):
-        raise HTTPException(status_code=409, detail="Document is still processing")
+        # "pending" with no live job is stranded (its job was lost), not busy —
+        # it must be retryable or it can never leave that state.
+        alive = (
+            await db.execute(
+                select(Job.id).where(
+                    Job.document_id == doc.id,
+                    Job.job_type == "process_document",
+                    Job.status.in_([JobStatus.queued, JobStatus.running]),
+                )
+            )
+        ).first()
+        if alive is not None:
+            raise HTTPException(status_code=409, detail="Document is still processing")
     doc.extract_status = ExtractStatus.pending
     doc.extract_stage = None
     doc.error = None
