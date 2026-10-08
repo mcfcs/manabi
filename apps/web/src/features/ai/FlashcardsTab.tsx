@@ -203,6 +203,15 @@ function CardEditor({
 
 // ── New-deck config ───────────────────────────────────────────
 
+type CardStyle = "term" | "definition" | "short" | "code";
+
+const CARD_STYLES: { id: CardStyle; label: string; hint: string }[] = [
+  { id: "term", label: "Term recall", hint: "Description on the front, just the term on the back" },
+  { id: "definition", label: "Definition", hint: "Term on the front, its definition on the back" },
+  { id: "short", label: "Short answer", hint: "Why/how question, answer in 15 words or fewer" },
+  { id: "code", label: "Code output", hint: "A short program; the back is what it prints, checked by running it" },
+];
+
 function NewDeckConfig({
   moduleId,
   onGenerate,
@@ -216,11 +225,16 @@ function NewDeckConfig({
     note_ids: number[] | null;
     instructions: string | null;
     mode: GenerationMode;
+    styles: CardStyle[] | null;
   }) => void;
   pending: boolean;
   error: string | null;
 }) {
   const [count, setCount] = useState(12);
+  // None picked = the AI chooses a mix suited to the material.
+  const [styles, setStyles] = useState<CardStyle[]>([]);
+  const toggleStyle = (id: CardStyle) =>
+    setStyles((cur) => (cur.includes(id) ? cur.filter((s) => s !== id) : [...cur, id]));
   const [docIds, setDocIds] = useState<number[] | null>(null);
   const [noteIds, setNoteIds] = useState<number[] | null>(null);
   const [instructions, setInstructions] = useState("");
@@ -261,7 +275,7 @@ function NewDeckConfig({
         />
       </div>
       <div className="quiz-config-row">
-        <span className="field-label">Style</span>
+        <span className="field-label">Source</span>
         <div className="mode-toggle">
           <button
             type="button"
@@ -281,6 +295,32 @@ function NewDeckConfig({
           </button>
         </div>
       </div>
+      {mode === "sources" && (
+        <div className="quiz-config-row">
+          <span className="field-label">Card type</span>
+          <div className="card-styles">
+            {CARD_STYLES.map((s) => (
+              <button
+                key={s.id}
+                type="button"
+                className={`card-style${styles.includes(s.id) ? " on" : ""}`}
+                aria-pressed={styles.includes(s.id)}
+                title={s.hint}
+                onClick={() => toggleStyle(s.id)}
+              >
+                {s.label}
+              </button>
+            ))}
+            <span className="gen-hint card-styles-hint">
+              {styles.length === 0
+                ? "None picked: the AI chooses a mix for this material."
+                : CARD_STYLES.filter((s) => styles.includes(s.id))
+                    .map((s) => s.hint)
+                    .join(" · ")}
+            </span>
+          </div>
+        </div>
+      )}
       <div className="quiz-config-row">
         <span className="field-label">Focus</span>
         <textarea
@@ -314,6 +354,7 @@ function NewDeckConfig({
             note_ids: noteIds,
             instructions: instructions.trim() || null,
             mode,
+            styles: mode === "sources" && styles.length ? styles : null,
           })
         }
         disabled={pending || blocked}
@@ -413,6 +454,14 @@ function DeckDetail({
 
       {d.instructions && (
         <p className="gen-hint deck-focus-line">Focus: {d.instructions}</p>
+      )}
+      {d.styles && Object.keys(d.styles).length > 0 && (
+        <p className="gen-hint deck-focus-line">
+          {Object.entries(d.styles)
+            .map(([id, n]) => `${CARD_STYLES.find((s) => s.id === id)?.label ?? id} ${n}`)
+            .join(" · ")}
+          {d.auto_styles ? " (picked by the AI for this material)" : ""}
+        </p>
       )}
 
       <div className="card-list">

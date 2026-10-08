@@ -292,3 +292,34 @@
     flex-wrap: wrap;
   }
 }
+
+/* Card type picker (deck creator) */
+.card-styles {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--s-2);
+  min-width: 0;
+}
+.card-style {
+  min-height: 36px;
+  padding: 6px 12px;
+  border: 1px solid var(--rule);
+  border-radius: 999px;
+  background: var(--surface-raised);
+  font: 500 13.5px var(--font-ui);
+  color: var(--ink-soft);
+  cursor: pointer;
+}
+.card-style.on {
+  border-color: var(--accent-blue);
+  background: var(--accent-blue-wash);
+  color: var(--accent-blue-deep);
+}
+.card-style:active {
+  transform: translateY(1px);
+}
+.card-styles-hint {
+  flex-basis: 100%;
+  margin: 0;
+}

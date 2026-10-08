@@ -802,6 +802,9 @@ export interface DeckOut {
   review_enabled: boolean | null;
   generation_mode: GenerationMode | null;
   instructions: string | null;
+  /** Card styles the deck was built with, e.g. {term: 6, code: 6}. */
+  styles: Record<string, number> | null;
+  auto_styles: boolean;
   cards: CardOut[];
 }
 
