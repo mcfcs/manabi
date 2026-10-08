@@ -192,7 +192,11 @@ async def import_code_demos(
                 content=content,
                 source_url=d.source_url,
             )
-            await db.flush()
+            # Commit before the next one: the extraction job is deferred on its
+            # own connection, and a worker that picks it up before this
+            # document is committed finds nothing and exits — 11 of 12 demos
+            # sat at "pending" forever when the commit came once at the end.
+            await db.commit()
             row.update(status="imported", document_id=doc.id, job_id=job.id)
         except HTTPException as exc:
             row["status"] = "already imported" if exc.status_code == 409 else f"error: {exc.detail}"
