@@ -118,9 +118,23 @@ def _model():
     )
 
 
-def verify_wav(audio: bytes, expected: str) -> str | None:
-    if len(_words(expected)) < 5:
+def short_problem(expected: str, heard: str) -> str | None:
+    """A heading of a word or four: full coverage is too noisy to demand, but
+    the voice must say at least one of its words. Silent takes passed the
+    acoustic check on a breath ("Outline.", "Prompts." — 0.7 s of nothing), and
+    recognition fills silence with "Thank you.", which matches nothing here."""
+    source = [w for w in _words(expected) if len(w) > 2] or _words(expected)
+    spoken = _words(heard)
+    if not source:
         return None
+    for want in source:
+        if any(SequenceMatcher(None, want, got).ratio() >= 0.75 for got in spoken):
+            return None
+    return "Voice did not say the heading"
+
+
+def verify_wav(audio: bytes, expected: str) -> str | None:
+    short = len(_words(expected)) < 5
     with _lock:
         segments, _ = _model().transcribe(
             io.BytesIO(audio),
@@ -132,4 +146,4 @@ def verify_wav(audio: bytes, expected: str) -> str | None:
         # Do not prime ASR with the requested text: it can hallucinate missing
         # words from that prompt and defeat the completeness check.
         heard = " ".join(segment.text for segment in segments)
-    return transcript_problem(expected, heard)
+    return short_problem(expected, heard) if short else transcript_problem(expected, heard)

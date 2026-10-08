@@ -48,3 +48,15 @@ def test_tolerates_short_labels_and_punctuation_differences():
         )
         is None
     )
+
+
+def test_a_short_heading_must_actually_be_said():
+    from manabi_ai.tts_verification import short_problem
+
+    # Silent takes stored for these: recognition heard "Thank you." / nothing.
+    assert short_problem("Outline.", "Thank you.") is not None
+    assert short_problem("Questions?", "") is not None
+    assert short_problem("Impairments and.", "Yeah") is not None
+    assert short_problem("Outline.", " Outline.") is None
+    assert short_problem("Neural Networks.", "neural network") is None
+    assert short_problem("Be Wary, Be Savvy.", "Be wary.") is None
