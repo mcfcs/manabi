@@ -180,9 +180,13 @@ def expected_outputs(
             second = _run_one(argv, given, cwd, limit_ms)
             if normalize_output(first[1]) != normalize_output(second[1]):
                 return Expected(False, problem=f"reference output on test {i + 1} is not stable")
-            if not normalize_output(first[1]).strip():
-                return Expected(False, problem=f"reference prints nothing on test {i + 1}")
-            tests.append({"input": given, "output": normalize_output(first[1]) + "\n"})
+            out = normalize_output(first[1])
+            tests.append({"input": given, "output": out + "\n" if out else ""})
+    # An empty answer is legitimate for some inputs (a stack fed only pushes
+    # prints nothing — a real, good problem was thrown out three times for
+    # it); a reference that prints nothing for EVERY input is not.
+    if all(not t["output"].strip() for t in tests):
+        return Expected(False, problem="the reference prints nothing on any test")
     outs = {t["output"] for t in tests}
     if len(tests) >= 4 and len(outs) == 1:
         # Every input giving the same answer means the tests can't tell a

@@ -91,3 +91,23 @@ def test_python_runs_too():
 def test_a_reference_that_prints_a_constant_is_rejected():
     const = '#include <stdio.h>\nint main()\n{\n   printf("42\\n");\n   return 0;\n}\n'
     assert not expected_outputs("c", const, ["1\n", "2\n", "3\n", "4\n"]).ok
+
+
+@needs_cpp
+def test_a_test_whose_right_answer_is_no_output_is_kept():
+    # Only pushes, no `top` query: the correct program prints nothing.
+    exp = expected_outputs("cpp", STACK_CPP.replace("cout << endl;", ""), ["2\n1 2\n", "1\n5\n"])
+    assert exp.ok, exp.problem
+    silent = (
+        "#include <iostream>\nusing namespace std;\n"
+        "int main()\n{\n   int n;\n   cin >> n;\n   if(n > 1)\n      cout << n << endl;\n"
+        "   return 0;\n}\n"
+    )
+    exp = expected_outputs("cpp", silent, ["1\n", "2\n", "3\n"])
+    assert exp.ok and exp.tests[0]["output"] == ""
+    assert judge("cpp", silent, exp.tests).verdict == "accepted"
+
+
+def test_a_reference_silent_on_every_input_is_rejected():
+    exp = expected_outputs("python", "pass\n", ["1\n", "2\n"])
+    assert not exp.ok and "nothing" in exp.problem
