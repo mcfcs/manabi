@@ -47,6 +47,10 @@ RULES = {
   fenced code block (```c or ```cpp) using constructs the sources teach.
   Deterministic: no input, no randomness, no addresses, no undefined
   behaviour.
+- Exam level: each program turns on ONE rule a student can get wrong —
+  integer division and %, pre/post increment, operator precedence, scope and
+  shadowing, pointer arithmetic, pass by value vs reference, constructor or
+  destructor order. Never a program that just prints a literal or a + b.
 - Back: exactly what the program prints, character for character, nothing
   else.""",
 }
