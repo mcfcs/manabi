@@ -103,7 +103,7 @@ class JobRef(BaseModel):
 async def _staleness(db: AsyncSession, artifact: Artifact) -> str:
     """fresh: chunk set identical · incomplete: everything the artifact used
     is unchanged but new material exists · stale: used material changed."""
-    if artifact.generation_mode == MISTAKES_MODE:
+    if getattr(artifact, "generation_mode", None) == MISTAKES_MODE:
         return "fresh"  # built from quiz answers, not from the material
     if artifact.instructions:
         # Focused-retrieval artifact: its chunk set was picked by topic
