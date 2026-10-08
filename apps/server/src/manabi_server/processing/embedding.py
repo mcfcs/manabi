@@ -8,8 +8,7 @@ from manabi_server.config import get_settings
 # Qwen3 embeddings are instruction-tuned: queries get an instruction prefix,
 # documents are embedded raw (asymmetric retrieval).
 _QUERY_INSTRUCT = (
-    "Instruct: Given a study question, retrieve relevant course material "
-    "passages\nQuery: "
+    "Instruct: Given a study question, retrieve relevant course material passages\nQuery: "
 )
 
 BATCH_SIZE = 16
@@ -71,11 +70,24 @@ def embed_missing_chunks_sync(db) -> int:
         return 0
     texts = [f"{h}\n{t}" if h else t for _, h, t in missing]
     vectors = embed_texts(texts)
-    for (chunk_id, _, _), vec in zip(missing, vectors, strict=True):
-        db.add(
-            ChunkEmbedding(
-                chunk_id=chunk_id, embedding=vec, embedding_model=settings.embedding_model
-            )
+    from sqlalchemy.dialects.postgresql import insert
+
+    # Two CPU jobs sweep the same missing chunks when documents finish
+    # together (a 12-file code import did); the slower one used to fail its
+    # whole document on the duplicate key. The first writer wins.
+    db.execute(
+        insert(ChunkEmbedding)
+        .values(
+            [
+                {
+                    "chunk_id": chunk_id,
+                    "embedding": vec,
+                    "embedding_model": settings.embedding_model,
+                }
+                for (chunk_id, _, _), vec in zip(missing, vectors, strict=True)
+            ]
         )
+        .on_conflict_do_nothing(index_elements=["chunk_id"])
+    )
     db.commit()
     return len(missing)
