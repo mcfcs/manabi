@@ -83,6 +83,17 @@ _client_key: tuple | None = None
 _RATE_LIMIT_BACKOFF = (1.0, 2.0, 4.0)  # seconds between retries
 
 
+class CanvasWriteRefused(RuntimeError):
+    """Manabi only ever reads from Canvas."""
+
+
+async def _read_only(request: httpx.Request) -> None:
+    # The owner's rule: Canvas is read-only. Enforced on the client itself so
+    # no future code path can submit, post or edit anything there.
+    if request.method not in ("GET", "HEAD"):
+        raise CanvasWriteRefused(f"refusing {request.method} to Canvas: read-only")
+
+
 def _get_client() -> httpx.AsyncClient:
     global _client, _client_key
     base, token = _canvas_config()
@@ -90,6 +101,7 @@ def _get_client() -> httpx.AsyncClient:
     if _client is None or _client.is_closed or _client_key != key:
         _client = httpx.AsyncClient(
             base_url=f"{base}/api/v1",
+            event_hooks={"request": [_read_only]},
             headers={"Authorization": f"Bearer {token}"},
             timeout=httpx.Timeout(20, connect=5),
             limits=httpx.Limits(
@@ -300,7 +312,9 @@ async def _download_canvas_file(file_id: int) -> tuple[str, str, bytes]:
     if ext not in ("pdf", "pptx"):
         raise HTTPException(status_code=422, detail="Only PDF and PPTX can be imported")
     _, token = _canvas_config()
-    async with httpx.AsyncClient(timeout=120, follow_redirects=True) as client:
+    async with httpx.AsyncClient(
+        timeout=120, follow_redirects=True, event_hooks={"request": [_read_only]}
+    ) as client:
         r = await client.get(meta["url"], headers={"Authorization": f"Bearer {token}"})
     if r.status_code >= 400:
         raise HTTPException(

@@ -313,7 +313,7 @@ async def test_pagination_follows_next_links(monkeypatch):
     assert await canvas._canvas_get_all("/x") == [{"id": 1}, {"id": 2}]
 
 
-async def test_shared_client_is_reused_within_a_loop():
+async def test_shared_client_is_reused_within_a_loop(canvas_configured):
     try:
         first = canvas._get_client()
         assert canvas._get_client() is first
@@ -338,3 +338,14 @@ async def test_gather_limited_caps_concurrency_and_keeps_order():
 
     assert await canvas.gather_limited((job(i) for i in range(10)), n=3) == list(range(10))
     assert peak == 3
+
+
+async def test_canvas_is_read_only(canvas_configured):
+    # Owner's rule: Manabi never writes to Canvas. Enforced on the client.
+    try:
+        client = canvas._get_client()
+        for method in ("POST", "PUT", "PATCH", "DELETE"):
+            with pytest.raises(canvas.CanvasWriteRefused):
+                await client.request(method, "/courses/1/assignments")
+    finally:
+        await canvas.aclose_canvas_client()
