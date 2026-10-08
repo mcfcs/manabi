@@ -67,9 +67,20 @@ THEORY_SCHEMA = {
         "statement": {"type": "string"},
         "alphabet": {"type": "array", "items": {"type": "string"}, "minItems": 1},
         "reference": {"type": "string"},
+        "examples_accepted": {"type": "array", "items": {"type": "string"}},
+        "examples_rejected": {"type": "array", "items": {"type": "string"}},
         "hint": {"type": "string"},
     },
-    "required": ["title", "topic", "statement", "alphabet", "reference", "hint"],
+    "required": [
+        "title",
+        "topic",
+        "statement",
+        "alphabet",
+        "reference",
+        "examples_accepted",
+        "examples_rejected",
+        "hint",
+    ],
 }
 
 CODE_PROMPT = """You write ONE programming problem in the style of HackerRank for a
@@ -84,7 +95,8 @@ Rules — the problem is judged automatically, so follow them exactly:
 - Keep inputs small (at most a few hundred values); any sensible solution
   must finish well within one second.
 - "statement": the task in Markdown — the story and what to compute. Do NOT
-  repeat the input/output formats here.
+  repeat the input/output formats here, and do NOT include worked examples or
+  sample outputs: the app shows samples computed from your solution.
 - "input_format", "output_format", "constraints": precise and complete.
 - "reference_solution": a COMPLETE, correct {language} program that solves
   every valid input. It is the answer key; it must be right.
@@ -128,7 +140,11 @@ Rules — the answer is judged automatically by testing strings:
   (for example a and b). "alphabet" lists them.
 - "statement": in Markdown, state the language precisely in words (and set
   notation if useful), e.g. "all strings over {a, b} with an even number of
-  a's". It must not contain the answer.
+  a's". It must not contain the answer, and must NOT list example strings —
+  put examples in the two fields below instead; each one is checked.
+- "examples_accepted": 3 strings IN the language ("ε" for the empty string).
+- "examples_rejected": 3 strings NOT in the language. Think carefully: every
+  example is tested against your reference and a wrong one rejects the task.
 - "reference": {reference}.
 - "hint": one short hint that does not give the answer away.
 - Prefer languages like those in the course material below (its examples,
@@ -224,6 +240,8 @@ async def generate_problem(
                 problem.spec = {
                     "alphabet": [a.strip() for a in out.get("alphabet") or [] if a.strip()],
                     "hint": out.get("hint") or "",
+                    "examples_accepted": [str(x) for x in out.get("examples_accepted") or []][:5],
+                    "examples_rejected": [str(x) for x in out.get("examples_rejected") or []][:5],
                     "reference_kind": "grammar" if problem.kind == "grammar" else "regex",
                 }
                 problem.reference = out.get("reference") or ""

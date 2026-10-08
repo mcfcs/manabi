@@ -41,9 +41,36 @@ def validate(
     tests, problem = formal.build_tests(ref_kind, reference, list(spec.get("alphabet") or []))
     if problem:
         return Validation(False, problem)
-    accepted = [t for t in tests if t["accept"]][:SAMPLE_STRINGS]
-    rejected = [t for t in tests if not t["accept"]][:SAMPLE_STRINGS]
-    return Validation(True, samples=accepted + rejected, tests=tests)
+    # The statement's examples must agree with the key: a generated task said
+    # "abab is invalid" while its own grammar (S -> a S b S | ε) accepts it.
+    accepts = formal.recognizer(ref_kind, reference)
+    for listed, expected in (
+        (spec.get("examples_accepted") or [], True),
+        (spec.get("examples_rejected") or [], False),
+    ):
+        for s in listed:
+            word = () if s.strip() in formal.EPSILON or s == "" else tuple(s.strip())
+            if accepts(word) != expected:
+                verb = "accepted" if expected else "rejected"
+                actual = "accepts" if not expected else "rejects"
+                return Validation(
+                    False, f"`{s}` is listed as {verb} but your reference {actual} it"
+                )
+    def norm(s: str) -> str:
+        s = s.strip()
+        return "ε" if s in formal.EPSILON or s == "" else s
+
+    samples: list[dict] = []
+    for listed, expected in (
+        (spec.get("examples_accepted") or [], True),
+        (spec.get("examples_rejected") or [], False),
+    ):
+        # The model's (now verified) examples first, then the shortest strings.
+        picks = [norm(s) for s in listed]
+        picks += [t["s"] for t in tests if t["accept"] == expected]
+        for s in list(dict.fromkeys(picks))[: SAMPLE_STRINGS + 1]:
+            samples.append({"s": s, "accept": expected})
+    return Validation(True, samples=samples, tests=tests)
 
 
 def run(kind: str, language: str, answer: str, cases: list, limit_ms: int) -> dict:
