@@ -1123,6 +1123,10 @@ class DeckOut(BaseModel):
     review_enabled: bool | None
     generation_mode: str | None
     instructions: str | None
+    # Card styles the deck was built with ({"term": 6, "code": 6}); None for
+    # practice decks and decks made before styles existed.
+    styles: dict[str, int] | None = None
+    auto_styles: bool = False
     cards: list[CardOut]
 
 
@@ -1134,6 +1138,9 @@ class GenerateCardsIn(BaseModel):
     note_ids: list[int] | None = None
     instructions: str | None = None
     mode: Literal["sources", "exercise"] = "sources"
+    # Term recall / definition / short answer / code output; None or [] = the
+    # AI picks a mix suited to the material. Ignored for practice decks.
+    styles: list[Literal["term", "definition", "short", "code"]] | None = None
 
 
 class CardPatch(BaseModel):
@@ -1164,6 +1171,8 @@ async def _deck_out(db: AsyncSession, artifact: Artifact) -> DeckOut:
         review_enabled=artifact.review_enabled,
         generation_mode=artifact.generation_mode,
         instructions=artifact.instructions,
+        styles=(artifact.content or {}).get("styles"),
+        auto_styles=bool((artifact.content or {}).get("auto_styles")),
         cards=[
             CardOut(
                 id=c.id,
@@ -1248,6 +1257,7 @@ async def generate_flashcards(
         instructions=instructions,
         mode=data.mode,
         chunk_ids=chunk_ids,
+        styles=list(data.styles) if data.styles else None,
     )
     return JobRef(job_id=job.id)
 

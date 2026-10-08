@@ -12,6 +12,7 @@ import re
 from datetime import UTC, datetime
 from types import SimpleNamespace
 
+from manabi_core.material_profile import profile_material
 from manabi_core.models import (
     AIFeedback,
     AIFeedbackKind,
@@ -36,7 +37,7 @@ from procrastinate.exceptions import JobAborted
 from sqlalchemy import delete, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from manabi_ai import prompts, quizplan
+from manabi_ai import cardstyle, prompts, quizplan
 from manabi_ai.app import app
 from manabi_ai.config import get_settings
 from manabi_ai.context import (
@@ -62,6 +63,7 @@ log = logging.getLogger("manabi_ai")
 
 SCORE_SUPPORT_TASK = "manabi_server.tasks.score_support"  # cpu queue contract
 VERIFY_OUTPUTS_TASK = "manabi_server.tasks.verify_quiz_outputs"  # cpu queue contract
+VERIFY_CARD_OUTPUTS_TASK = "manabi_server.tasks.verify_card_outputs"  # cpu queue contract
 
 # Exercise-mode generation with no material in scope: the FOCUS instructions
 # alone define the topic (the enqueue guard requires them for this path).
@@ -432,6 +434,7 @@ async def generate_flashcards(
     instructions: str | None = None,
     mode: str = "sources",
     chunk_ids: list[int] | None = None,
+    styles: list[str] | None = None,
 ) -> None:
     settings = get_settings()
     exercise = mode == "exercise"
@@ -455,6 +458,16 @@ async def generate_flashcards(
             notes = await _load_notes_text(db, [module_id], note_ids=note_ids)
             module = (await db.execute(select(Module).where(Module.id == module_id))).scalar_one()
 
+            # ── Card styles (cardstyle): what each card asks for ──
+            # count == 0 → exhaustive mode: keep generating until the
+            # material runs dry (a round adds <3 new cards) with hard stops.
+            exhaustive = count == 0
+            count = EXHAUSTIVE_CARD_CAP if exhaustive else count
+            is_code = profile_material(c.text for c in chunks).language is not None
+            style_plan = (
+                {"exercise": count} if exercise else cardstyle.plan(styles, is_code, count)
+            )
+
             # ── Derived cards: exact term/acronym cards from the summary ──
             summary = None
             if not scoped:
@@ -470,6 +483,7 @@ async def generate_flashcards(
                     )
                 ).scalar_one_or_none()
             derived: list[tuple[str, str, str]] = []  # (front, back, summary item_ref)
+            derived_count: dict[str, int] = {}
             summary_citations: dict[str, list[Citation]] = {}
             if summary is not None:
                 for row in (
@@ -478,30 +492,30 @@ async def generate_flashcards(
                     .all()
                 ):
                     summary_citations.setdefault(row.item_ref, []).append(row)
+                # The summary's glossary feeds both directions: term → definition
+                # for definition decks, definition → term for term recall.
+                by_style: dict[str, list[tuple[str, str, str]]] = {"definition": [], "term": []}
                 for i, t in enumerate(summary.content.get("key_terms", [])):
-                    if t.get("term") and t.get("definition"):
-                        derived.append((f"Define: {t['term']}", t["definition"], f"kt:{i}"))
+                    term, definition = t.get("term"), t.get("definition")
+                    if term and definition:
+                        by_style["definition"].append((f"Define: {term}", definition, f"kt:{i}"))
+                        if not cardstyle.problem("term", definition, term):
+                            by_style["term"].append((definition, term, f"kt:{i}"))
                 for i, a in enumerate(summary.content.get("acronyms", [])):
-                    if a.get("acronym") and a.get("meaning"):
-                        derived.append(
-                            (
-                                f"What does {a['acronym']} stand for?",
-                                a["meaning"],
-                                f"ac:{i}",
-                            )
+                    acronym, meaning = a.get("acronym"), a.get("meaning")
+                    if acronym and meaning:
+                        by_style["definition"].append(
+                            (f"What does {acronym} stand for?", meaning, f"ac:{i}")
                         )
-            # count == 0 → exhaustive mode: keep generating until the
-            # material runs dry (a round adds <3 new cards) with hard stops.
-            exhaustive = count == 0
-            if exhaustive:
-                count = EXHAUSTIVE_CARD_CAP
-            else:
-                # Leave at least a quarter of the deck for conceptual/
-                # enumeration/comparison cards — definitions alone aren't
-                # a study kit.
-                derived = derived[: max(0, count - max(4, count // 4))]
+                        by_style["term"].append((f"Acronym for: {meaning}", acronym, f"ac:{i}"))
+                for style, pool in by_style.items():
+                    n = style_plan.get(style, 0)
+                    # Leave at least a quarter of the style for written cards —
+                    # glossary entries alone aren't a study kit.
+                    take = pool[:n] if exhaustive else pool[: max(0, n - max(2, n // 4))]
+                    derived.extend(take)
+                    derived_count[style] = len(take)
 
-            remaining = count - len(derived)
             existing_fronts = [front for front, _, _ in derived]
             batches = batch_chunks(chunks)
             resolved_cards: list[ResolvedItem] = []
@@ -509,6 +523,7 @@ async def generate_flashcards(
 
             if exercise and not chunks:
                 # Topic-only practice deck: no material in scope at all.
+                remaining = count - len(derived)
                 await _progress(
                     db,
                     job,
@@ -538,60 +553,79 @@ async def generate_flashcards(
                 resolved_cards.extend(fresh)
                 existing_fronts.extend((f.item.get("front") or "") for f in fresh)
 
-            rounds = 0
             max_rounds = 8 if exhaustive else 3
-            while batches and remaining > len(resolved_cards) and rounds < max_rounds:
-                await _abort_if_requested(db, job, context)
-                rounds += 1
-                added_this_round = 0
-                for batch in batches:
-                    need = remaining - len(resolved_cards)
-                    if need <= 0:
+            for style, n_style in style_plan.items():
+                want = n_style - derived_count.get(style, 0)
+                got = 0
+                rounds = 0
+                while batches and got < want and rounds < max_rounds:
+                    await _abort_if_requested(db, job, context)
+                    rounds += 1
+                    added_this_round = 0
+                    for batch in batches:
+                        need = want - got
+                        if need <= 0:
+                            break
+                        await _progress(
+                            db,
+                            job,
+                            15 + min(60, 60 * len(resolved_cards) // max(1, count)),
+                            f"Creating cards with {settings.generation_model}"
+                            f" ({len(derived) + len(resolved_cards)}"
+                            f"/{'∞' if exhaustive else count})",
+                        )
+                        ctx = build_context(batch, notes)
+                        fronts_note = "\n".join(f"- {f}" for f in existing_fronts[-60:]) or "(none)"
+                        if exercise:
+                            base_prompt = prompts.EXERCISE_FLASHCARDS_PROMPT
+                        else:
+                            base_prompt = prompts.FLASHCARDS_PROMPT.replace(
+                                "{card_rules}", cardstyle.RULES[style]
+                            )
+                        if instructions:
+                            base_prompt += prompts.FOCUS_BLOCK.replace(
+                                "{instructions}", instructions
+                            )
+                        result = await generate_structured(
+                            base_prompt.replace("{count}", str(min(need, 20))).replace(
+                                "{existing_fronts}", fronts_note
+                            ),
+                            ctx.source_text,
+                            prompts.FLASHCARDS_EXERCISE_SCHEMA
+                            if exercise
+                            else prompts.FLASHCARDS_SCHEMA,
+                            preview,
+                            response_headroom=_GEN_RESPONSE_HEADROOM,
+                        )
+                        kept, d = resolve_items(
+                            result.get("cards", []),
+                            ctx.index_map,
+                            {module_id},
+                            require_sources=not exercise,
+                        )
+                        dropped += d
+                        if not exercise:
+                            fits = [
+                                k
+                                for k in kept
+                                if not cardstyle.problem(
+                                    style, k.item.get("front") or "", k.item.get("back") or ""
+                                )
+                            ]
+                            dropped += len(kept) - len(fits)
+                            kept = fits
+                        fresh = dedup_cards(kept, existing_fronts)[:need]
+                        if not fresh:
+                            continue
+                        for f in fresh:
+                            f.item["_style"] = style
+                        added_this_round += len(fresh)
+                        got += len(fresh)
+                        resolved_cards.extend(fresh)
+                        existing_fronts.extend((f.item.get("front") or "") for f in fresh)
+                    if exhaustive and added_this_round < 3:
+                        log.info("exhaustive %s cards ran dry after %d rounds", style, rounds)
                         break
-                    await _progress(
-                        db,
-                        job,
-                        15 + min(60, 60 * rounds // max_rounds),
-                        f"Creating cards with {settings.generation_model}"
-                        f" ({len(derived) + len(resolved_cards)}"
-                        f"/{'∞' if exhaustive else count})",
-                    )
-                    ctx = build_context(batch, notes)
-                    fronts_note = "\n".join(f"- {f}" for f in existing_fronts[-60:]) or "(none)"
-                    base_prompt = (
-                        prompts.EXERCISE_FLASHCARDS_PROMPT
-                        if exercise
-                        else prompts.FLASHCARDS_PROMPT
-                    )
-                    if instructions:
-                        base_prompt += prompts.FOCUS_BLOCK.replace("{instructions}", instructions)
-                    result = await generate_structured(
-                        base_prompt.replace("{count}", str(min(need, 20))).replace(
-                            "{existing_fronts}", fronts_note
-                        ),
-                        ctx.source_text,
-                        prompts.FLASHCARDS_EXERCISE_SCHEMA
-                        if exercise
-                        else prompts.FLASHCARDS_SCHEMA,
-                        preview,
-                        response_headroom=_GEN_RESPONSE_HEADROOM,
-                    )
-                    kept, d = resolve_items(
-                        result.get("cards", []),
-                        ctx.index_map,
-                        {module_id},
-                        require_sources=not exercise,
-                    )
-                    dropped += d
-                    fresh = dedup_cards(kept, existing_fronts)
-                    if not fresh:
-                        continue
-                    added_this_round += len(fresh)
-                    resolved_cards.extend(fresh)
-                    existing_fronts.extend((f.item.get("front") or "") for f in fresh)
-                if exhaustive and added_this_round < 3:
-                    log.info("exhaustive card generation ran dry after %d rounds", rounds)
-                    break
 
             await _progress(db, job, 85, "Validating citations")
             # Carry over user-edited cards — only when regenerating the
@@ -640,7 +674,7 @@ async def generate_flashcards(
                 artifact_type=ArtifactType.flashcard_deck,
                 scope_module_ids=[module_id],
                 title=_deck_title(module.title, mode, instructions, document_ids),
-                content={},
+                content={} if exercise else {"styles": style_plan, "auto_styles": not styles},
                 model_name=settings.generation_model,
                 prompt_version=prompts.PROMPT_VERSION,
                 source_chunk_ids=[c.id for c in chunks],
@@ -707,6 +741,12 @@ async def generate_flashcards(
                 )
                 ord_ += 1
             await _finish(db, job, artifact.id, dropped)
+            if style_plan.get("code"):
+                # Code-output backs are the model's guess until the program
+                # has been run (app server, cpu queue).
+                await app.configure_task(VERIFY_CARD_OUTPUTS_TASK, queue="cpu").defer_async(
+                    artifact_id=artifact.id
+                )
         except JobAborted:
             raise  # cancelled — do not fail/retry
         except (GenerationError, Exception) as exc:  # noqa: BLE001

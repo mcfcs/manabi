@@ -16,6 +16,7 @@ from manabi_server.jobs.queue import (
     EXTRACT_TEXT_HTML_TASK,
     PROCESS_DOCUMENT_TASK,
     SCORE_SUPPORT_TASK,
+    VERIFY_CARD_OUTPUTS_TASK,
     VERIFY_OUTPUTS_TASK,
 )
 
@@ -154,6 +155,53 @@ def _queue_replacements(db, artifact, question_ids: list[int]) -> int:
         db.commit()
         queued += 1
     return queued
+
+
+@app.task(name=VERIFY_CARD_OUTPUTS_TASK, queue="cpu", retry=1)
+def verify_card_outputs(artifact_id: int) -> dict:
+    """Run the program on every code-output flashcard. The run wins: a wrong
+    back is replaced with what the program really prints, and a card whose
+    code has no defined output, will not compile or cannot be run is removed
+    (with its citations) rather than left to teach a guess."""
+    from manabi_core.models import Citation, Flashcard
+    from sqlalchemy import delete, select
+
+    from manabi_server.processing.code_exec import check_code_question
+
+    counts = {"agree": 0, "corrected": 0, "removed": 0}
+    with db_session() as db:
+        cards = (
+            db.execute(select(Flashcard).where(Flashcard.artifact_id == artifact_id))
+            .scalars()
+            .all()
+        )
+        for card in cards:
+            if "```" not in (card.front or "") or card.edited:
+                continue
+            try:
+                chk = check_code_question(
+                    "output", card.front, None, {"kind": "output", "text": card.back}
+                )
+            except Exception:  # noqa: BLE001 — one bad card must not sink the deck
+                log.exception("code check crashed on card %s", card.id)
+                continue
+            if chk.status == "agree":
+                counts["agree"] += 1
+            elif chk.status == "corrected" and chk.answer:
+                card.back = chk.answer["text"]
+                counts["corrected"] += 1
+            elif chk.status in ("rejected", "unverifiable", "converted"):
+                db.execute(
+                    delete(Citation).where(
+                        Citation.artifact_id == artifact_id,
+                        Citation.item_ref == f"card:{card.ord}",
+                    )
+                )
+                db.delete(card)
+                counts["removed"] += 1
+        db.commit()
+    log.info("card outputs for deck %s: %s", artifact_id, counts)
+    return counts
 
 
 @app.task(name=VERIFY_OUTPUTS_TASK, queue="cpu", retry=1)

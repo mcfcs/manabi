@@ -142,16 +142,12 @@ FLASHCARDS_PROMPT = f"""You are creating {{count}} study flashcards for a univer
 {_GROUNDING}
 
 Card guidelines:
-- Front: one precise question or term (no "according to source 3").
-- Back: the concise correct answer, self-contained.
+- Never refer to the sources on a card ("according to source 3").
 - Cover the most important, testable concepts; prefer topics the student
-  notes emphasize. Vary style: definitions, contrasts, why/how questions.
-- ENUMERATIONS: when a source lists N items (types, steps, layers, modes,
-  statuses), create a card asking to name all N, with the full list on the
-  back.
-- COMPARISONS: when the sources contrast two concepts (e.g. human vs data
-  communication, analog vs digital, LAN vs WAN, synchronous vs
-  asynchronous), create a card asking to compare or distinguish them.
+  notes emphasize.
+
+{{card_rules}}
+
 - Do NOT duplicate or trivially rephrase any of these existing cards:
 {{existing_fronts}}
 
