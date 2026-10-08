@@ -84,6 +84,15 @@ def _is_short_list(back: str) -> bool:
     return len(items) >= 2 and all(len(_words(s)) <= LIST_ITEM_MAX_WORDS for s in items)
 
 
+def tidy_front(front: str) -> str:
+    """Close a code fence the model opened and never closed. Every C++ card
+    for an OOP module came back that way and was thrown out as "no code"."""
+    front = (front or "").rstrip()
+    if front.count("```") % 2 == 1:
+        front += "\n```"
+    return front
+
+
 def problem(style: str, front: str, back: str) -> str | None:
     """Why this card does not fit its style, or None when it does."""
     front, back = (front or "").strip(), (back or "").strip()

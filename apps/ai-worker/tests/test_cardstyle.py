@@ -63,3 +63,11 @@ def test_a_one_letter_term_is_not_found_inside_other_words():
         cardstyle.problem("term", "The procedural language Ritchie designed at Bell Labs.", "C")
         is None
     )
+
+
+def test_an_unclosed_code_fence_is_closed_not_discarded():
+    raw = "What does this print?\n```cpp\nint x = 5;\nint y = x++;\ncout << y << x;"
+    front = cardstyle.tidy_front(raw)
+    assert front.endswith("\n```")
+    assert cardstyle.problem("code", front, "56") is None
+    assert cardstyle.tidy_front("No code here.") == "No code here."

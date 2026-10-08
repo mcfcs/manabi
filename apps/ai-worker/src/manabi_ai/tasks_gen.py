@@ -605,6 +605,8 @@ async def generate_flashcards(
                         )
                         dropped += d
                         if not exercise:
+                            for k in kept:
+                                k.item["front"] = cardstyle.tidy_front(k.item.get("front") or "")
                             fits = [
                                 k
                                 for k in kept
