@@ -639,6 +639,7 @@ async def generate_flashcards(
                             Artifact.module_id == module_id,
                             Artifact.artifact_type == ArtifactType.flashcard_deck,
                             Artifact.review_enabled.is_(True),
+                            Artifact.generation_mode.is_distinct_from("mistakes"),
                         )
                         .order_by(Artifact.id.desc())
                         .limit(1)
@@ -659,12 +660,14 @@ async def generate_flashcards(
                     )
                 # The new whole-module deck replaces its predecessors in the
                 # SRS rotation (today's "latest deck" semantics).
+                # The Mistakes deck (quiz answers, not material) stays in.
                 await db.execute(
                     update(Artifact)
                     .where(
                         Artifact.module_id == module_id,
                         Artifact.artifact_type == ArtifactType.flashcard_deck,
                         Artifact.review_enabled.is_(True),
+                        Artifact.generation_mode.is_distinct_from("mistakes"),
                     )
                     .values(review_enabled=False)
                 )

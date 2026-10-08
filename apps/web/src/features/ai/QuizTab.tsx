@@ -138,9 +138,13 @@ function QuizPlayer({
           ? longInput
           : shortInput;
     const newResults = [...results, outcome];
+    // The grade travels with the answer: wrong ones join the Mistakes deck.
     const newResponses = {
       ...responses,
-      [q.id]: outcome === "skip" ? "(skipped)" : (selected ?? typed),
+      [q.id]: {
+        response: outcome === "skip" ? "(skipped)" : (selected ?? typed),
+        grade: outcome,
+      },
     };
     setResults(newResults);
     setResponses(newResponses);

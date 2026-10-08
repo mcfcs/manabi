@@ -67,6 +67,7 @@ from manabi_server.processing.code_exec import (
     outputs_match,
 )
 from manabi_server.security import get_default_user, require_csrf
+from manabi_server.services.mistakes import MISTAKES_MODE, record_mistakes
 
 router = APIRouter(prefix="/api", tags=["artifacts"])
 
@@ -102,6 +103,8 @@ class JobRef(BaseModel):
 async def _staleness(db: AsyncSession, artifact: Artifact) -> str:
     """fresh: chunk set identical · incomplete: everything the artifact used
     is unchanged but new material exists · stale: used material changed."""
+    if artifact.generation_mode == MISTAKES_MODE:
+        return "fresh"  # built from quiz answers, not from the material
     if artifact.instructions:
         # Focused-retrieval artifact: its chunk set was picked by topic
         # relevance and can't be reproduced from scope alone. Fresh while the
@@ -2351,8 +2354,11 @@ async def update_attempt(
         attempt.score = data.score
     if data.finished:
         attempt.finished_at = datetime.now(UTC)
+    # Every question answered wrong joins its module's Mistakes deck.
+    quiz = await db.get(Artifact, attempt.artifact_id)
+    added = await record_mistakes(db, quiz, data.responses) if quiz else 0
     await db.commit()
-    return {"ok": True}
+    return {"ok": True, "mistakes_added": added}
 
 
 # ── Teacher lectures ──────────────────────────────────────────────────────
