@@ -215,3 +215,26 @@ def test_code_lines_and_notation_are_not_read_aloud():
     assert speakable("Basic tier : $100/month for up to 10,000 tweets")
     assert speakable("■bandwidth.")
     assert speakable("Most resistance is of the subdued, subtle, and surreptitious type.")
+
+
+def test_a_short_heading_is_read_with_its_paragraph():
+    from manabi_server.processing.narration_script import Script, Segment
+    from manabi_server.services.narration import segment_rows
+
+    segs = [
+        Segment(0, 1, "heading", "Noise", "Noise."),
+        Segment(
+            1, 1, "paragraph", "Noise is any unwanted signal.", "Noise is any unwanted signal."
+        ),
+        Segment(2, 2, "heading", "Twisted Pair Wires", "Twisted Pair Wires."),
+        Segment(3, 3, "paragraph", "On the next page.", "On the next page."),
+        Segment(4, 3, "heading", "Long Haul Transmission Media", "Long Haul Transmission Media."),
+        Segment(5, 3, "paragraph", "Body text here.", "Body text here."),
+    ]
+    rows = segment_rows(Script(segs, [], 10.0, "", None, None))
+    assert rows[0]["spoken_text"] == "Noise. Noise is any unwanted signal."
+    assert rows[0]["kind"] == "paragraph"
+    # a heading whose paragraph is on another page, or a long heading, stays alone
+    assert rows[1]["spoken_text"] == "Twisted Pair Wires."
+    assert rows[3]["spoken_text"] == "Long Haul Transmission Media."
+    assert [r["ord"] for r in rows] == list(range(len(rows)))

@@ -50,22 +50,46 @@ def build_for_document(doc: Document) -> Script:
     return build_script_from_path(str(parse_source_path(doc)))
 
 
+SHORT_HEADING_WORDS = 4  # mirrors tts_client.TINY_GROUP_WORDS
+
+
 def segment_rows(script: Script) -> list[dict]:
     """Rows for the segments worth recording. A segment whose spoken form holds
     no letter or digit is silence — it would only earn a 400 from the voice
     server — so it never reaches the queue. `ord` is re-numbered so the sequence
-    stays gapless for the player."""
+    stays gapless for the player.
+
+    A heading of one to three words is read as the start of the paragraph that
+    follows it. Alone, the voice renders it silent take after take: a
+    networking deck lost "Noise.", "Media.", "Thinnet." and 18 more."""
     kept = [s for s in script.segments if any(c.isalnum() for c in (s.spoken_text or ""))]
-    return [
-        {
-            "ord": i,
-            "page_no": s.page_no,
-            "kind": s.kind,
-            "text": s.text,
-            "spoken_text": s.spoken_text,
-        }
-        for i, s in enumerate(kept)
-    ]
+    rows: list[dict] = []
+    i = 0
+    while i < len(kept):
+        s = kept[i]
+        nxt = kept[i + 1] if i + 1 < len(kept) else None
+        if (
+            s.kind == "heading"
+            and len((s.spoken_text or "").split()) < SHORT_HEADING_WORDS
+            and nxt is not None
+            and nxt.kind == "paragraph"
+            and nxt.page_no == s.page_no
+        ):
+            rows.append(
+                {
+                    "page_no": s.page_no,
+                    "kind": "paragraph",
+                    "text": f"{s.text}\n{nxt.text}",
+                    "spoken_text": f"{s.spoken_text} {nxt.spoken_text}",
+                }
+            )
+            i += 2
+            continue
+        rows.append(
+            {"page_no": s.page_no, "kind": s.kind, "text": s.text, "spoken_text": s.spoken_text}
+        )
+        i += 1
+    return [{"ord": n, **r} for n, r in enumerate(rows)]
 
 
 def narratable(doc: Document) -> bool:
