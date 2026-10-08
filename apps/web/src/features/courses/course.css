@@ -704,3 +704,41 @@ a.course-file-name:hover {
     display: none;
   }
 }
+
+/* Code demos import */
+.code-demo-list {
+  list-style: none;
+  margin: var(--s-3) 0;
+  padding: 0;
+  max-height: 55dvh;
+  overflow-y: auto;
+  border-top: 1px solid var(--rule);
+}
+.code-demo-list li {
+  padding: var(--s-2) 0;
+  border-bottom: 1px solid var(--rule);
+  min-width: 0;
+}
+.code-demo-head {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  min-width: 0;
+}
+.code-demo-title {
+  flex: 1;
+  min-width: 0;
+  font-weight: 500;
+  overflow-wrap: anywhere;
+}
+.code-demo-status {
+  color: var(--ink-faint);
+  font-size: 12.5px;
+  text-align: right;
+}
+.code-demo-files {
+  margin: 2px 0 0 23px;
+  color: var(--ink-soft);
+  font: 12.5px var(--font-mono, ui-monospace, monospace);
+  overflow-wrap: anywhere;
+}

@@ -2,6 +2,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useNavigate, useParams } from "@tanstack/react-router";
 import {
   Archive,
+  Code2,
   ArrowDown,
   ArrowUp,
   ChevronLeft,
@@ -24,6 +25,7 @@ import { Modal } from "../../components/Modal";
 import { Announcements } from "./Announcements";
 import { CanvasFilesModal } from "./CanvasFilesModal";
 import { CanvasSyncModal } from "./CanvasSyncModal";
+import { CodeDemosModal } from "./CodeDemosModal";
 import { CourseDialog } from "./CourseDialog";
 import { CourseFiles } from "./CourseFiles";
 import { CourseGlance } from "./CourseGlance";
@@ -215,6 +217,7 @@ export function CoursePage() {
     useState<DeleteConsequences | null>(null);
   const [canvasFilesOpen, setCanvasFilesOpen] = useState(false);
   const [canvasSyncOpen, setCanvasSyncOpen] = useState(false);
+  const [codeDemosOpen, setCodeDemosOpen] = useState(false);
   const [kitPlanOpen, setKitPlanOpen] = useState(false);
   const [editing, setEditing] = useState(false);
 
@@ -375,6 +378,13 @@ export function CoursePage() {
               >
                 <CloudDownload size={15} strokeWidth={1.75} /> Sync course
               </button>
+              <button
+                className="btn course-canvas-files"
+                onClick={() => setCodeDemosOpen(true)}
+                title="Import the demo programs linked from Canvas pages, exactly as written"
+              >
+                <Code2 size={15} strokeWidth={1.75} /> Code demos
+              </button>
             </>
           )}
           {course && !course.canvas_course_id && (
@@ -460,6 +470,10 @@ export function CoursePage() {
 
       {canvasSyncOpen && course && (
         <CanvasSyncModal course={course} onClose={() => setCanvasSyncOpen(false)} />
+      )}
+
+      {codeDemosOpen && course && (
+        <CodeDemosModal course={course} onClose={() => setCodeDemosOpen(false)} />
       )}
 
       {editing && course && <CourseDialog course={course} onClose={() => setEditing(false)} />}
