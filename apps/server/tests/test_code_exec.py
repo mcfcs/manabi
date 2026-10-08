@@ -342,3 +342,31 @@ def test_a_students_program_is_graded_by_running_both():
     assert out["status"] == "failed" and out["expected_output"] == "1 4 9"
     err = compare_programs(broken, ref)
     assert err["status"] == "error" and "manabi-exec" not in err["message"]
+
+
+def test_crash_statuses_are_recognised_and_normal_exits_are_not():
+    from manabi_server.processing.code_exec import crash_reason
+
+    assert "heap corruption" in crash_reason(3221226356)  # 0xC0000374, a real double free
+    assert "access violation" in crash_reason(0xC0000005)
+    assert "segmentation" in crash_reason(-11)
+    assert crash_reason(0) is None
+    assert crash_reason(1) is None  # `return 1;` is an exit, not a crash
+
+
+@pytest.mark.skipif(cpp_compiler() is None, reason="no C++ compiler")
+def test_a_program_that_frees_memory_twice_has_no_defined_output():
+    # The real one: a shallow-copied vector whose two copies both delete[].
+    src = (
+        "#include <iostream>\nusing namespace std;\n"
+        "class vec\n{\npublic:\n   int *data;\n   vec() { data = new int[4]; data[0] = 99; }\n"
+        "   ~vec() { delete[] data; }\n};\n"
+        "int main()\n{\n   vec a;\n   {\n      vec b = a;\n      cout << b.data[0] << endl;\n   }\n"
+        "   cout << a.data[0] << endl;\n   return 0;\n}\n"
+    )
+    chk = check_code_question(
+        "output", f"What does this print?\n\n```cpp\n{src}```", None, {"text": "99\n99"}
+    )
+    assert chk.status in ("rejected", "agree"), chk
+    if chk.status == "agree":
+        pytest.skip("this runtime did not detect the double free")

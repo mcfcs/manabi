@@ -195,6 +195,37 @@ def _run(cmd: list[str], cwd: Path, timeout: int) -> tuple[int, str, str]:
     return proc.returncode, proc.stdout, proc.stderr
 
 
+_WINDOWS_CRASHES = {
+    0xC0000005: "access violation",
+    0xC0000374: "heap corruption — e.g. memory freed twice",
+    0xC00000FD: "stack overflow",
+    0xC0000409: "stack buffer overrun or abort",
+    0xC0000094: "integer division by zero",
+    0xC000001D: "illegal instruction",
+    0x80000003: "breakpoint trap",
+}
+_POSIX_SIGNALS = {
+    -11: "segmentation fault",
+    -6: "abort — e.g. memory freed twice",
+    -8: "arithmetic exception (division by zero)",
+    -4: "illegal instruction",
+    -7: "bus error",
+}
+
+
+def crash_reason(code: int) -> str | None:
+    """Why a run died, when its exit status is a crash rather than a plain
+    `return n;` from main. None for a normal exit."""
+    if code < 0:
+        return _POSIX_SIGNALS.get(code, f"killed by signal {-code}")
+    unsigned = code & 0xFFFFFFFF
+    if unsigned in _WINDOWS_CRASHES:
+        return _WINDOWS_CRASHES[unsigned]
+    if unsigned >= 0xC0000000:
+        return f"crash status {unsigned:#x}"
+    return None
+
+
 def _compile_and_run_native(snippet: Snippet, cwd: Path) -> ExecResult:
     is_cpp = snippet.lang == "cpp"
     cc = cpp_compiler() if is_cpp else c_compiler()
@@ -215,16 +246,19 @@ def _compile_and_run_native(snippet: Snippet, cwd: Path) -> ExecResult:
             return ExecResult(False, "", f"compile failed: {err.strip()[:300]}")
         ub = _UB_WARNINGS.search(err or "")
         if ub:
-            line = next(
-                (ln for ln in err.splitlines() if _UB_WARNINGS.search(ln)), ub.group(0)
-            )
+            line = next((ln for ln in err.splitlines() if _UB_WARNINGS.search(ln)), ub.group(0))
             reason = f"undefined behaviour: {line.strip()[:200]}"
             return ExecResult(False, "", reason, undefined=reason)
         run_code, out, run_err = _run([str(exe)], cwd, RUN_TIMEOUT)
+        crash = crash_reason(run_code)
+        if crash:
+            # A double free / wild pointer: whatever it printed before dying
+            # is not "the output". A real one (shallow-copied intvector freed
+            # twice) was kept as "unverifiable" with the model's guess as key.
+            reason = f"undefined behaviour: the program crashes ({crash})"
+            return ExecResult(False, out[:MAX_OUTPUT], reason, undefined=reason)
         if run_code != 0:
-            return ExecResult(
-                False, out[:MAX_OUTPUT], f"exit {run_code}: {run_err.strip()[:300]}"
-            )
+            return ExecResult(False, out[:MAX_OUTPUT], f"exit {run_code}: {run_err.strip()[:300]}")
         outputs.append(out)
     if normalize_output(outputs[0]) != normalize_output(outputs[1]):
         reason = "undefined behaviour: the -O0 and -O2 builds print different things"
@@ -370,9 +404,7 @@ def match_options(options: list, stdout: str) -> list[int]:
     """Indexes of the options that equal what the program printed — exact
     (normalized) matches first; whitespace-insensitive ones only if no option
     matches exactly, since "1 2 3" and "1\\n2\\n3" are the same to a reader."""
-    exact = [
-        i for i, o in enumerate(options) if outputs_match(_clean_option(str(o)), stdout)
-    ]
+    exact = [i for i, o in enumerate(options) if outputs_match(_clean_option(str(o)), stdout)]
     if exact:
         return exact
     real = _collapse(stdout)
@@ -404,8 +436,10 @@ def check_code_question(
     result = execute(snippet)
     if result.undefined:
         return CodeCheck("rejected", result.undefined)
-    if not result.ok and (result.error or "").startswith("compile failed") and re.search(
-        r"\bmain\s*\(", snippet.source
+    if (
+        not result.ok
+        and (result.error or "").startswith("compile failed")
+        and re.search(r"\bmain\s*\(", snippet.source)
     ):
         # A complete program that does not compile cannot be traced. Unless the
         # key itself says so ("compilation error"), the question is broken.
