@@ -948,3 +948,112 @@ export interface StudyOut {
   final_mix?: Record<string, number>;
   pending_final?: number | null;
 }
+
+// ── Practice: judged coding problems and formal-language tasks ─────────
+
+export type PracticeKind = "code" | "grammar" | "regex" | "dfa";
+export type PracticeLanguage = "c" | "cpp" | "python";
+export type PracticeStatus = "generating" | "validating" | "ready" | "failed";
+
+export interface ProblemSummary {
+  id: number;
+  kind: PracticeKind;
+  language: PracticeLanguage | null;
+  title: string;
+  topic: string | null;
+  difficulty: "easy" | "medium" | "hard";
+  status: PracticeStatus;
+  /** only when failed */
+  error: string | null;
+  solved: boolean;
+  best_passed: number | null;
+  best_total: number | null;
+  course_id: number | null;
+  module_id: number | null;
+  plan_id: number | null;
+  job_id: number | null;
+  created_at: string;
+}
+
+export interface CodeSpec {
+  input_format?: string;
+  output_format?: string;
+  constraints?: string | string[];
+  starter_code?: string;
+}
+
+export interface TheorySpec {
+  alphabet?: string[];
+  hint?: string;
+}
+
+/** A visible stdin/stdout sample. */
+export interface CodeSample {
+  input: string;
+  output: string;
+}
+
+/** A visible example string ("ε" = the empty string). */
+export interface TheorySample {
+  s: string;
+  accept: boolean;
+}
+
+export interface ProblemOut extends ProblemSummary {
+  source: "materials" | "original";
+  statement: string;
+  spec: CodeSpec & TheorySpec;
+  samples: (CodeSample | TheorySample)[];
+  time_limit_ms: number;
+  test_count: number;
+  /** the official solution — only once solved or revealed */
+  reference: string | null;
+}
+
+export type TestVerdict = "passed" | "wrong" | "runtime_error" | "time_limit";
+
+export interface TestResult {
+  index: number;
+  verdict: TestVerdict;
+  /** full detail on RUN (and for SUBMIT's first_failure) only */
+  input?: string;
+  expected?: string;
+  got?: string;
+  error?: string;
+  ms: number;
+}
+
+export interface CodeVerdict {
+  verdict: "accepted" | "wrong" | "compile_error" | "runtime_error" | "time_limit" | "no_tests";
+  passed: number;
+  total: number;
+  compile_error: string;
+  solved: boolean;
+  results: TestResult[];
+  /** SUBMIT only: the first non-passed hidden test in full */
+  first_failure?: TestResult | null;
+}
+
+export interface TheoryVerdict {
+  verdict: "accepted" | "wrong" | "format_error";
+  passed: number;
+  total: number;
+  /** holds the format error message */
+  compile_error: string;
+  max_len: number;
+  mismatches: { string: string; expected: boolean }[];
+  solved: boolean;
+}
+
+export type PracticeVerdict = CodeVerdict | TheoryVerdict;
+
+export interface SubmissionOut {
+  id: number;
+  mode: "run" | "submit";
+  language: PracticeLanguage | null;
+  verdict: string;
+  passed: number;
+  total: number;
+  code: string;
+  created_at: string;
+}

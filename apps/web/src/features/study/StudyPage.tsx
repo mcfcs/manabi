@@ -7,6 +7,7 @@ import {
   Check,
   ChevronDown,
   ChevronLeft,
+  Code2,
   GraduationCap,
   Headphones,
   ListChecks,
@@ -514,6 +515,17 @@ function ModuleStep({
               </section>
             </>
           )}
+          <div className="study-lab">
+            <Code2 size={15} strokeWidth={1.75} />
+            <span className="study-muted">Judged coding problems and grammar, regex or DFA tasks on this module.</span>
+            <Link
+              className="btn"
+              to="/practice"
+              search={{ course: Number(courseId), plan: planId ?? undefined, module: module.id }}
+            >
+              Coding lab
+            </Link>
+          </div>
         </div>
       )}
     </li>

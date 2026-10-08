@@ -887,3 +887,22 @@
   border-radius: var(--radius-sm);
   background: var(--surface);
 }
+
+/* ── Coding lab link under a module ──────────────────────────── */
+
+.study-lab {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--s-2) var(--s-3);
+  padding-top: var(--s-3);
+  border-top: 1px solid var(--rule);
+  font-size: 13.5px;
+}
+.study-lab > svg {
+  color: var(--accent-red);
+  flex-shrink: 0;
+}
+.study-lab > .study-muted {
+  flex: 1 1 220px;
+}

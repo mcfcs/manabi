@@ -4,6 +4,7 @@ import {
   AlertTriangle,
   CalendarClock,
   CalendarDays,
+  Code2,
   GraduationCap,
   Home,
   Layers,
@@ -93,22 +94,41 @@ function Activity() {
   const active = jobs.data ?? [];
   if (active.length === 0) return null;
   const first = active[0];
-  return (
-    <Link
-      to="/courses/$courseId/modules/$moduleId"
-      params={{
-        courseId: String(first.course_id ?? ""),
-        moduleId: String(first.module_id ?? ""),
-      }}
-      search={{ tab: "overview" }}
-      className="rail-activity"
-      title={active.map((j) => `${j.job_type} — ${j.module_title}`).join("\n")}
-    >
+  const tip = active.map((j) => `${j.job_type} — ${j.module_title ?? ""}`).join("\n");
+  const label = (
+    <>
       <Loader2 size={13} strokeWidth={1.75} className="spin" />
       <span>
         generating{active.length > 1 ? ` ×${active.length}` : ""}
         {first.module_title ? ` · ${first.module_title.slice(0, 16)}` : ""}
       </span>
+    </>
+  );
+  // A practice problem may have no module; its home is the Practice page.
+  // Any other module-less job has nowhere better than the activity log.
+  if (first.job_type === "generate_problem" || first.module_id == null || first.course_id == null) {
+    return (
+      <Link
+        to={first.job_type === "generate_problem" ? "/practice" : "/activity"}
+        className="rail-activity"
+        title={tip}
+      >
+        {label}
+      </Link>
+    );
+  }
+  return (
+    <Link
+      to="/courses/$courseId/modules/$moduleId"
+      params={{
+        courseId: String(first.course_id),
+        moduleId: String(first.module_id),
+      }}
+      search={{ tab: "overview" }}
+      className="rail-activity"
+      title={tip}
+    >
+      {label}
     </Link>
   );
 }
@@ -268,6 +288,15 @@ export function AppShell({
             <GraduationCap size={16} strokeWidth={1.5} />
             <span>Grades</span>
           </Link>
+          <Link
+            to="/practice"
+            className="rail-link"
+            activeProps={{ className: "rail-link active" }}
+            title="Practice — judged coding problems"
+          >
+            <Code2 size={16} strokeWidth={1.5} />
+            <span>Practice</span>
+          </Link>
           <button
             className="rail-link rail-search"
             onClick={() => setSearchOpen(true)}
@@ -417,6 +446,14 @@ export function AppShell({
             >
               <GraduationCap size={17} strokeWidth={1.5} />
               Grades
+            </Link>
+            <Link
+              to="/practice"
+              className="more-sheet-item"
+              onClick={() => setMoreOpen(false)}
+            >
+              <Code2 size={17} strokeWidth={1.5} />
+              Practice
             </Link>
             <button
               className="more-sheet-item"

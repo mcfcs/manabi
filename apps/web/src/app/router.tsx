@@ -16,6 +16,8 @@ import { SchedulePage } from "../features/schedule/SchedulePage";
 import { ReviewPage } from "../features/review/ReviewPage";
 import { ActivityPage } from "../features/activity/ActivityPage";
 import { GradesPage } from "../features/grades/GradesPage";
+import { PracticePage } from "../features/practice/PracticePage";
+import { ProblemPage } from "../features/practice/ProblemPage";
 import { TasksPage } from "../features/tasks/TasksPage";
 import { DocumentViewer } from "../features/viewer/DocumentViewer";
 import { AppGate } from "./AppGate";
@@ -156,6 +158,25 @@ const gradesRoute = createRoute({
   component: GradesPage,
 });
 
+const practiceRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "/practice",
+  component: PracticePage,
+  validateSearch: (
+    search: Record<string, unknown>,
+  ): { course?: number; plan?: number; module?: number } => ({
+    ...(Number(search.course) >= 1 ? { course: Number(search.course) } : {}),
+    ...(Number(search.plan) >= 1 ? { plan: Number(search.plan) } : {}),
+    ...(Number(search.module) >= 1 ? { module: Number(search.module) } : {}),
+  }),
+});
+
+const problemRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "/practice/$problemId",
+  component: ProblemPage,
+});
+
 const activityRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "/activity",
@@ -180,6 +201,8 @@ const routeTree = rootRoute.addChildren([
   tasksRoute,
   reviewRoute,
   gradesRoute,
+  practiceRoute,
+  problemRoute,
   activityRoute,
   assistantRoute,
 ]);
