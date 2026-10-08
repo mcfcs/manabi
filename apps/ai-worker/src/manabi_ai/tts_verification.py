@@ -118,19 +118,45 @@ def _model():
     )
 
 
+# What recognition "hears" in a silent clip.
+_SILENCE_FILLERS = {
+    "thank",
+    "thanks",
+    "you",
+    "bye",
+    "yeah",
+    "yes",
+    "oh",
+    "my",
+    "so",
+    "okay",
+    "ok",
+    "um",
+    "uh",
+    "hmm",
+    "mm",
+    "the",
+    "a",
+}
+
+
 def short_problem(expected: str, heard: str) -> str | None:
-    """A heading of a word or four: full coverage is too noisy to demand, but
-    the voice must say at least one of its words. Silent takes passed the
-    acoustic check on a breath ("Outline.", "Prompts." — 0.7 s of nothing), and
-    recognition fills silence with "Thank you.", which matches nothing here."""
-    source = [w for w in _words(expected) if len(w) > 2] or _words(expected)
+    """A heading of a word or four. Silent takes passed the acoustic check on
+    a breath ("Outline.", "Prompts." — 0.7 s of nothing), and recognition fills
+    silence with "Thank you." Recognition of one or two words is too noisy to
+    demand the words themselves ("Dataset" → "Data set", "Outline" → "Out of
+    line" are fine), so only a take that says nothing at all fails: no words,
+    or only silence fillers that are not the heading itself."""
+    source = _words(expected)
     spoken = _words(heard)
     if not source:
         return None
-    for want in source:
-        if any(SequenceMatcher(None, want, got).ratio() >= 0.75 for got in spoken):
-            return None
-    return "Voice did not say the heading"
+    if spoken and not set(spoken) <= _SILENCE_FILLERS:
+        return None
+    joined_s, joined_h = "".join(source), "".join(spoken)
+    if joined_h and SequenceMatcher(None, joined_s, joined_h).ratio() >= 0.6:
+        return None  # the heading really is "Thank you!"
+    return "Voice said nothing"
 
 
 def verify_wav(audio: bytes, expected: str) -> str | None:

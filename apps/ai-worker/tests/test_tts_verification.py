@@ -59,4 +59,13 @@ def test_a_short_heading_must_actually_be_said():
     assert short_problem("Impairments and.", "Yeah") is not None
     assert short_problem("Outline.", " Outline.") is None
     assert short_problem("Neural Networks.", "neural network") is None
-    assert short_problem("Be Wary, Be Savvy.", "Be wary.") is None
+    assert short_problem("Thank you!", "Thank you.") is None
+
+
+def test_near_misses_on_short_headings_are_not_failures():
+    # Recognition noise on real, spoken headings (from the stored-audio audit).
+    from manabi_ai.tts_verification import short_problem
+
+    assert short_problem("Dataset.", "Data set.") is None
+    assert short_problem("Outline.", "Out of line.") is None
+    assert short_problem("Thicknet.", "Pick the next.") is None
