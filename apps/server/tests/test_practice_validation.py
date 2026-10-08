@@ -23,11 +23,14 @@ def _spec(test, accepted=(), rejected=()):
     }
 
 
-def test_listed_examples_must_agree_with_the_reference():
-    # The real mistake: "abab is invalid" — but it is balanced.
+def test_a_wrong_listed_example_is_dropped_not_fatal():
+    # The real one: "abab is invalid" — but it is balanced. The key and the
+    # membership test agree, so the example is the mistake: it is not shown.
     spec = _spec(BALANCED_PARENS, ["ab", "aabb"], ["abab"])
     v = validate("grammar", None, "S -> a S b S | ε", spec, 2000)
-    assert not v.ok and "abab" in v.problem
+    assert v.ok, v.problem
+    assert {"s": "abab", "accept": False} not in v.samples
+    assert {"s": "ab", "accept": True} in v.samples
 
 
 def test_a_key_narrower_than_the_statement_is_caught():

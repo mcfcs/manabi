@@ -62,33 +62,27 @@ def validate(
                 f"your reference {key_says} `{t['s']}` but your membership test {test_says} it "
                 "— one of them does not match the statement",
             )
-    # The statement's examples must agree with the key: a generated task said
-    # "abab is invalid" while its own grammar (S -> a S b S | ε) accepts it.
+    # With the key and the membership test agreeing on every string, a listed
+    # example that disagrees is the model miscounting an example ("ababab is
+    # rejected" for equal a's and b's), not evidence against the key — drop
+    # it rather than throw away a verified problem (one was, three times).
     accepts = formal.recognizer(ref_kind, reference)
-    for listed, expected in (
-        (spec.get("examples_accepted") or [], True),
-        (spec.get("examples_rejected") or [], False),
-    ):
-        for s in listed:
-            word = () if s.strip() in formal.EPSILON or s == "" else tuple(s.strip())
-            if accepts(word) != expected:
-                verb = "accepted" if expected else "rejected"
-                actual = "accepts" if not expected else "rejects"
-                return Validation(
-                    False, f"`{s}` is listed as {verb} but your reference {actual} it"
-                )
 
     def norm(s: str) -> str:
         s = s.strip()
         return "ε" if s in formal.EPSILON or s == "" else s
+
+    def holds(s: str, expected: bool) -> bool:
+        word = () if norm(s) == "ε" else tuple(norm(s))
+        return accepts(word) == expected
 
     samples: list[dict] = []
     for listed, expected in (
         (spec.get("examples_accepted") or [], True),
         (spec.get("examples_rejected") or [], False),
     ):
-        # The model's (now verified) examples first, then the shortest strings.
-        picks = [norm(s) for s in listed]
+        # The model's examples that hold first, then the shortest strings.
+        picks = [norm(s) for s in listed if holds(s, expected)]
         picks += [t["s"] for t in tests if t["accept"] == expected]
         for s in list(dict.fromkeys(picks))[: SAMPLE_STRINGS + 1]:
             samples.append({"s": s, "accept": expected})
