@@ -304,85 +304,89 @@ export function CoursePage() {
           <h1>{course ? `${course.code} · ${course.name}` : "…"}</h1>
           {course?.term && <p className="course-head-meta">{course.term}</p>}
         </div>
-        {course && (
-          <Link
-            className="btn btn-primary"
-            to="/courses/$courseId/study"
-            params={{ courseId: String(course.id) }}
-            title="Lessons, section checks, topic tests and a final mock exam"
-          >
-            <GraduationCap size={15} strokeWidth={1.75} /> Study plans
-          </Link>
-        )}
-        {course && <ReviewThisCourse courseId={course.id} />}
-        {course?.meeting_url && (
-          <a
+        <div className="course-head-end">
+          <button
             className="icon-btn"
-            href={course.meeting_url}
-            target="_blank"
-            rel="noreferrer"
-            aria-label="Join online meeting"
-            title="Join online meeting"
+            onClick={() => archive.mutate(!(course?.archived ?? false))}
+            disabled={archive.isPending || !course}
+            aria-label={course?.archived ? "Restore this course" : "Archive this course"}
+            title={
+              course?.archived
+                ? "Restore — it returns to the home page and its cards come due again"
+                : "Archive — hide the course and stop its cards coming due, keeping everything"
+            }
           >
-            <Video size={16} strokeWidth={1.5} />
-          </a>
-        )}
-        {course?.canvas_url && (
-          <>
+            <Archive size={16} strokeWidth={1.5} />
+          </button>
+          <button
+            className="icon-btn danger course-delete"
+            onClick={() => removeCourse.mutate(false)}
+            aria-label="Delete course"
+          >
+            <Trash2 size={16} strokeWidth={1.5} />
+          </button>
+        </div>
+        <div className="course-head-actions">
+          {course && (
+            <Link
+              className="btn btn-primary"
+              to="/courses/$courseId/study"
+              params={{ courseId: String(course.id) }}
+              title="Lessons, section checks, topic tests and a final mock exam"
+            >
+              <GraduationCap size={15} strokeWidth={1.75} /> Study plans
+            </Link>
+          )}
+          {course && <ReviewThisCourse courseId={course.id} />}
+          {course?.meeting_url && (
             <a
               className="icon-btn"
-              href={course.canvas_url}
+              href={course.meeting_url}
               target="_blank"
               rel="noreferrer"
-              aria-label="Open in Canvas"
-              title="Open in Canvas"
+              aria-label="Join online meeting"
+              title="Join online meeting"
             >
-              <ExternalLink size={16} strokeWidth={1.5} />
+              <Video size={16} strokeWidth={1.5} />
             </a>
+          )}
+          {course?.canvas_url && (
+            <>
+              <a
+                className="icon-btn"
+                href={course.canvas_url}
+                target="_blank"
+                rel="noreferrer"
+                aria-label="Open in Canvas"
+                title="Open in Canvas"
+              >
+                <ExternalLink size={16} strokeWidth={1.5} />
+              </a>
+              <button
+                className="btn course-canvas-files"
+                onClick={() => setCanvasFilesOpen(true)}
+              >
+                <CloudDownload size={15} strokeWidth={1.75} /> Canvas files
+              </button>
+              <button
+                className="btn course-canvas-files"
+                onClick={() => setCanvasSyncOpen(true)}
+                title="Mirror Canvas modules, pages, links & syllabus"
+              >
+                <CloudDownload size={15} strokeWidth={1.75} /> Sync course
+              </button>
+            </>
+          )}
+          {course && !course.canvas_course_id && (
             <button
               className="btn course-canvas-files"
-              onClick={() => setCanvasFilesOpen(true)}
+              onClick={() => setEditing(true)}
+              title="Pick the matching Canvas course to enable announcements, file import and sync"
             >
-              <CloudDownload size={15} strokeWidth={1.75} /> Canvas files
+              <Link2 size={15} strokeWidth={1.75} /> Link Canvas
             </button>
-            <button
-              className="btn course-canvas-files"
-              onClick={() => setCanvasSyncOpen(true)}
-              title="Mirror Canvas modules, pages, links & syllabus"
-            >
-              <CloudDownload size={15} strokeWidth={1.75} /> Sync course
-            </button>
-          </>
-        )}
-        {course && !course.canvas_course_id && (
-          <button
-            className="btn course-canvas-files"
-            onClick={() => setEditing(true)}
-            title="Pick the matching Canvas course to enable announcements, file import and sync"
-          >
-            <Link2 size={15} strokeWidth={1.75} /> Link Canvas
-          </button>
-        )}
-        <button
-          className="icon-btn"
-          onClick={() => archive.mutate(!(course?.archived ?? false))}
-          disabled={archive.isPending || !course}
-          aria-label={course?.archived ? "Restore this course" : "Archive this course"}
-          title={
-            course?.archived
-              ? "Restore — it returns to the home page and its cards come due again"
-              : "Archive — hide the course and stop its cards coming due, keeping everything"
-          }
-        >
-          <Archive size={16} strokeWidth={1.5} />
-        </button>
-        <button
-          className="icon-btn danger course-delete"
-          onClick={() => removeCourse.mutate(false)}
-          aria-label="Delete course"
-        >
-          <Trash2 size={16} strokeWidth={1.5} />
-        </button>
+          )}
+        </div>
       </header>
 
       <CourseGlance courseId={Number(courseId)} />
