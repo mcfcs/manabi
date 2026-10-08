@@ -20,6 +20,8 @@ from manabi_core.models import (
     ArtifactType,
     Citation,
     DocElement,
+    Document,
+    DocumentPage,
     Flashcard,
     Job,
     JobStatus,
@@ -37,7 +39,7 @@ from procrastinate.exceptions import JobAborted
 from sqlalchemy import delete, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from manabi_ai import cardstyle, prompts, quizplan
+from manabi_ai import cardstyle, codestyle, prompts, quizplan
 from manabi_ai.app import app
 from manabi_ai.config import get_settings
 from manabi_ai.context import (
@@ -554,6 +556,7 @@ async def generate_flashcards(
                 existing_fronts.extend((f.item.get("front") or "") for f in fresh)
 
             max_rounds = 8 if exhaustive else 3
+            code_style = await _course_code_style(db, module_id) if "code" in style_plan else ""
             for style, n_style in style_plan.items():
                 want = n_style - derived_count.get(style, 0)
                 got = 0
@@ -582,6 +585,8 @@ async def generate_flashcards(
                             base_prompt = prompts.FLASHCARDS_PROMPT.replace(
                                 "{card_rules}", cardstyle.RULES[style]
                             )
+                            if style == "code":
+                                base_prompt += code_style
                         if instructions:
                             base_prompt += prompts.FOCUS_BLOCK.replace(
                                 "{instructions}", instructions
@@ -1206,6 +1211,31 @@ async def _adjudicate(item: dict, answer: dict, solved: dict, source: str) -> di
         return None
 
 
+async def _course_code_style(db: AsyncSession, module_id: int) -> str:
+    """The professor's code style for this module's course (codestyle), from
+    the course's imported code materials. "" when it has none."""
+    course_id = (
+        await db.execute(select(Module.course_id).where(Module.id == module_id))
+    ).scalar_one_or_none()
+    if course_id is None:
+        return ""
+    rows = (
+        await db.execute(
+            select(DocumentPage.title, DocElement.text_content)
+            .join(DocElement, DocElement.page_id == DocumentPage.id)
+            .join(Document, Document.id == DocElement.document_id)
+            .join(Module, Module.id == Document.module_id)
+            .where(
+                Module.course_id == course_id,
+                Document.deleted_at.is_(None),
+                Document.filename.ilike("%.code.txt"),
+                DocElement.element_type == "code",
+            )
+        )
+    ).all()
+    return codestyle.style_block([(t or "", c or "") for t, c in rows])
+
+
 async def _plan_checkpoint_prompts(db: AsyncSession, plan_id: int) -> dict[int, list[str]]:
     """The stems of a study plan's topic tests, per module. A plan's final
     repeated a topic test's question word for word ("what value is passed to
@@ -1290,6 +1320,8 @@ async def generate_quiz(
             base_prompt = prompts.EXERCISE_QUIZ_PROMPT if exercise else prompts.QUIZ_PROMPT
             if instructions:
                 base_prompt += prompts.FOCUS_BLOCK.replace("{instructions}", instructions)
+            # Code is written the way the professor writes it.
+            base_prompt += await _course_code_style(db, order[0]) if order else ""
             # Exercise stems legitimately look alike ("Trace this code…" with
             # different snippets) — practice quizzes dedup at 0.9.
             dedup_threshold = 0.9 if exercise else 0.8
@@ -1723,6 +1755,7 @@ async def regenerate_question(job_id: int, question_id: int) -> None:
             base_prompt = prompts.EXERCISE_QUIZ_PROMPT if exercise else prompts.QUIZ_PROMPT
             if artifact.instructions:
                 base_prompt += prompts.FOCUS_BLOCK.replace("{instructions}", artifact.instructions)
+            base_prompt += await _course_code_style(db, question.module_id or artifact.module_id)
             base_prompt = (
                 base_prompt.replace("{count}", "1").replace("{types}", question.qtype)
                 + "\n\nDo NOT duplicate or trivially rephrase any of these existing "
