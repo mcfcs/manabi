@@ -215,6 +215,51 @@ def _ensure_normalized_pdf(doc: Document) -> str:
     return "spread"
 
 
+def _structure_code_bundle(db: Session, doc: Document, bundle: list[tuple[str, str]]) -> None:
+    """One page per file: a "File: name" heading and the code as ONE code
+    element, byte-for-byte (processing.code_bundle explains why)."""
+    import html as _html
+
+    from manabi_server.processing.code_bundle import language_of
+
+    order_index = 0
+    for page_no, (name, code) in enumerate(bundle, start=1):
+        lang = language_of(name)
+        page = DocumentPage(
+            document_id=doc.id,
+            page_no=page_no,
+            title=name,
+            text_html=(
+                f"<h3>{_html.escape(name)}</h3>"
+                f'<pre class="code-file" data-lang="{lang}"><code>{_html.escape(code)}</code></pre>'
+            ),
+        )
+        db.add(page)
+        db.flush()
+        if doc.processing_mode != "render_only":
+            db.add(
+                DocElement(
+                    document_id=doc.id,
+                    page_id=page.id,
+                    order_index=order_index,
+                    element_type="heading",
+                    text_content=f"File: {name}",
+                )
+            )
+            db.add(
+                DocElement(
+                    document_id=doc.id,
+                    page_id=page.id,
+                    order_index=order_index + 1,
+                    element_type="code",
+                    text_content=code.rstrip("\n"),
+                )
+            )
+            order_index += 2
+    doc.page_count = len(bundle)
+    db.commit()
+
+
 def _stage_structure(db: Session, doc: Document) -> None:
     # wipe-and-redo (also removes dependent chunks via cascade-by-hand)
     db.execute(delete(Chunk).where(Chunk.document_id == doc.id))
@@ -223,22 +268,35 @@ def _stage_structure(db: Session, doc: Document) -> None:
     db.commit()
 
     if doc.kind == DocumentKind.txt:
+        from manabi_server.processing.code_bundle import parse_bundle
         from manabi_server.processing.plain_text import decode_text, page_html, text_pages
 
-        pages = text_pages(decode_text(files.resolve(doc.storage_path).read_bytes()))
+        text = decode_text(files.resolve(doc.storage_path).read_bytes())
+        bundle = parse_bundle(text)
+        if bundle is not None:
+            _structure_code_bundle(db, doc, bundle)
+            return
+        pages = text_pages(text)
         order_index = 0
         for page_no, blocks in enumerate(pages, start=1):
             page = DocumentPage(
-                document_id=doc.id, page_no=page_no, text_html=page_html(blocks),
+                document_id=doc.id,
+                page_no=page_no,
+                text_html=page_html(blocks),
             )
             db.add(page)
             db.flush()
             if doc.processing_mode != "render_only":
                 for block in blocks:
-                    db.add(DocElement(
-                        document_id=doc.id, page_id=page.id, order_index=order_index,
-                        element_type="paragraph", text_content=block,
-                    ))
+                    db.add(
+                        DocElement(
+                            document_id=doc.id,
+                            page_id=page.id,
+                            order_index=order_index,
+                            element_type="paragraph",
+                            text_content=block,
+                        )
+                    )
                     order_index += 1
         doc.page_count = len(pages)
         db.commit()

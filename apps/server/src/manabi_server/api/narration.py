@@ -329,6 +329,7 @@ async def unprepared_readings(
                 Course.archived_at.is_(None),
                 Document.deleted_at.is_(None),
                 Document.kind.in_([DocumentKind.pdf, DocumentKind.txt]),
+                Document.filename.not_ilike("%.code.txt"),  # code is never read aloud
                 Document.extract_status == ExtractStatus.ready,
                 Narration.id.is_(None),
             )

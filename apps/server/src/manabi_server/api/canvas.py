@@ -635,3 +635,27 @@ async def canvas_import_syllabus(
     )
     await db.commit()
     return _doc_out(doc, job.id)
+
+
+class ImportCodeDemosIn(BaseModel):
+    dry_run: bool = False
+    # Canvas module name → Manabi module id, overriding the automatic match.
+    module_map: dict[str, int] | None = None
+
+
+@router.post("/courses/{course_id}/canvas/code-demos", dependencies=[Depends(require_csrf)])
+async def canvas_import_code_demos(
+    course_id: int,
+    data: ImportCodeDemosIn,
+    user: User = Depends(get_default_user),
+    db: AsyncSession = Depends(get_db),
+) -> list[dict]:
+    """Import every demo page's linked code (zips unpacked) and loose code
+    file as code materials, one per demo, in the matching module. Canvas is
+    only read. Already-imported demos are reported, not duplicated."""
+    from manabi_server.services.canvas_code import import_code_demos
+
+    course = await _owned_course(course_id, user, db)
+    return await import_code_demos(
+        db, user, course, dry_run=data.dry_run, module_map=data.module_map
+    )

@@ -93,6 +93,10 @@ def segment_rows(script: Script) -> list[dict]:
 
 
 def narratable(doc: Document) -> bool:
+    from manabi_server.processing.code_bundle import is_bundle_name
+
+    if is_bundle_name(doc.filename):
+        return False  # source code is shown, never read aloud
     return doc.kind in (DocumentKind.pdf, DocumentKind.txt) and doc.processing_mode != "render_only"
 
 
