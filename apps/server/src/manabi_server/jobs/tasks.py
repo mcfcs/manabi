@@ -16,6 +16,7 @@ from manabi_server.jobs.queue import (
     EXTRACT_TEXT_HTML_TASK,
     PROCESS_DOCUMENT_TASK,
     SCORE_SUPPORT_TASK,
+    VALIDATE_PROBLEM_TASK,
     VERIFY_CARD_OUTPUTS_TASK,
     VERIFY_OUTPUTS_TASK,
 )
@@ -155,6 +156,76 @@ def _queue_replacements(db, artifact, question_ids: list[int]) -> int:
         db.commit()
         queued += 1
     return queued
+
+
+@app.task(name=VALIDATE_PROBLEM_TASK, queue="cpu", retry=0)
+def validate_problem(problem_id: int, job_id: int) -> str:
+    """Turn a freshly written practice problem into a judged one: run its
+    reference to get the expected outputs (or compute the reference
+    language's strings). A problem that fails goes back to the model with
+    the reason, up to services.practice.MAX_ATTEMPTS writes in total."""
+    from datetime import UTC, datetime
+
+    from manabi_core.models import Job, JobStatus, PracticeProblem
+
+    from manabi_server.jobs.queue import GENERATE_PROBLEM_TASK, defer_task_sync
+    from manabi_server.services.practice import MAX_ATTEMPTS, validate
+
+    with db_session() as db:
+        problem = db.get(PracticeProblem, problem_id)
+        job = db.get(Job, job_id)
+        if problem is None:
+            return "gone"
+        try:
+            v = validate(
+                problem.kind,
+                problem.language,
+                problem.reference,
+                problem.spec or {},
+                problem.time_limit_ms,
+            )
+        except Exception as exc:  # noqa: BLE001 — a crash in checking is a failed check
+            log.exception("practice validation crashed for problem %s", problem_id)
+            v = None
+            reason = f"validation crashed: {type(exc).__name__}"
+        else:
+            reason = v.problem
+        if v is not None and v.ok:
+            problem.samples = v.samples or []
+            problem.tests = v.tests or []
+            problem.status = "ready"
+            problem.error = None
+            if job is not None:
+                job.status = JobStatus.succeeded
+                job.progress_pct = 100
+                job.progress_note = "Ready"
+                job.result = {"problem_id": problem.id}
+                job.finished_at = datetime.now(UTC)
+            db.commit()
+            return "ready"
+        if (problem.attempts or 0) < MAX_ATTEMPTS:
+            problem.status = "generating"
+            problem.error = reason
+            if job is not None:
+                job.progress_note = f"Fixing the problem ({reason[:80]})"
+            db.commit()
+            defer_task_sync(
+                GENERATE_PROBLEM_TASK,
+                "gpu",
+                job_id=job_id,
+                problem_id=problem.id,
+                chunk_ids=list(problem.source_chunk_ids or []) or None,
+                feedback=reason,
+            )
+            return "retry"
+        problem.status = "failed"
+        problem.error = reason
+        if job is not None:
+            job.status = JobStatus.failed
+            job.error = f"No valid problem after {problem.attempts} tries: {reason}"[:500]
+            job.finished_at = datetime.now(UTC)
+        db.commit()
+        return "failed"
 
 
 @app.task(name=VERIFY_CARD_OUTPUTS_TASK, queue="cpu", retry=1)

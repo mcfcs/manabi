@@ -427,6 +427,81 @@ class StudyPlan(Base, TimestampMixin):
     __table_args__ = (Index("ix_study_plans_course_id", "course_id"),)
 
 
+class PracticeProblem(Base, TimestampMixin):
+    """A judged practice problem (0044): HackerRank-style code (stdin →
+    stdout) or a theory task (write a grammar / regex / DFA).
+
+    The model writes the statement, a reference solution and test INPUTS;
+    the expected outputs come from running the reference (code) or from
+    membership in the reference language (theory), never from the model. A
+    problem whose reference fails its own validation never becomes `ready`.
+    `tests` and `reference` are hidden from the student until solved."""
+
+    __tablename__ = "practice_problems"
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    user_id: Mapped[int] = mapped_column(
+        BigInteger, ForeignKey("users.id", ondelete="CASCADE"), nullable=False
+    )
+    course_id: Mapped[int | None] = mapped_column(
+        BigInteger, ForeignKey("courses.id", ondelete="CASCADE")
+    )
+    module_id: Mapped[int | None] = mapped_column(
+        BigInteger, ForeignKey("modules.id", ondelete="SET NULL")
+    )
+    plan_id: Mapped[int | None] = mapped_column(
+        BigInteger, ForeignKey("study_plans.id", ondelete="SET NULL")
+    )
+    kind: Mapped[str] = mapped_column(String(16), nullable=False)  # code|grammar|regex|dfa
+    language: Mapped[str | None] = mapped_column(String(16))  # c|cpp|python (code only)
+    title: Mapped[str] = mapped_column(String(255), nullable=False, default="Practice problem")
+    topic: Mapped[str | None] = mapped_column(Text)
+    difficulty: Mapped[str] = mapped_column(String(16), nullable=False, default="medium")
+    source: Mapped[str] = mapped_column(String(16), nullable=False, default="materials")
+    statement: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    spec: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
+    samples: Mapped[list] = mapped_column(JSONB, nullable=False, default=list)
+    tests: Mapped[list] = mapped_column(JSONB, nullable=False, default=list)
+    reference: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    time_limit_ms: Mapped[int] = mapped_column(nullable=False, default=2000)
+    status: Mapped[str] = mapped_column(String(16), nullable=False, default="generating")
+    error: Mapped[str | None] = mapped_column(Text)
+    attempts: Mapped[int] = mapped_column(nullable=False, default=0)
+    model_name: Mapped[str | None] = mapped_column(String(128))
+    source_chunk_ids: Mapped[list[int]] = mapped_column(
+        ARRAY(BigInteger), nullable=False, default=list
+    )
+    job_id: Mapped[int | None] = mapped_column(
+        BigInteger, ForeignKey("jobs.id", ondelete="SET NULL")
+    )
+    solved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+    __table_args__ = (
+        Index("ix_practice_problems_user", "user_id"),
+        Index("ix_practice_problems_course", "course_id"),
+    )
+
+
+class PracticeSubmission(Base, TimestampMixin):
+    """One Run (samples) or Submit (hidden tests) of a practice problem."""
+
+    __tablename__ = "practice_submissions"
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    problem_id: Mapped[int] = mapped_column(
+        BigInteger, ForeignKey("practice_problems.id", ondelete="CASCADE"), nullable=False
+    )
+    mode: Mapped[str] = mapped_column(String(8), nullable=False)  # run|submit
+    language: Mapped[str | None] = mapped_column(String(16))
+    code: Mapped[str] = mapped_column(Text, nullable=False)
+    verdict: Mapped[str] = mapped_column(String(24), nullable=False)
+    passed: Mapped[int] = mapped_column(nullable=False, default=0)
+    total: Mapped[int] = mapped_column(nullable=False, default=0)
+    results: Mapped[list] = mapped_column(JSONB, nullable=False, default=list)
+
+    __table_args__ = (Index("ix_practice_submissions_problem", "problem_id"),)
+
+
 class QuizAttempt(Base, TimestampMixin):
     __tablename__ = "quiz_attempts"
 
