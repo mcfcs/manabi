@@ -59,12 +59,23 @@
   width: 140px;
   flex-shrink: 0;
 }
+.task-quickadd-time {
+  width: 110px;
+  flex-shrink: 0;
+}
 @media (max-width: 767px) {
   .task-quickadd {
     flex-wrap: wrap;
   }
   .task-quickadd .input:first-child {
     flex-basis: 100%;
+  }
+  .task-quickadd-course,
+  .task-quickadd-date,
+  .task-quickadd-time {
+    flex: 1 1 0;
+    min-width: 0;
+    width: auto;
   }
 }
 

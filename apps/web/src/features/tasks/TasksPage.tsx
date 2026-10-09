@@ -9,6 +9,8 @@ import {
 } from "lucide-react";
 import { useEffect, useState } from "react";
 
+import { defaultDue, hhmmToMinute, minuteToHHMM, todayISO } from "../../lib/dates";
+
 import {
   api,
   ApiError,
@@ -133,7 +135,9 @@ export function TasksPage() {
   const queryClient = useQueryClient();
   const [title, setTitle] = useState("");
   const [courseId, setCourseId] = useState<number | "">("");
-  const [dueDate, setDueDate] = useState("");
+  // A new task is due tomorrow at 11:59 PM unless changed — never in the past.
+  const [dueDate, setDueDate] = useState(() => defaultDue().date);
+  const [dueTime, setDueTime] = useState(() => minuteToHHMM(defaultDue().minute));
   const [doneOpen, setDoneOpen] = useState(false);
   const [pushState, setPushState] = useState<PushState | null>(null);
   const [syncNote, setSyncNote] = useState<string | null>(null);
@@ -168,10 +172,12 @@ export function TasksPage() {
         title: title.trim(),
         course_id: courseId === "" ? null : courseId,
         due_date: dueDate || null,
+        due_minute: dueDate ? hhmmToMinute(dueTime) : null,
       }),
     onSuccess: () => {
       setTitle("");
-      setDueDate("");
+      setDueDate(defaultDue().date);
+      setDueTime(minuteToHHMM(defaultDue().minute));
       invalidate();
     },
   });
@@ -287,7 +293,17 @@ export function TasksPage() {
           type="date"
           className="input task-quickadd-date"
           value={dueDate}
+          min={todayISO()}
           onChange={(e) => setDueDate(e.target.value)}
+          aria-label="Due date"
+        />
+        <input
+          type="time"
+          className="input task-quickadd-time"
+          value={dueTime}
+          onChange={(e) => setDueTime(e.target.value)}
+          disabled={!dueDate}
+          aria-label="Due time"
         />
         <button className="btn btn-primary" disabled={!title.trim() || add.isPending}>
           Add
