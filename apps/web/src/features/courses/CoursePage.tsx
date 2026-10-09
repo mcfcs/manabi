@@ -25,6 +25,7 @@ import { Modal } from "../../components/Modal";
 import { Announcements } from "./Announcements";
 import { CanvasFilesModal } from "./CanvasFilesModal";
 import { CanvasSyncModal } from "./CanvasSyncModal";
+import { ClassLog } from "./ClassLog";
 import { CodeDemosModal } from "./CodeDemosModal";
 import { CourseDialog } from "./CourseDialog";
 import { CourseFiles } from "./CourseFiles";
@@ -402,6 +403,8 @@ export function CoursePage() {
       <CourseGlance courseId={Number(courseId)} />
 
       <Announcements courseId={Number(courseId)} />
+
+      <ClassLog courseId={Number(courseId)} />
 
       <CourseLinks courseId={courseId} />
 

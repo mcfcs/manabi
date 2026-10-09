@@ -1,15 +1,19 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Pencil, Plus, Video } from "lucide-react";
-import { useState } from "react";
+import { Moon, Pencil, Plus, UserX, Video, X } from "lucide-react";
+import { useEffect, useState } from "react";
 
 import {
   api,
+  ApiError,
+  type CalAbsenceOut,
   type CalendarEventOut,
   type CourseOut,
   type MeetingOut,
 } from "../../lib/api";
+import { roundupOpen, todayISO } from "../../lib/dates";
 import { CourseDialog } from "../courses/CourseDialog";
 import {
+  absenceFor,
   type DayData,
   eventColor,
   feedColor,
@@ -208,6 +212,14 @@ export function DayDetails({
                     </button>
                   </>
                 )}
+                {m.course_id != null && (
+                  <Attendance
+                    date={date}
+                    courseId={m.course_id}
+                    code={m.code}
+                    absence={absenceFor(m, data)}
+                  />
+                )}
               </div>
               );
             })}
@@ -340,6 +352,8 @@ export function DayDetails({
         </section>
       )}
 
+      <Roundups date={date} data={data} />
+
       <button className="btn day-panel-add" onClick={onAddEvent}>
         <Plus size={15} strokeWidth={1.75} /> Event on this day
       </button>
@@ -348,5 +362,174 @@ export function DayDetails({
         <CourseDialog course={editCourse} onClose={() => setEditCourseId(null)} />
       )}
     </div>
+  );
+}
+
+/** Mark one class meeting absent (1 cut) or late (½), straight into the
+ * course's absence log — the same log the course page counts. */
+function Attendance({
+  date,
+  courseId,
+  code,
+  absence,
+}: {
+  date: string;
+  courseId: number;
+  code: string;
+  absence: CalAbsenceOut | undefined;
+}) {
+  const queryClient = useQueryClient();
+  const [open, setOpen] = useState(false);
+  const [reason, setReason] = useState("");
+  const refresh = () => {
+    queryClient.invalidateQueries({ queryKey: ["calendar"] });
+    queryClient.invalidateQueries({ queryKey: ["cuts"] });
+  };
+  const log = useMutation({
+    mutationFn: (kind: "cut" | "late") =>
+      api.post("/api/cuts", { course_id: courseId, date, kind, reason: reason.trim() || null }),
+    onSuccess: () => {
+      setOpen(false);
+      setReason("");
+      refresh();
+    },
+  });
+  const undo = useMutation({
+    mutationFn: (id: number) => api.delete(`/api/cuts/${id}`),
+    onSuccess: refresh,
+  });
+
+  if (absence) {
+    return (
+      <span className={`absence-badge ${absence.kind}`} title={absence.reason ?? undefined}>
+        {absence.kind === "late" ? "Late · ½ cut" : "Absent · 1 cut"}
+        <button
+          className="absence-undo"
+          onClick={() => undo.mutate(absence.id)}
+          disabled={undo.isPending}
+          aria-label={`Remove the ${absence.kind === "late" ? "late" : "absence"} for ${code}`}
+          title="Remove from the absence log"
+        >
+          <X size={12} strokeWidth={2} />
+        </button>
+      </span>
+    );
+  }
+  if (!open) {
+    return (
+      <button
+        className="btn absence-open"
+        onClick={() => setOpen(true)}
+        aria-label={`Absent or late for ${code}?`}
+        title={`Log an absence or late for ${code} on this day`}
+      >
+        <UserX size={13} strokeWidth={1.75} /> <span className="absence-open-label">Absent?</span>
+      </button>
+    );
+  }
+  return (
+    <div className="absence-picker">
+      <button className="btn absence-cut" disabled={log.isPending} onClick={() => log.mutate("cut")}>
+        Absent <span className="absence-weight">1 cut</span>
+      </button>
+      <button className="btn absence-late" disabled={log.isPending} onClick={() => log.mutate("late")}>
+        Late <span className="absence-weight">½ cut</span>
+      </button>
+      <input
+        className="input absence-reason"
+        placeholder="Reason (optional)"
+        value={reason}
+        onChange={(e) => setReason(e.target.value)}
+        aria-label="Reason"
+      />
+      <button className="icon-btn" onClick={() => setOpen(false)} aria-label="Cancel">
+        <X size={14} strokeWidth={1.75} />
+      </button>
+    </div>
+  );
+}
+
+/** "What happened in class": one note per class that met, written after
+ * the day's classes — from 8 PM today, any time for a past day. */
+function Roundups({ date, data }: { date: string; data: DayData }) {
+  const classes = [
+    ...new Map(
+      data.meetings.filter((m) => m.course_id != null).map((m) => [m.course_id!, m]),
+    ).values(),
+  ];
+  if (!classes.length || date > todayISO()) return null;
+  const open = roundupOpen(date);
+  return (
+    <section className="roundup">
+      <h3>
+        <Moon size={14} strokeWidth={1.75} /> Roundup
+      </h3>
+      {!open ? (
+        <p className="roundup-closed">
+          Opens at 8 PM. After the day&apos;s classes, note what happened in each one.
+        </p>
+      ) : (
+        classes.map((m) => (
+          <RoundupBox
+            key={m.course_id}
+            date={date}
+            meeting={m}
+            saved={data.roundups.find((r) => r.course_id === m.course_id)?.text ?? ""}
+          />
+        ))
+      )}
+    </section>
+  );
+}
+
+function RoundupBox({
+  date,
+  meeting,
+  saved,
+}: {
+  date: string;
+  meeting: MeetingOut;
+  saved: string;
+}) {
+  const queryClient = useQueryClient();
+  const [text, setText] = useState(saved);
+  const [note, setNote] = useState<string | null>(null);
+  useEffect(() => setText(saved), [saved]);
+  const save = useMutation({
+    mutationFn: () => api.put("/api/roundups", { course_id: meeting.course_id, date, text }),
+    onSuccess: () => {
+      setNote(text.trim() ? "Saved" : "Cleared");
+      queryClient.invalidateQueries({ queryKey: ["calendar"] });
+      queryClient.invalidateQueries({ queryKey: ["course-roundups", meeting.course_id] });
+    },
+    onError: (e) => setNote(e instanceof ApiError ? e.message : "Couldn't save"),
+  });
+  const dirty = text.trim() !== saved.trim();
+  return (
+    <label className="roundup-box">
+      <span className="roundup-head">
+        <span
+          className="day-row-dot"
+          style={{ background: meeting.accent_color ?? "var(--accent-blue)" }}
+        />
+        <span className="roundup-code">{meeting.code}</span>
+        {dirty ? (
+          <span className="roundup-note">Unsaved</span>
+        ) : (
+          note && <span className="roundup-note">{note}</span>
+        )}
+      </span>
+      <textarea
+        className="input roundup-text"
+        rows={3}
+        value={text}
+        placeholder="What was covered, announcements, what to review…"
+        onChange={(e) => {
+          setText(e.target.value);
+          setNote(null);
+        }}
+        onBlur={() => dirty && save.mutate()}
+      />
+    </label>
   );
 }

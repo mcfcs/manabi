@@ -66,6 +66,8 @@ export function CourseGlance({ courseId }: { courseId: number }) {
     onSuccess: () => {
       setLogging(false);
       qc.invalidateQueries({ queryKey: ["cuts"] });
+      // The same log shows on the calendar.
+      qc.invalidateQueries({ queryKey: ["calendar"] });
     },
   });
 

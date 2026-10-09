@@ -14,8 +14,10 @@ import { useState } from "react";
 import type { CalendarView } from "../../app/router";
 import {
   api,
+  type CalAbsenceOut,
   type CalendarEventOut,
   type CalendarMonthOut,
+  type CalRoundupOut,
   type CalTaskOut,
   type DayMarkOut,
   type GcalEventOut,
@@ -125,6 +127,8 @@ export interface DayData {
   gcal: GcalEventOut[];
   marks: DayMarkOut[];
   tasks: CalTaskOut[];
+  absences: CalAbsenceOut[];
+  roundups: CalRoundupOut[];
 }
 
 export const EMPTY_DAY: DayData = {
@@ -133,14 +137,29 @@ export const EMPTY_DAY: DayData = {
   gcal: [],
   marks: [],
   tasks: [],
+  absences: [],
+  roundups: [],
 };
+
+/** The absence-log entry for a class meeting, if any. */
+export function absenceFor(m: MeetingOut, day: DayData): CalAbsenceOut | undefined {
+  return m.course_id == null ? undefined : day.absences.find((a) => a.course_id === m.course_id);
+}
 
 function groupByDay(data: CalendarMonthOut | undefined): Map<string, DayData> {
   const byDay = new Map<string, DayData>();
   if (!data) return byDay;
   const entry = (d: string) => {
     if (!byDay.has(d))
-      byDay.set(d, { meetings: [], events: [], gcal: [], marks: [], tasks: [] });
+      byDay.set(d, {
+        meetings: [],
+        events: [],
+        gcal: [],
+        marks: [],
+        tasks: [],
+        absences: [],
+        roundups: [],
+      });
     return byDay.get(d)!;
   };
   for (const m of data.meetings) entry(m.date).meetings.push(m);
@@ -148,6 +167,8 @@ function groupByDay(data: CalendarMonthOut | undefined): Map<string, DayData> {
   for (const g of data.gcal) entry(g.date).gcal.push(g);
   for (const mk of data.marks) entry(mk.date).marks.push(mk);
   for (const t of data.tasks) entry(t.date).tasks.push(t);
+  for (const a of data.absences ?? []) entry(a.date).absences.push(a);
+  for (const r of data.roundups ?? []) entry(r.date).roundups.push(r);
   return byDay;
 }
 
@@ -234,6 +255,8 @@ function filterDay(day: DayData, hidden: Set<string>): DayData {
     tasks: hidden.has("tasks") ? [] : day.tasks,
     gcal: day.gcal.filter((g) => !hidden.has(`gcal:${g.calendar ?? "Google"}`)),
     marks: day.marks,
+    absences: day.absences,
+    roundups: day.roundups,
   };
 }
 
@@ -254,6 +277,7 @@ function TaskChip({ t }: { t: CalTaskOut }) {
 
 function MeetingChip({ m, day }: { m: MeetingOut; day: DayData }) {
   const mode = meetingMode(m, day);
+  const absent = absenceFor(m, day);
   // A labeled block (internship / org duty) is color-highlighted by its RTO /
   // WFH / No-work state instead of its schedule accent, so the month grid shows
   // the day's work mode at a glance.
@@ -261,12 +285,12 @@ function MeetingChip({ m, day }: { m: MeetingOut; day: DayData }) {
   const tint = labeled ? blockModeColor(mode) : (m.accent_color ?? "var(--accent-blue)");
   return (
     <span
-      className={`cal-chip meeting ${mode}`}
+      className={`cal-chip meeting ${mode}${absent ? ` absent ${absent.kind}` : ""}`}
       style={{
         background: `color-mix(in srgb, ${tint} 16%, transparent)`,
         color: tint,
       }}
-      title={`${m.code} · ${fmtMin(m.start_minute)}–${fmtMin(m.end_minute)} · ${modeLabel(mode, m.location)}`}
+      title={`${m.code} · ${fmtMin(m.start_minute)}–${fmtMin(m.end_minute)} · ${modeLabel(mode, m.location)}${absent ? ` · ${absent.kind === "late" ? "late" : "absent"}` : ""}`}
     >
       {m.code.replace(/\s/g, "")}
       {labeled ? (
@@ -275,6 +299,9 @@ function MeetingChip({ m, day }: { m: MeetingOut; day: DayData }) {
         <span className="cal-chip-time"> {fmtMin(m.start_minute)}</span>
       )}
       {mode === "sync" && <Video size={9} strokeWidth={2} className="cal-chip-video" />}
+      {absent && (
+        <span className="cal-chip-absent">{absent.kind === "late" ? "late" : "absent"}</span>
+      )}
     </span>
   );
 }
@@ -537,10 +564,11 @@ function WeekView({
                   const m = item.m;
                   const mode = meetingMode(m, day);
                   const accent = m.accent_color ?? "var(--accent-blue)";
+                  const absent = absenceFor(m, day);
                   return (
                     <div
                       key={`m${i}`}
-                      className={`week-block${mode === "async" || mode === "nowork" ? " async" : ""}`}
+                      className={`week-block${mode === "async" || mode === "nowork" ? " async" : ""}${absent ? ` absent ${absent.kind}` : ""}`}
                       role="button"
                       tabIndex={0}
                       onClick={() => onOpenDay(date)}
@@ -552,6 +580,11 @@ function WeekView({
                       title={`${m.code} ${fmtMin(m.start_minute)}–${fmtMin(m.end_minute)} · ${modeLabel(mode, m.location)}`}
                     >
                       <span style={{ color: accent }}>{m.code.replace(/\s/g, "")}</span>
+                      {absent && (
+                        <span className={`week-block-tag absent ${absent.kind}`}>
+                          {absent.kind === "late" ? "Late" : "Absent"}
+                        </span>
+                      )}
                       {m.course_id == null && (
                         <span className={`week-block-tag ${mode}`}>
                           {blockModeTag(mode)}

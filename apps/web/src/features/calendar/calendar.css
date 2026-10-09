@@ -895,3 +895,178 @@
 .narration-backlog button {
   align-self: flex-start;
 }
+
+/* ── Absences (the course absence log on the calendar) ─────────────────── */
+/* Not struck through: a strike already means "async — no meeting". */
+.cal-chip.meeting.absent {
+  text-decoration: none;
+  box-shadow: inset 2px 0 0 var(--accent-red);
+}
+.cal-chip-absent {
+  margin-left: 3px;
+  padding: 0 3px;
+  border-radius: 3px;
+  font-size: 9px;
+  font-weight: 700;
+  text-decoration: none;
+  display: inline-block;
+  color: #fff;
+  background: var(--accent-red);
+}
+.cal-chip.meeting.late {
+  box-shadow: inset 2px 0 0 #9a6a14;
+}
+.cal-chip.meeting.late .cal-chip-absent {
+  background: #9a6a14;
+}
+.week-block.absent {
+  opacity: 0.7;
+  background-image: repeating-linear-gradient(
+    135deg,
+    transparent 0 6px,
+    color-mix(in srgb, var(--accent-red) 10%, transparent) 6px 8px
+  );
+}
+.week-block.late {
+  opacity: 1;
+  background-image: none;
+}
+.week-block .week-block-tag.absent {
+  background: var(--accent-red);
+}
+.week-block .week-block-tag.absent.late {
+  background: #9a6a14;
+}
+
+.absence-open {
+  min-height: 32px;
+  padding: 4px 10px;
+  font-size: 12.5px;
+  gap: 4px;
+  color: var(--ink-soft);
+}
+.absence-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 4px 3px 9px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--accent-red-deep);
+  background: var(--accent-red-wash);
+  white-space: nowrap;
+}
+.absence-badge.late {
+  color: #7a5410;
+  background: #f6ecd8;
+}
+.absence-undo {
+  display: inline-grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  border: none;
+  border-radius: 999px;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+}
+.absence-undo:hover {
+  background: color-mix(in srgb, currentColor 14%, transparent);
+}
+.absence-picker {
+  flex-basis: 100%;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--s-2);
+  padding: var(--s-2) 0 0 18px;
+}
+.absence-picker .btn {
+  min-height: 36px;
+  padding: 6px 12px;
+}
+.absence-cut {
+  border-color: color-mix(in srgb, var(--accent-red) 45%, var(--rule));
+  color: var(--accent-red-deep);
+}
+.absence-late {
+  border-color: color-mix(in srgb, #9a6a14 45%, var(--rule));
+  color: #7a5410;
+}
+.absence-weight {
+  margin-left: 4px;
+  font-size: 11px;
+  font-weight: 500;
+  opacity: 0.75;
+}
+.absence-reason {
+  flex: 1 1 160px;
+  min-width: 0;
+  min-height: 36px;
+}
+
+/* ── Roundup: the evening note per class ───────────────────────────────── */
+.roundup h3 {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.roundup-closed {
+  margin: 0;
+  padding: var(--s-2) var(--s-3);
+  border: 1px dashed var(--rule);
+  border-radius: var(--radius);
+  color: var(--ink-faint);
+  font-size: 13px;
+}
+.roundup-box {
+  display: block;
+  margin-bottom: var(--s-3);
+}
+.roundup-head {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  margin-bottom: 4px;
+  font-size: 13px;
+}
+.roundup-code {
+  font-weight: 600;
+  color: var(--ink);
+}
+.roundup-note {
+  margin-left: auto;
+  font-size: 12px;
+  color: var(--ink-faint);
+}
+.roundup-text {
+  width: 100%;
+  min-height: 72px;
+  resize: vertical;
+  font: inherit;
+  line-height: 1.45;
+}
+/* Only the row whose absence picker is open wraps it onto its own line. */
+.day-row:has(.absence-picker) {
+  flex-wrap: wrap;
+}
+
+@media (max-width: 767px) {
+  /* Icon-only on phones so the class name and time keep their width. */
+  .absence-open-label {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip: rect(0 0 0 0);
+    white-space: nowrap;
+  }
+  .absence-open {
+    min-width: 40px;
+    min-height: 40px;
+    justify-content: center;
+    padding: 4px;
+  }
+}

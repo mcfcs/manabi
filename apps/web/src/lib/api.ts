@@ -320,7 +320,30 @@ export interface CalendarMonthOut {
   gcal: GcalEventOut[];
   marks: DayMarkOut[];
   tasks: CalTaskOut[];
+  /** The course absence log in this range (cut = 1, late = ½). */
+  absences: CalAbsenceOut[];
+  /** Evening notes on what happened in each class. */
+  roundups: CalRoundupOut[];
   gcal_configured: boolean;
+}
+
+export interface CalAbsenceOut {
+  id: number;
+  date: string;
+  course_id: number;
+  kind: "cut" | "late";
+  reason: string | null;
+}
+
+export interface CalRoundupOut {
+  course_id: number;
+  date: string;
+  text: string;
+}
+
+export interface RoundupOut extends CalRoundupOut {
+  id: number;
+  updated_at: string;
 }
 
 export interface TaskOut {

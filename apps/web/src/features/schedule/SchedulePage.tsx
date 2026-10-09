@@ -65,6 +65,7 @@ function CutsSection() {
       }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["cuts"] });
+      queryClient.invalidateQueries({ queryKey: ["calendar"] }); // shown there too
       setAddingFor(null);
       setReason("");
       setKind("cut");
@@ -73,7 +74,10 @@ function CutsSection() {
   });
   const remove = useMutation({
     mutationFn: (id: number) => api.delete(`/api/cuts/${id}`),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["cuts"] }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["cuts"] });
+      queryClient.invalidateQueries({ queryKey: ["calendar"] });
+    },
   });
 
   function toggle(courseId: number) {
