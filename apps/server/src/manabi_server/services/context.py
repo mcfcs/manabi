@@ -27,9 +27,7 @@ def _daylabel(d) -> str:
     return f"{d.strftime('%a %b')} {d.day}" if hasattr(d, "strftime") else str(d)
 
 
-async def build_personal_context(
-    db: AsyncSession, user: User, forward_days: int = 7
-) -> str:
+async def build_personal_context(db: AsyncSession, user: User, forward_days: int = 7) -> str:
     """Return a compact plaintext block describing the user's near-term schedule,
     tasks and study activity. Never raises — a degraded context is fine."""
     # Imported here to avoid an import cycle (api → services, and these api
@@ -41,9 +39,7 @@ async def build_personal_context(
     today = today_manila()
     now = now_manila()
     now_min = now.hour * 60 + now.minute
-    lines: list[str] = [
-        f"PERSONAL CONTEXT (now: {_daylabel(today)}, {_hhmm(now_min)} Manila):"
-    ]
+    lines: list[str] = [f"PERSONAL CONTEXT (now: {_daylabel(today)}, {_hhmm(now_min)} Manila):"]
 
     try:
         rng = await _range_data(db, user, today, today + timedelta(days=forward_days))
@@ -71,15 +67,39 @@ async def build_personal_context(
                 span = f"{_hhmm(m.start_minute)}-{_hhmm(m.end_minute)}"
                 lines.append(f"  - {_daylabel(m.date)} {m.code} {span}")
 
-        near_events = [
-            (e.date, e.title, e.start_minute) for e in rng.events
-        ] + [(g.date, g.title, g.start_minute) for g in rng.gcal]
+        near_events = [(e.date, e.title, e.start_minute) for e in rng.events] + [
+            (g.date, g.title, g.start_minute) for g in rng.gcal
+        ]
         near_events.sort(key=lambda x: (x[0], x[2] if x[2] is not None else 0))
         if near_events:
             lines.append("Events:")
             for d, title, sm in near_events[:6]:
                 t = f" {_hhmm(sm)}" if sm is not None else ""
                 lines.append(f"  - {_daylabel(d)}{t}: {title[:60]}")
+
+    # What the student wrote about yesterday's and today's classes.
+    try:
+        from manabi_core.models import ClassRoundup, Course
+        from sqlalchemy import select
+
+        rows = (
+            await db.execute(
+                select(ClassRoundup, Course.code)
+                .join(Course, Course.id == ClassRoundup.course_id)
+                .where(
+                    Course.user_id == user.id,
+                    ClassRoundup.date >= today - timedelta(days=1),
+                )
+                .order_by(ClassRoundup.date, Course.code)
+            )
+        ).all()
+    except Exception:  # noqa: BLE001
+        rows = []
+    if rows:
+        lines.append("Class roundups (the student's own notes on what happened):")
+        for r, code in rows[:6]:
+            when = "today" if r.date == today else "yesterday"
+            lines.append(f"  - {code} ({when}): {' '.join(r.text.split())[:220]}")
 
     try:
         tasks = await list_tasks(user=user, db=db)

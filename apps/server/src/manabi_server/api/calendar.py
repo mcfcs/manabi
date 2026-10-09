@@ -12,7 +12,9 @@ from datetime import datetime, timedelta
 from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from manabi_core.models import (
     CalendarEvent,
+    ClassRoundup,
     Course,
+    CutEntry,
     DayMark,
     GcalEvent,
     Schedule,
@@ -93,6 +95,22 @@ class CalTaskOut(BaseModel):
     done: bool
 
 
+class AbsenceOut(BaseModel):
+    """An entry of a course's absence log (cut = 1, late = ½)."""
+
+    id: int
+    date: Date
+    course_id: int
+    kind: str  # cut | late
+    reason: str | None
+
+
+class CalRoundupOut(BaseModel):
+    course_id: int
+    date: Date
+    text: str
+
+
 class MonthOut(BaseModel):
     ym: str | None
     semester_start: Date
@@ -102,6 +120,8 @@ class MonthOut(BaseModel):
     gcal: list[GcalOut]
     marks: list[MarkOut]
     tasks: list[CalTaskOut]
+    absences: list[AbsenceOut] = []
+    roundups: list[CalRoundupOut] = []
     gcal_configured: bool
 
 
@@ -176,19 +196,12 @@ async def _range_data(
         c.id: c
         for c in (
             await db.execute(
-                select(Course).where(
-                    Course.user_id == user.id, Course.archived_at.is_(None)
-                )
+                select(Course).where(Course.user_id == user.id, Course.archived_at.is_(None))
             )
         ).scalars()
     }
-    blocks = (
-        (await db.execute(select(ScheduleBlock))).scalars().all()
-    )
-    schedule_titles = {
-        s.id: s.title
-        for s in (await db.execute(select(Schedule))).scalars().all()
-    }
+    blocks = (await db.execute(select(ScheduleBlock))).scalars().all()
+    schedule_titles = {s.id: s.title for s in (await db.execute(select(Schedule))).scalars().all()}
     # A schedule group's color = the first of its blocks that carries one (e.g.
     # the internship). None → the frontend uses its default accent (matching how
     # a color-less internship block renders), so events tagged to that schedule
@@ -233,11 +246,7 @@ async def _range_data(
 
     # Custom events: singles in month + weekly repeats intersecting it
     all_events = (
-        (
-            await db.execute(
-                select(CalendarEvent).where(CalendarEvent.user_id == user.id)
-            )
-        )
+        (await db.execute(select(CalendarEvent).where(CalendarEvent.user_id == user.id)))
         .scalars()
         .all()
     )
@@ -255,6 +264,33 @@ async def _range_data(
                     events.append(_event_out(ev, occurrence=occ, accent_color=accent))
                 occ += timedelta(days=7)
 
+    # The absence log and the evening roundups belong on the calendar too.
+    absence_rows = (
+        (
+            await db.execute(
+                select(CutEntry).where(
+                    CutEntry.course_id.in_(list(courses)),
+                    CutEntry.date >= first,
+                    CutEntry.date <= last,
+                )
+            )
+        )
+        .scalars()
+        .all()
+    )
+    roundup_rows = (
+        (
+            await db.execute(
+                select(ClassRoundup).where(
+                    ClassRoundup.course_id.in_(list(courses)),
+                    ClassRoundup.date >= first,
+                    ClassRoundup.date <= last,
+                )
+            )
+        )
+        .scalars()
+        .all()
+    )
     gcal_rows = (
         (
             await db.execute(
@@ -267,11 +303,7 @@ async def _range_data(
         .all()
     )
     marks = (
-        (
-            await db.execute(
-                select(DayMark).where(DayMark.date >= first, DayMark.date <= last)
-            )
-        )
+        (await db.execute(select(DayMark).where(DayMark.date >= first, DayMark.date <= last)))
         .scalars()
         .all()
     )
@@ -326,13 +358,18 @@ async def _range_data(
                 title=t.title,
                 course_id=t.course_id,
                 course_code=courses[t.course_id].code if t.course_id in courses else None,
-                accent_color=courses[t.course_id].accent_color
-                if t.course_id in courses
-                else None,
+                accent_color=courses[t.course_id].accent_color if t.course_id in courses else None,
                 due_minute=t.due_minute,
                 done=t.done_at is not None,
             )
             for t in task_rows
+        ],
+        absences=[
+            AbsenceOut(id=c.id, date=c.date, course_id=c.course_id, kind=c.kind, reason=c.reason)
+            for c in absence_rows
+        ],
+        roundups=[
+            CalRoundupOut(course_id=r.course_id, date=r.date, text=r.text) for r in roundup_rows
         ],
         gcal_configured=bool(app.gcal_ics_url) or bool(get_settings().gcal_ics_urls),
     )
@@ -411,9 +448,7 @@ async def delete_event(
 async def put_mark(data: MarkIn, db: AsyncSession = Depends(get_db)) -> dict:
     # A mark targets a labeled block (RTO/WFH/No-work) or a class scope
     # (sync/async).
-    allowed = (
-        ("rto", "wfh", "nowork") if data.block_id is not None else ("sync", "async")
-    )
+    allowed = ("rto", "wfh", "nowork") if data.block_id is not None else ("sync", "async")
     existing = (
         await db.execute(
             select(DayMark).where(
@@ -431,9 +466,7 @@ async def put_mark(data: MarkIn, db: AsyncSession = Depends(get_db)) -> dict:
         if existing is not None:
             await db.delete(existing)
     elif data.mode not in allowed:
-        raise HTTPException(
-            status_code=422, detail=f"mode must be one of {allowed}"
-        )
+        raise HTTPException(status_code=422, detail=f"mode must be one of {allowed}")
     elif existing is not None:
         existing.mode = data.mode
         existing.note = data.note
@@ -479,17 +512,11 @@ async def export_ics(
         )
     ).all()
     events = (
-        (
-            await db.execute(
-                select(CalendarEvent).where(CalendarEvent.user_id == user.id)
-            )
-        )
+        (await db.execute(select(CalendarEvent).where(CalendarEvent.user_id == user.id)))
         .scalars()
         .all()
     )
-    payload = build_ics(
-        [(b, c) for b, c in rows], events, app.semester_start, app.semester_end
-    )
+    payload = build_ics([(b, c) for b, c in rows], events, app.semester_start, app.semester_end)
     return Response(
         content=payload,
         media_type="text/calendar",

@@ -34,6 +34,7 @@ from manabi_server.api import (
     practice,
     push,
     review,
+    roundups,
     schedule,
     search,
     stats,
@@ -113,6 +114,7 @@ app.include_router(search.router)
 app.include_router(stats.router)
 app.include_router(study.router)
 app.include_router(practice.router)
+app.include_router(roundups.router)
 app.include_router(voice.router)
 app.include_router(narration.router)
 app.include_router(settings_api.router)

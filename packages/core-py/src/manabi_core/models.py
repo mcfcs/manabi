@@ -837,6 +837,29 @@ class CutEntry(Base, TimestampMixin):
     __table_args__ = (Index("ix_cut_entries_course_id", "course_id"),)
 
 
+class ClassRoundup(Base, TimestampMixin):
+    """What happened in one class meeting, written by the student that
+    evening (0045): one note per course per day. Shown on the calendar and
+    the course's class log, and read by Steven's briefing."""
+
+    __tablename__ = "class_roundups"
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    course_id: Mapped[int] = mapped_column(
+        BigInteger, ForeignKey("courses.id", ondelete="CASCADE"), nullable=False
+    )
+    date: Mapped[date] = mapped_column(Date, nullable=False)  # naive Manila date
+    text: Mapped[str] = mapped_column(Text, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False
+    )
+
+    __table_args__ = (
+        UniqueConstraint("course_id", "date", name="uq_class_roundups_course_date"),
+        Index("ix_class_roundups_date", "date"),
+    )
+
+
 class GradeComponent(Base, TimestampMixin):
     """One weighted section of a course's syllabus breakdown ("Quizzes 30%").
 
