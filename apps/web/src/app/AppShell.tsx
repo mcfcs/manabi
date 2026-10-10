@@ -167,7 +167,7 @@ function UpdateToast() {
   if (!visible) return null;
   return (
     <div className="update-toast">
-      <span>A new version of Manabi is ready.</span>
+      <span>A new version of Manabi is ready. It applies by itself when you switch away.</span>
       <button
         className="btn btn-primary"
         onClick={() =>
