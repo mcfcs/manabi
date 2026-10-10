@@ -835,10 +835,9 @@ async def sync_all_canvas_scores(
 ) -> SyncAllOut:
     """Refresh linked scores across every Canvas-linked course.
 
-    Canvas *tasks* already sync every course in one pass and auto-run every ten
-    minutes; grades had neither, so keeping a term current meant expanding each
-    course row on /grades and pressing Sync. Still manual, as chosen — but once,
-    not seven times.
+    Linked scores also refresh on every Canvas task auto-sync (every ten
+    minutes, from the same download — see tasks._sync_canvas_tasks_inner);
+    this is the on-demand "now" for all courses at once.
 
     One course failing (Canvas down, token expired) must not lose the others'
     work, so each is committed on its own and its error reported by name.
