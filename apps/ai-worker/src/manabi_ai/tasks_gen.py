@@ -573,6 +573,12 @@ async def generate_flashcards(
                         need = want - got
                         if need <= 0:
                             break
+                        # First round: each batch its share, so the whole
+                        # reading is carded — asking the first batch for
+                        # everything left a 27-page reading's second half
+                        # without a card. Later rounds top up from any batch.
+                        if rounds == 1 and not exhaustive:
+                            need = min(need, math.ceil(want / len(batches)))
                         await _progress(
                             db,
                             job,
