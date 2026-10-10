@@ -327,6 +327,7 @@ def _stage_structure(db: Session, doc: Document) -> None:
     # native text and non-drop-cap paragraphs.
     parsed["elements"] = _join_drop_caps(parsed["elements"])
     if doc.kind == DocumentKind.pdf:
+        parsed["elements"] = _strip_note_markers(parsed["elements"])
         warning = _coverage_warning(parsed["elements"], source)
         if warning:
             log.warning("doc %s: %s", doc.id, warning)
@@ -607,6 +608,36 @@ def _join_drop_caps(elements: list[dict]) -> list[dict]:
                 el["text"] = joined
                 log.info("re-joined drop-cap initial: %r → %r", text[:14], joined[:12])
         prev_heading = el.get("type") == "heading"
+    return elements
+
+
+# A superscript note marker read inline lands glued after the punctuation that
+# ends its word: "role.1", "uprisings,8", "unwashed”27". The punctuation is
+# the anchor — a bare "clans5" or a citation "1995:18" never matches.
+_NOTE_MARKER_RE = re.compile(r"\b([A-Za-z]{2,})([.,;:!?)”\"’])(\d{1,2})(?=\s|$)")
+_NOT_NOTE_WORD = re.compile(
+    r"(?i)figs?|nos?|vols?|ch(?:ap)?|sec|art|pp|eqs?|ex|item|step|part|table|page|unit"
+)
+
+
+def _strip_note_markers(elements: list[dict]) -> list[dict]:
+    """Drop glued note markers from prose ("politics.3" → "politics.").
+    Left in, they reach quiz stems and narration as stray numbers. PDF
+    prose only; abbreviations that take a number ("Fig.3", "Vol.2") stay."""
+    total = 0
+
+    def strip(m: re.Match) -> str:
+        nonlocal total
+        if _NOT_NOTE_WORD.fullmatch(m.group(1)):
+            return m.group(0)
+        total += 1
+        return m.group(1) + m.group(2)
+
+    for el in elements:
+        if el.get("type") in ("paragraph", "list_item") and el.get("text"):
+            el["text"] = _NOTE_MARKER_RE.sub(strip, el["text"])
+    if total:
+        log.info("stripped %d glued note markers", total)
     return elements
 
 

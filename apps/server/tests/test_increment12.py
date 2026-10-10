@@ -280,3 +280,17 @@ async def test_abort_noop_when_not_requested():
             raise AssertionError("should not commit when not aborting")
 
     await _abort_if_requested(_Db(), object(), _Ctx())  # no raise, no commit
+
+
+def test_strip_note_markers_drops_glued_numbers():
+    els = pipeline._strip_note_markers(
+        [_p("Kinship plays a role.1 Factions shift,8 and the “great unwashed”27 came.")]
+    )
+    assert els[0]["text"] == "Kinship plays a role. Factions shift, and the “great unwashed” came."
+
+
+def test_strip_note_markers_keeps_citations_and_numbered_refs():
+    text = "(M. Thompson 1995:1, 2004:18) see Fig.3 and Vol.2; clans5 stays; a 1986.3 stays"
+    els = pipeline._strip_note_markers([_p(text), _p("x = obj.1", "code")])
+    assert els[0]["text"] == text
+    assert els[1]["text"] == "x = obj.1"
