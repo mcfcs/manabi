@@ -130,18 +130,42 @@ def _near_duplicate(a: str, b: str, threshold: float) -> bool:
     return True
 
 
+_CARD_ASK = re.compile(r"^(?:define|what (?:is|are|does)|explain)\b[:\s]*", re.IGNORECASE)
+CARD_KEY_MAX_WORDS = 8
+
+
+def card_key(front: str, back: str) -> str | None:
+    """The concept a term/definition card is about: its short side (the
+    term), whichever way round the card asks. None when neither side is a
+    term."""
+    asked = _CARD_ASK.sub("", (front or "").strip()).rstrip("?:. ")
+    sides = [s for s in (asked, (back or "").strip()) if 0 < len(s.split()) <= CARD_KEY_MAX_WORDS]
+    return min(sides, key=lambda s: len(s.split())).lower() if sides else None
+
+
 def dedup_cards(
     new_items: list[ResolvedItem],
     existing_fronts: list[str],
     threshold: float = 0.85,
+    existing_keys: list[str] | None = None,
 ) -> list[ResolvedItem]:
-    """Drop cards whose fronts near-duplicate existing ones (or each other)."""
+    """Drop cards whose fronts near-duplicate existing ones (or each other).
+    With `existing_keys` (term/definition decks) also drop a card about a
+    concept that already has one: a 20-card deck came back as 10 concepts,
+    each once as term → definition and once as definition → term."""
     kept: list[ResolvedItem] = []
     fronts = list(existing_fronts)
+    keys = list(existing_keys) if existing_keys is not None else None
     for item in new_items:
         front = item.item.get("front") or ""
         if any(_near_duplicate(front, f, threshold) for f in fronts):
             continue
+        if keys is not None:
+            key = card_key(front, item.item.get("back") or "")
+            if key and any(_near_duplicate(key, k, threshold) for k in keys):
+                continue
+            if key:
+                keys.append(key)
         kept.append(item)
         fronts.append(front)
     return kept

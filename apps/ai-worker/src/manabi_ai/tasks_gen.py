@@ -56,6 +56,7 @@ from manabi_ai.recap import recap_block, should_refresh, turns_to_fold
 from manabi_ai.validators import (
     ResolvedItem,
     _near_duplicate,
+    card_key,
     dedup_cards,
     dedup_questions,
     match_element_ids,
@@ -520,6 +521,8 @@ async def generate_flashcards(
                     derived_count[style] = len(take)
 
             existing_fronts = [front for front, _, _ in derived]
+            # Concepts already carded (term/definition styles), either direction.
+            concept_keys = [k for f, b, _ in derived if (k := card_key(f, b))]
             batches = batch_chunks(chunks)
             resolved_cards: list[ResolvedItem] = []
             dropped = 0
@@ -579,7 +582,11 @@ async def generate_flashcards(
                             f"/{'∞' if exhaustive else count})",
                         )
                         ctx = build_context(batch, notes)
-                        fronts_note = "\n".join(f"- {f}" for f in existing_fronts[-60:]) or "(none)"
+                        glossary = style in ("term", "definition")
+                        seen = existing_fronts[-60:] + (
+                            [f"(concept) {k}" for k in concept_keys[-40:]] if glossary else []
+                        )
+                        fronts_note = "\n".join(f"- {f}" for f in seen) or "(none)"
                         if exercise:
                             base_prompt = prompts.EXERCISE_FLASHCARDS_PROMPT
                         else:
@@ -622,7 +629,9 @@ async def generate_flashcards(
                             ]
                             dropped += len(kept) - len(fits)
                             kept = fits
-                        fresh = dedup_cards(kept, existing_fronts)[:need]
+                        fresh = dedup_cards(
+                            kept, existing_fronts, existing_keys=concept_keys if glossary else None
+                        )[:need]
                         if not fresh:
                             continue
                         for f in fresh:
@@ -631,6 +640,12 @@ async def generate_flashcards(
                         got += len(fresh)
                         resolved_cards.extend(fresh)
                         existing_fronts.extend((f.item.get("front") or "") for f in fresh)
+                        if glossary:
+                            concept_keys.extend(
+                                k
+                                for f in fresh
+                                if (k := card_key(f.item.get("front"), f.item.get("back")))
+                            )
                     if exhaustive and added_this_round < 3:
                         log.info("exhaustive %s cards ran dry after %d rounds", style, rounds)
                         break

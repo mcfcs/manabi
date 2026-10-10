@@ -81,3 +81,27 @@ def test_slide_labels_are_not_terms():
         cardstyle.problem("term", "Creates a new object from an existing one.", "Copy constructor")
         is None
     )
+
+
+def test_one_card_per_concept_across_directions():
+    from manabi_ai.validators import ResolvedItem, card_key, dedup_cards
+
+    def card(front, back):
+        return ResolvedItem(item={"front": front, "back": back}, chunks=[])
+
+    assert card_key("Define: Contested Democracy", "An alternative framework...") == (
+        "contested democracy"
+    )
+    asks_term = "The framework that combines elite democracy with..."
+    assert card_key(asks_term, "contested democracy") == "contested democracy"
+    keys = ["contested democracy"]
+    new = [
+        card("Contested Democracy", "An alternative interpretative framework of politics"),
+        card("A term for traditional politicians, from the Spanish for an old rag", "trapo"),
+        card("Trapo", "A Filipino term for a traditional politician"),
+    ]
+    kept = dedup_cards(new, [], existing_keys=keys)
+    assert [c.item["back"] for c in kept] == ["trapo"]
+    assert keys == ["contested democracy"]  # the caller records what it keeps
+    # Without keys (short-answer decks) only fronts are compared.
+    assert len(dedup_cards(new, [])) == 3
