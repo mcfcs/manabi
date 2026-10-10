@@ -282,7 +282,15 @@ async def _sync_canvas_tasks_inner(db: AsyncSession, user: User) -> dict:
     )
 
     created = updated = closed = reopened = 0
+    # Grades ride on the same download: every linked score is refreshed each
+    # sync, so a released score no longer waits for "Sync grades" on /grades.
+    from manabi_server.api.grades import apply_canvas_scores, linked_items
+
+    grades_updated = 0
     for course, assignments in zip(courses, per_course, strict=True):
+        items = await linked_items(db, course.id)
+        if items:
+            grades_updated += apply_canvas_scores(items, assignments)[0]
         for a in assignments:
             aid = a.get("id")
             if not aid:
@@ -331,6 +339,7 @@ async def _sync_canvas_tasks_inner(db: AsyncSession, user: User) -> dict:
         "updated": updated,
         "closed": closed,
         "reopened": reopened,
+        "grades_updated": grades_updated,
         "courses_checked": len(courses),
     }
 

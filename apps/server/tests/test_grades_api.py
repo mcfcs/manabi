@@ -209,3 +209,80 @@ def test_grade_item_model_accepts_a_canvas_link():
 def test_item_in_defaults_to_an_ungraded_row():
     payload = ItemIn(title="Long Exam 2", possible=130)
     assert payload.earned is None and payload.percent is None
+
+
+# ── Canvas refresh (shared by Sync grades and the 10-minute auto-sync) ────────
+
+
+def _row(**kw):
+    fields = {
+        "title": "Quiz 5",
+        "earned": None,
+        "possible": 10.0,
+        "percent": None,
+        "canvas_assignment_id": 5,
+    }
+    return GradeItem(**{**fields, **kw})
+
+
+def _assignment(aid, name, score=None, possible=10.0):
+    return {
+        "id": aid,
+        "name": name,
+        "points_possible": possible,
+        "submission": {"score": score} if score is not None else {},
+    }
+
+
+def test_apply_canvas_scores_fills_a_released_score():
+    from manabi_server.api.grades import apply_canvas_scores
+
+    row = _row()
+    assert apply_canvas_scores([row], [_assignment(5, "Quiz 5", 10)]) == (1, 0, 0)
+    assert (row.earned, row.possible) == (10.0, 10.0)
+    # idempotent: a second pass changes nothing
+    assert apply_canvas_scores([row], [_assignment(5, "Quiz 5", 10)]) == (0, 0, 0)
+
+
+def test_apply_canvas_scores_relinks_a_recreated_assignment_by_name():
+    from manabi_server.api.grades import apply_canvas_scores
+
+    row = _row(title="Long Exam 2", canvas_assignment_id=1, possible=130.0)
+    other = _row(title="Long Exam 1", canvas_assignment_id=2, earned=106.0, possible=110.0)
+    canvas = [_assignment(2, "Long Exam 1", 106, 110), _assignment(9, "long exam 2 ", 120, 130)]
+    updated, _, relinked = apply_canvas_scores([row, other], canvas)
+    assert relinked == 1 and row.canvas_assignment_id == 9 and row.earned == 120.0
+    assert updated == 1
+
+
+def test_apply_canvas_scores_leaves_a_vanished_row_without_a_unique_twin():
+    from manabi_server.api.grades import apply_canvas_scores
+
+    row = _row(title="Lab 2", canvas_assignment_id=1, earned=90.0, possible=100.0)
+    canvas = [_assignment(7, "Lab 2"), _assignment(8, "Lab 2")]  # two candidates: ambiguous
+    assert apply_canvas_scores([row], canvas) == (0, 0, 0)
+    assert row.canvas_assignment_id == 1 and row.earned == 90.0
+
+
+async def test_typing_a_score_on_a_canvas_row_needs_an_unlink():
+    from manabi_server.api import grades as api
+
+    row = _row(earned=None, id=3)
+
+    async def owned(db, user, item_id):  # noqa: ARG001
+        return row
+
+    api_owned = api._owned_item
+    api._owned_item = owned
+    try:
+        with pytest.raises(HTTPException) as exc:
+            await api.update_item(
+                1, api.ItemPatch(earned=9, possible=10), user=_User(), db=_FakeDB()
+            )
+        assert exc.value.status_code == 409
+        out = await api.update_item(
+            1, api.ItemPatch(earned=9, possible=10, unlink_canvas=True), user=_User(), db=_FakeDB()
+        )
+        assert out.canvas_assignment_id is None and out.earned == 9
+    finally:
+        api._owned_item = api_owned

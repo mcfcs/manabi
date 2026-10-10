@@ -182,13 +182,44 @@
   flex-shrink: 0;
   font-size: 12.5px;
 }
-.grade-item-del {
+.grade-item-edit-btn {
   flex-shrink: 0;
-  opacity: 0;
+  color: var(--ink-faint);
 }
-.grade-item:hover .grade-item-del,
-.grade-item-del:focus-visible {
-  opacity: 1;
+.grade-item:hover .grade-item-edit-btn,
+.grade-item-edit-btn:focus-visible {
+  color: var(--ink);
+}
+
+/* Editing one score in place. */
+.grade-item-edit {
+  margin: var(--s-1) 0;
+}
+.grade-item-edit-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--s-2) var(--s-3);
+  font-size: 13px;
+  color: var(--ink-soft);
+}
+.grade-item-edit-section {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  min-width: 0;
+}
+.grade-item-edit-section .input {
+  min-width: 0;
+  max-width: 260px;
+}
+.grade-item-unlink {
+  display: flex;
+  align-items: center;
+  gap: var(--s-1);
+}
+.grade-item-edit-del {
+  margin-left: auto;
 }
 
 /* ── Add forms ────────────────────────────────────────────────────────── */
@@ -441,9 +472,6 @@
 @media (max-width: 1023px) {
   .grade-component-count {
     display: none; /* the percent and weight carry the row */
-  }
-  .grade-item-del {
-    opacity: 1; /* no hover on touch */
   }
 }
 

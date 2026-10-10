@@ -121,6 +121,8 @@ class ItemPatch(BaseModel):
     earned: float | None = None
     possible: float | None = None
     percent: float | None = None
+    component_id: int | None = None  # move to another section of the same course
+    unlink_canvas: bool = False  # stop syncing this row from Canvas
 
 
 class CanvasAssignmentOut(BaseModel):
@@ -545,6 +547,28 @@ async def update_item(
 ) -> ItemOut:
     item = await _owned_item(db, user, item_id)
     fields = data.model_dump(exclude_unset=True)
+    if data.unlink_canvas:
+        item.canvas_assignment_id = None
+    score_fields = {"earned", "possible", "percent"} & set(fields)
+    if score_fields and item.canvas_assignment_id is not None:
+        # The next Canvas sync would overwrite a typed score without a word.
+        raise HTTPException(
+            status_code=409, detail="This score comes from Canvas — unlink it to edit"
+        )
+    if data.component_id is not None and data.component_id != item.component_id:
+        source = await _owned_component(db, user, item.component_id)
+        target = await _owned_component(db, user, data.component_id)
+        if target.course_id != source.course_id:
+            raise HTTPException(status_code=422, detail="Move it within the same course")
+        count = (
+            await db.execute(
+                select(func.count())
+                .select_from(GradeItem)
+                .where(GradeItem.component_id == target.id)
+            )
+        ).scalar_one()
+        item.component_id = target.id
+        item.position = int(count)
     if "title" in fields:
         title = (data.title or "").strip()[:255]
         if not title:
@@ -591,6 +615,72 @@ def _canvas_score(assignment: dict) -> tuple[float | None, float | None]:
     score = submission.get("score")
     earned = float(score) if isinstance(score, (int, float)) else None
     return earned, possible
+
+
+def _name_key(name: str | None) -> str:
+    return " ".join((name or "").casefold().split())
+
+
+def apply_canvas_scores(items: list[GradeItem], assignments: list[dict]) -> tuple[int, int, int]:
+    """Refresh linked rows from Canvas assignments → (updated, still_ungraded,
+    relinked). Never adds or removes rows, so it is idempotent.
+
+    A row whose assignment vanished from Canvas is relinked to an unlinked
+    assignment with the same name (an instructor recreating "Long Exam 2"
+    left its row ungraded forever); otherwise it keeps its last score."""
+    by_id = {int(a["id"]): a for a in assignments if "id" in a}
+    linked = {i.canvas_assignment_id for i in items if i.canvas_assignment_id}
+    by_name: dict[str, list[dict]] = {}
+    for aid, a in by_id.items():
+        if aid not in linked:
+            by_name.setdefault(_name_key(a.get("name")), []).append(a)
+    updated = ungraded = relinked = 0
+    for item in items:
+        if item.canvas_assignment_id is None:
+            continue
+        a = by_id.get(item.canvas_assignment_id)
+        if a is None:
+            twins = by_name.get(_name_key(item.title), [])
+            if len(twins) != 1:
+                continue  # deleted in Canvas — leave the row and its score alone
+            a = twins.pop()
+            item.canvas_assignment_id = int(a["id"])
+            relinked += 1
+        earned, possible = _canvas_score(a)
+        title = str(a.get("name") or item.title)[:255]
+        if (item.earned, item.possible, item.title, item.percent) != (
+            earned,
+            possible,
+            title,
+            None,
+        ):
+            item.earned, item.possible, item.title = earned, possible, title
+            # A Canvas-linked row is a points row. Leaving a percent behind
+            # makes it both at once - which _validated_score would reject - and
+            # item_points prefers the percent, so the fresh score is ignored and
+            # the sync reports success while the grade never moves.
+            item.percent = None
+            updated += 1
+        if earned is None:
+            ungraded += 1
+    return updated, ungraded, relinked
+
+
+async def linked_items(db: AsyncSession, course_id: int) -> list[GradeItem]:
+    return list(
+        (
+            await db.execute(
+                select(GradeItem)
+                .join(GradeComponent, GradeComponent.id == GradeItem.component_id)
+                .where(
+                    GradeComponent.course_id == course_id,
+                    GradeItem.canvas_assignment_id.is_not(None),
+                )
+            )
+        )
+        .scalars()
+        .all()
+    )
 
 
 @router.get("/courses/{course_id}/grades/canvas-assignments")
@@ -714,45 +804,11 @@ async def sync_canvas_scores(
     course = await _owned_course(db, user, course_id)
     if not course.canvas_course_id:
         raise HTTPException(status_code=409, detail="This course is not linked to Canvas")
-    items = (
-        (
-            await db.execute(
-                select(GradeItem)
-                .join(GradeComponent, GradeComponent.id == GradeItem.component_id)
-                .where(
-                    GradeComponent.course_id == course.id,
-                    GradeItem.canvas_assignment_id.is_not(None),
-                )
-            )
-        )
-        .scalars()
-        .all()
-    )
+    items = await linked_items(db, course.id)
     if not items:
         return SyncOut(updated=0, still_ungraded=0)
-    by_id = {int(a["id"]): a for a in await _canvas_assignments(course.canvas_course_id)}
-    updated = ungraded = 0
-    for item in items:
-        a = by_id.get(item.canvas_assignment_id)
-        if a is None:
-            continue  # deleted in Canvas — leave the row and its score alone
-        earned, possible = _canvas_score(a)
-        title = str(a.get("name") or item.title)[:255]
-        if (item.earned, item.possible, item.title, item.percent) != (
-            earned,
-            possible,
-            title,
-            None,
-        ):
-            item.earned, item.possible, item.title = earned, possible, title
-            # A Canvas-linked row is a points row. Leaving a percent behind
-            # makes it both at once - which _validated_score would reject - and
-            # item_points prefers the percent, so the fresh score is ignored and
-            # the sync reports success while the grade never moves.
-            item.percent = None
-            updated += 1
-        if earned is None:
-            ungraded += 1
+    assignments = await _canvas_assignments(course.canvas_course_id)
+    updated, ungraded, _relinked = apply_canvas_scores(items, assignments)
     await db.commit()
     return SyncOut(updated=updated, still_ungraded=ungraded)
 

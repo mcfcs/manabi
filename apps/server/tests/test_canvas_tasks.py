@@ -7,7 +7,7 @@ from datetime import UTC, date, datetime, timedelta
 
 import httpx
 import pytest
-from manabi_core.models import AppSettings, Course, StudyTask
+from manabi_core.models import AppSettings, Course, GradeItem, StudyTask
 from manabi_server.api import canvas, tasks
 
 # ── canvas_says_done ───────────────────────────────────────────────────────
@@ -43,14 +43,20 @@ class _Res:
         self._rows = rows
 
     def scalars(self):
-        return iter(self._rows)
+        return _Scalars(self._rows)
+
+
+class _Scalars(list):
+    def all(self):
+        return list(self)
 
 
 class FakeDB:
-    def __init__(self, courses, tasks_, app=None):
+    def __init__(self, courses, tasks_, app=None, grade_items=None):
         self.courses = courses
         self.tasks = tasks_
         self.app = app
+        self.grade_items = grade_items or []
         self.commits = 0
 
     async def execute(self, stmt):
@@ -59,6 +65,8 @@ class FakeDB:
             return _Res(self.courses)
         if entity is StudyTask:
             return _Res([t for t in self.tasks if t.canvas_assignment_id is not None])
+        if entity is GradeItem:
+            return _Res([i for i in self.grade_items if i.canvas_assignment_id is not None])
         raise AssertionError(f"unexpected query on {entity}")
 
     async def get(self, model, pk):
@@ -162,6 +170,19 @@ async def test_sync_creates_only_open_assignments_inside_the_window(monkeypatch)
     assert sorted(t.canvas_assignment_id for t in db.tasks) == [1, 3]
     assert out["created"] == 2
     assert all(t.done_at is None and t.source == "canvas" for t in db.tasks)
+
+
+async def test_sync_refreshes_a_linked_grade_from_the_same_download(monkeypatch):
+    graded = {"workflow_state": "graded", "submitted_at": None, "score": 10}
+    calls = _patch_canvas(
+        monkeypatch,
+        [{**_assignment(1, NOW - timedelta(days=2), graded), "points_possible": 10}],
+    )
+    row = GradeItem(title="A1", earned=None, possible=10.0, percent=None, canvas_assignment_id=1)
+    db = FakeDB([_course()], [], _app(date(2026, 8, 1)), grade_items=[row])
+    out = await tasks._sync_canvas_tasks_inner(db, USER)
+    assert out["grades_updated"] == 1 and row.earned == 10.0
+    assert len(calls) == 1  # no second Canvas request for grades
 
 
 async def test_sync_without_settings_row_uses_a_60_day_window(monkeypatch):
