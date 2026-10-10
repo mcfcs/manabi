@@ -224,3 +224,17 @@ def test_a_reworded_question_with_the_same_answer_is_the_same_question():
         "enumeration", gates, {"items": ["output gate", "input gate", "forget gate"]}
     )
     assert not same_answer("mcq", {"correct_option": 1}, {"correct_option": 1})
+
+
+def test_selection_fills_a_short_type_in_proportion_to_the_mix():
+    from manabi_ai.quizplan import select_by_quota
+
+    # identification ran short (1 of 4 wanted); tf candidates came first.
+    items = [(0, "tf")] * 6 + [(0, "essay")] * 3 + [(0, "identification")]
+    mix = {"identification": 4, "tf": 3, "essay": 2, "short": 1}
+    picked = [items[i][1] for i in select_by_quota(items, {0: 10}, mix, 10)]
+    assert picked.count("identification") == 1
+    assert picked.count("essay") == 3 and picked.count("tf") == 6
+
+    picked = [items[i][1] for i in select_by_quota(items, {0: 7}, mix, 7)]
+    assert picked.count("tf") == 4 and picked.count("essay") == 2

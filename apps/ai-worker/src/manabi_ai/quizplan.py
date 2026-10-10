@@ -308,18 +308,28 @@ def select_by_quota(
         if need <= 0:
             continue
         mine = [i for i, (uu, _t) in enumerate(items) if uu == u]
-        quota = allocate(need, (per_unit or {}).get(u) or mix)
+        weights = (per_unit or {}).get(u) or mix
+        quota = allocate(need, weights)
         taken = 0
+        have: dict[str, int] = {}
         for t, q in quota.items():
             for i in [i for i in mine if items[i][1] == t][:q]:
                 chosen.add(i)
+                have[t] = have.get(t, 0) + 1
                 taken += 1
-        for i in mine:
-            if taken >= need:
-                break
-            if i not in chosen:
-                chosen.add(i)
-                taken += 1
+        # Short of some type: fill from the type furthest below its share,
+        # not in generation order — a quiz short on identification came out
+        # half true/false because tf candidates happened to be written first.
+        spare = [i for i in mine if i not in chosen]
+        while taken < need and spare:
+            i = min(
+                spare,
+                key=lambda i: (have.get(items[i][1], 0) + 1) / (weights.get(items[i][1]) or 1e-9),
+            )
+            spare.remove(i)
+            chosen.add(i)
+            have[items[i][1]] = have.get(items[i][1], 0) + 1
+            taken += 1
     for i in range(len(items)):
         if len(chosen) >= count:
             break
