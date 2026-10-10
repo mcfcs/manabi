@@ -212,7 +212,10 @@ export function DayDetails({
                     </button>
                   </>
                 )}
-                {m.course_id != null && (
+                {/* Only a class that met (today or earlier, not async) takes an
+                    absence; one already logged keeps its badge either way. */}
+                {m.course_id != null &&
+                  (absenceFor(m, data) || (date <= todayISO() && mode !== "async")) && (
                   <Attendance
                     date={date}
                     courseId={m.course_id}

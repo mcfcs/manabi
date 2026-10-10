@@ -636,6 +636,13 @@ a.course-file-name:hover {
   flex-wrap: wrap;
   gap: var(--s-1);
 }
+/* The class-day picker takes its own row above Absent / Late / Cancel. */
+.glance-date {
+  flex: 1 1 100%;
+  min-height: 30px;
+  padding-block: 4px;
+  font-size: 13px;
+}
 .glance-log {
   align-self: flex-start;
   margin-top: auto;

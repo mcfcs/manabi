@@ -114,6 +114,16 @@ async def add_cut(
     course = await db.get(Course, data.course_id)
     if course is None or course.user_id != user.id:
         raise HTTPException(status_code=404, detail="Course not found")
+    # One entry per class day: a day already logged absent or late is not
+    # counted twice.
+    taken = await db.scalar(
+        select(CutEntry.kind).where(
+            CutEntry.course_id == data.course_id, CutEntry.date == data.date
+        )
+    )
+    if taken is not None:
+        what = "late" if taken == "late" else "absent"
+        raise HTTPException(status_code=409, detail=f"Already logged {what} on {data.date}")
     entry = CutEntry(
         course_id=data.course_id,
         date=data.date,

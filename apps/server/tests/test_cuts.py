@@ -16,12 +16,16 @@ def test_cuts_used_weights():
 
 
 class _FakeDB:
-    def __init__(self, course=None):
+    def __init__(self, course=None, logged=None):
         self.course = course
+        self.logged = logged  # kind already logged that day, if any
         self.added = []
 
     async def get(self, model, pk):
         return self.course
+
+    async def scalar(self, stmt):
+        return self.logged
 
     def add(self, obj):
         self.added.append(obj)
@@ -68,3 +72,12 @@ async def test_add_cut_trims_reason_and_returns_shape():
     assert out.reason == "traffic"
     assert str(out.date) == "2026-08-29"
     assert db.added[0].reason == "traffic"
+
+
+async def test_add_cut_refuses_a_day_already_logged():
+    mine = types.SimpleNamespace(id=1, user_id=1)
+    db = _FakeDB(mine, logged="late")
+    with pytest.raises(HTTPException) as exc:
+        await add_cut(CutIn(course_id=1, date="2026-10-08"), user=_User(), db=db)
+    assert exc.value.status_code == 409 and "late" in exc.value.detail
+    assert db.added == []

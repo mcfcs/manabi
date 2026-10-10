@@ -22,6 +22,7 @@ import {
   type ScheduleOut,
 } from "../../lib/api";
 import { packLanes } from "../../lib/lanes";
+import { classDayLabel, useLoggableDates } from "../calendar/attendance";
 import { CourseDialog } from "../courses/CourseDialog";
 import "./schedule.css";
 
@@ -38,8 +39,6 @@ function fmt(minute: number): string {
 
 // ── Cuts & lates ──────────────────────────────────────────────
 
-const todayISO = () => new Date().toLocaleDateString("en-CA"); // YYYY-MM-DD local
-
 const fmtCuts = (total: number) =>
   Number.isInteger(total) ? String(total) : total.toFixed(1);
 
@@ -51,7 +50,10 @@ function CutsSection() {
   });
   const [open, setOpen] = useState<Set<number>>(new Set());
   const [addingFor, setAddingFor] = useState<number | null>(null);
-  const [date, setDate] = useState(todayISO);
+  const [picked, setPicked] = useState<string | null>(null);
+  // Only days the class met (not async) and not yet logged; the latest is the default.
+  const loggable = useLoggableDates(addingFor);
+  const date = picked && loggable.dates.includes(picked) ? picked : loggable.dates[0];
   const [kind, setKind] = useState<"cut" | "late">("cut");
   const [reason, setReason] = useState("");
 
@@ -69,7 +71,7 @@ function CutsSection() {
       setAddingFor(null);
       setReason("");
       setKind("cut");
-      setDate(todayISO());
+      setPicked(null);
     },
   });
   const remove = useMutation({
@@ -92,7 +94,7 @@ function CutsSection() {
   function startAdd(courseId: number) {
     setAddingFor(courseId);
     setOpen((prev) => new Set(prev).add(courseId));
-    setDate(todayISO());
+    setPicked(null);
     setKind("cut");
     setReason("");
   }
@@ -167,13 +169,24 @@ function CutsSection() {
                         add.mutate(c.course_id);
                       }}
                     >
-                      <input
-                        type="date"
+                      <select
                         className="input cuts-date"
-                        value={date}
-                        onChange={(e) => setDate(e.target.value)}
+                        aria-label="Class day"
+                        value={date ?? ""}
+                        onChange={(e) => setPicked(e.target.value)}
+                        disabled={!date}
                         required
-                      />
+                      >
+                        {loggable.isLoading && <option value="">Finding class days…</option>}
+                        {!loggable.isLoading && !date && (
+                          <option value="">No class day left to log</option>
+                        )}
+                        {loggable.dates.map((d) => (
+                          <option key={d} value={d}>
+                            {classDayLabel(d, loggable.today)}
+                          </option>
+                        ))}
+                      </select>
                       <div className="cuts-kind">
                         <button
                           type="button"
@@ -196,7 +209,7 @@ function CutsSection() {
                         value={reason}
                         onChange={(e) => setReason(e.target.value)}
                       />
-                      <button className="btn btn-primary" disabled={add.isPending}>
+                      <button className="btn btn-primary" disabled={add.isPending || !date}>
                         Save
                       </button>
                       <button

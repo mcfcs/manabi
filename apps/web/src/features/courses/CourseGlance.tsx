@@ -9,6 +9,7 @@ import {
   type CourseCutsOut,
   type TaskOut,
 } from "../../lib/api";
+import { classDayLabel, useLoggableDates } from "../calendar/attendance";
 
 const WEEKDAY = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
 
@@ -40,6 +41,10 @@ function dayLabel(dateStr: string, today: string): string {
 export function CourseGlance({ courseId }: { courseId: number }) {
   const qc = useQueryClient();
   const [logging, setLogging] = useState(false);
+  const [picked, setPicked] = useState<string | null>(null);
+  const loggable = useLoggableDates(logging ? courseId : null);
+  // Default: the latest class day not yet logged (async days excluded).
+  const logDate = picked && loggable.dates.includes(picked) ? picked : loggable.dates[0];
   const today = iso(new Date());
   const end = iso(new Date(Date.now() + 7 * 86400_000));
 
@@ -62,9 +67,10 @@ export function CourseGlance({ courseId }: { courseId: number }) {
 
   const addCut = useMutation({
     mutationFn: (kind: "cut" | "late") =>
-      api.post("/api/cuts", { course_id: courseId, date: today, kind }),
+      api.post("/api/cuts", { course_id: courseId, date: logDate, kind }),
     onSuccess: () => {
       setLogging(false);
+      setPicked(null);
       qc.invalidateQueries({ queryKey: ["cuts"] });
       // The same log shows on the calendar.
       qc.invalidateQueries({ queryKey: ["calendar"] });
@@ -173,25 +179,57 @@ export function CourseGlance({ courseId }: { courseId: number }) {
         )}
         {atRisk && <p className="glance-warn">At the limit.</p>}
         {logging ? (
-          <div className="glance-actions">
-            <button
-              className="btn btn-sm"
-              onClick={() => addCut.mutate("cut")}
-              disabled={addCut.isPending}
-            >
-              Absent today
-            </button>
-            <button
-              className="btn btn-sm"
-              onClick={() => addCut.mutate("late")}
-              disabled={addCut.isPending}
-            >
-              Late today
-            </button>
-            <button className="btn btn-sm" onClick={() => setLogging(false)}>
-              Cancel
-            </button>
-          </div>
+          loggable.isLoading ? (
+            <p className="glance-empty">Finding class days…</p>
+          ) : !logDate ? (
+            <div className="glance-actions">
+              <p className="glance-empty">
+                No class day left to log in the last 8 weeks (async days and days already
+                logged are skipped).
+              </p>
+              <button className="btn btn-sm" onClick={() => setLogging(false)}>
+                Close
+              </button>
+            </div>
+          ) : (
+            <div className="glance-actions">
+              <select
+                className="input glance-date"
+                aria-label="Class day"
+                value={logDate}
+                onChange={(e) => setPicked(e.target.value)}
+              >
+                {loggable.dates.map((d) => (
+                  <option key={d} value={d}>
+                    {classDayLabel(d, loggable.today)}
+                  </option>
+                ))}
+              </select>
+              <button
+                className="btn btn-sm"
+                onClick={() => addCut.mutate("cut")}
+                disabled={addCut.isPending}
+              >
+                Absent
+              </button>
+              <button
+                className="btn btn-sm"
+                onClick={() => addCut.mutate("late")}
+                disabled={addCut.isPending}
+              >
+                Late
+              </button>
+              <button
+                className="btn btn-sm"
+                onClick={() => {
+                  setLogging(false);
+                  setPicked(null);
+                }}
+              >
+                Cancel
+              </button>
+            </div>
+          )
         ) : (
           <button
             className="btn btn-sm glance-log"
