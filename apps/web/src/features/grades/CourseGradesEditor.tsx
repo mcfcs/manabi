@@ -695,7 +695,7 @@ function ItemRow({
           </button>
           <button
             type="button"
-            className="btn btn-danger grade-item-edit-del"
+            className="btn grade-item-edit-del"
             onClick={() => {
               if (window.confirm(`Remove "${item.title}"?`)) onRemove();
             }}

@@ -220,6 +220,8 @@
 }
 .grade-item-edit-del {
   margin-left: auto;
+  /* Outlined, not filled: beside a filled Save it must not read as a second Save. */
+  color: var(--accent-red, var(--stale));
 }
 
 /* ── Add forms ────────────────────────────────────────────────────────── */
