@@ -43,6 +43,7 @@ export function CourseDialog({
   const [cutAllowance, setCutAllowance] = useState(
     course?.cut_allowance == null ? "" : String(course.cut_allowance),
   );
+  const [quizStyle, setQuizStyle] = useState(course?.quiz_style ?? "");
   const [accent, setAccent] = useState(course?.accent_color ?? ACCENTS[1]);
   const [confirming, setConfirming] = useState<DeleteConsequences | null>(null);
   const [cover, setCover] = useState(course?.cover_image_url ?? null);
@@ -147,6 +148,7 @@ export function CourseDialog({
       // Blank means "not recorded" — distinct from an allowance of zero.
       cut_allowance: cutAllowance.trim() === "" ? null : Number(cutAllowance),
       canvas_course_id: effectiveCanvasId,
+      quiz_style: quizStyle.trim() || null,
     });
   }
 
@@ -324,6 +326,29 @@ export function CourseDialog({
               </p>
             </>
           )}
+        </div>
+        <div>
+          <label className="field-label" htmlFor="course-quiz-style">
+            How the instructor writes quizzes (optional)
+          </label>
+          <textarea
+            id="course-quiz-style"
+            className="input"
+            rows={5}
+            maxLength={4000}
+            value={quizStyle}
+            onChange={(e) => setQuizStyle(e.target.value)}
+            placeholder={
+              "Paste a few past quiz questions and notes, e.g.\n" +
+              "Identification: answer is one term (e.g. institution)\n" +
+              "Is money a formal institution? Why or why not?\n" +
+              "No multiple choice."
+            }
+          />
+          <p className="settings-hint">
+            Quizzes for this course are written in this style. Only the form is copied; the
+            questions still come from your materials.
+          </p>
         </div>
         <div>
           <span className="field-label">Accent</span>

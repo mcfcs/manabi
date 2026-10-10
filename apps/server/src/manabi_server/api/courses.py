@@ -33,6 +33,7 @@ class CourseIn(BaseModel):
     canvas_course_id: int | None = None
     units: float | None = None  # credit units; QPI weight
     cut_allowance: float | None = None  # absences allowed before the course is at risk
+    quiz_style: str | None = None  # past quiz questions / notes; quizzes follow it
 
 
 class CoursePatch(BaseModel):
@@ -46,6 +47,7 @@ class CoursePatch(BaseModel):
     canvas_course_id: int | None = None
     units: float | None = None
     cut_allowance: float | None = None
+    quiz_style: str | None = None
     # True archives, False restores. archived_at itself stays server-set.
     archived: bool | None = None
 
@@ -69,6 +71,7 @@ class CourseOut(BaseModel):
     cover_image_url: str | None = None
     units: float = 3.0  # credit units; QPI weight
     cut_allowance: float | None = None
+    quiz_style: str | None = None
 
 
 class ReorderIn(BaseModel):
@@ -102,6 +105,7 @@ def _course_out(
         meeting_url=course.meeting_url,
         units=course.units,
         cut_allowance=course.cut_allowance,
+        quiz_style=course.quiz_style,
         archived=course.archived_at is not None,
         cover_image_url=(
             f"/api/courses/{course.id}/cover/{course.cover_image_path.rsplit('/', 1)[-1]}"

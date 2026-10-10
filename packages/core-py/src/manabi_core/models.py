@@ -91,6 +91,9 @@ class Course(Base, TimestampMixin):
     # This course's letter scheme: {"A": 93, "B+": 87, ...} for the six graded
     # letters (F is implicit, below D). NULL until taken from the syllabus.
     grade_cutoffs: Mapped[dict | None] = mapped_column(JSONB)
+    # How the instructor writes quizzes — past questions + notes, pasted by
+    # the student (0046). Quiz generation writes in this style.
+    quiz_style: Mapped[str | None] = mapped_column(Text)
 
     modules: Mapped[list["Module"]] = relationship(
         back_populates="course", order_by="Module.position"

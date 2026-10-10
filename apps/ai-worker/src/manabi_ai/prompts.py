@@ -29,6 +29,26 @@ Prioritize source passages relevant to this focus and skip unrelated
 material, even when present. The focus narrows WHAT you cover — it never
 overrides the rules above about WHERE facts come from."""
 
+# How the course's instructor writes quizzes (courses.quiz_style): past
+# questions on OTHER readings plus the student's notes. Style only — the
+# sources still decide what is asked and what the answer is.
+QUIZ_STYLE_BLOCK = """
+
+INSTRUCTOR STYLE — how this course's instructor writes quizzes (the
+student's notes and past questions, about OTHER readings):
+<<<
+{style}
+>>>
+Write like that instructor: the same kinds of stems, as direct and as short,
+with answers as short as theirs (an identification answer is the term
+itself, usually one to three words; a "why or why not" stem asks the student
+to take a side and justify it from the reading). Their past questions are
+about other material — never reuse their content, and never ask about
+anything the SOURCE MATERIAL does not cover (current events, photos and
+bonus trivia included)."""
+
+QUIZ_STYLE_MAX_CHARS = 4000  # a pasted style block, not a second source
+
 SUMMARY_PROMPT = f"""You are creating structured study notes for a university module.
 
 {_GROUNDING}

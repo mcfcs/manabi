@@ -19,6 +19,7 @@ from manabi_core.models import (
     Artifact,
     ArtifactType,
     Citation,
+    Course,
     DocElement,
     Document,
     DocumentPage,
@@ -1236,6 +1237,22 @@ async def _course_code_style(db: AsyncSession, module_id: int) -> str:
     return codestyle.style_block([(t or "", c or "") for t, c in rows])
 
 
+async def _course_quiz_style(db: AsyncSession, module_id: int | None) -> str:
+    """The instructor's quiz style for this module's course (courses.quiz_style)
+    as a prompt block. "" when none was written."""
+    if module_id is None:
+        return ""
+    style = (
+        await db.execute(
+            select(Course.quiz_style)
+            .join(Module, Module.course_id == Course.id)
+            .where(Module.id == module_id)
+        )
+    ).scalar_one_or_none()
+    style = (style or "").strip()[: prompts.QUIZ_STYLE_MAX_CHARS]
+    return prompts.QUIZ_STYLE_BLOCK.replace("{style}", style) if style else ""
+
+
 async def _plan_checkpoint_prompts(db: AsyncSession, plan_id: int) -> dict[int, list[str]]:
     """The stems of a study plan's topic tests, per module. A plan's final
     repeated a topic test's question word for word ("what value is passed to
@@ -1320,8 +1337,10 @@ async def generate_quiz(
             base_prompt = prompts.EXERCISE_QUIZ_PROMPT if exercise else prompts.QUIZ_PROMPT
             if instructions:
                 base_prompt += prompts.FOCUS_BLOCK.replace("{instructions}", instructions)
-            # Code is written the way the professor writes it.
+            # Code is written the way the professor writes it, and questions
+            # the way they write quizzes.
             base_prompt += await _course_code_style(db, order[0]) if order else ""
+            base_prompt += await _course_quiz_style(db, order[0]) if order else ""
             # Exercise stems legitimately look alike ("Trace this code…" with
             # different snippets) — practice quizzes dedup at 0.9.
             dedup_threshold = 0.9 if exercise else 0.8
@@ -1756,6 +1775,7 @@ async def regenerate_question(job_id: int, question_id: int) -> None:
             if artifact.instructions:
                 base_prompt += prompts.FOCUS_BLOCK.replace("{instructions}", artifact.instructions)
             base_prompt += await _course_code_style(db, question.module_id or artifact.module_id)
+            base_prompt += await _course_quiz_style(db, question.module_id or artifact.module_id)
             base_prompt = (
                 base_prompt.replace("{count}", "1").replace("{types}", question.qtype)
                 + "\n\nDo NOT duplicate or trivially rephrase any of these existing "
