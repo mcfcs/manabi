@@ -353,7 +353,9 @@ QUIZ_PROMPT = f"""You are writing {{count}} quiz questions for a university modu
 Question types (use exactly these): {{types}}.
 - "mcq": 4 plausible options, exactly one correct. Distractors must be
   realistic misconceptions, not obvious throwaways.
-- "tf": a statement that is clearly true or false per the sources.
+- "tf": a statement that is clearly true or false per the sources. ONE
+  claim in one short sentence — never two claims joined by "while",
+  "whereas" or "and", where half can be true and half false.
 - "short": answerable in one sentence, phrase or value.
 - "enumeration": when the sources list several related items, ask the student
   to name ALL of them, named exactly as in the sources. Each item is a short
