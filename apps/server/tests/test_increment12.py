@@ -294,3 +294,13 @@ def test_strip_note_markers_keeps_citations_and_numbered_refs():
     els = pipeline._strip_note_markers([_p(text), _p("x = obj.1", "code")])
     assert els[0]["text"] == text
     assert els[1]["text"] == "x = obj.1"
+
+
+def test_ocr_runs_without_the_angle_classifier():
+    # The classifier flipped upright scanned lines and read them as junk.
+    from docling.datamodel.base_models import InputFormat
+
+    pipeline._converters.pop(True, None)
+    conv = pipeline._build_converter(True)
+    ocr = conv.format_to_options[InputFormat.PDF].pipeline_options.ocr_options
+    assert ocr.kind == "rapidocr" and ocr.use_cls is False

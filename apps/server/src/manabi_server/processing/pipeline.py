@@ -777,6 +777,7 @@ def _build_converter(full_page_ocr: bool):
         from docling.datamodel.pipeline_options import (
             AcceleratorOptions,
             PdfPipelineOptions,
+            RapidOcrOptions,
         )
         from docling.document_converter import DocumentConverter, PdfFormatOption
 
@@ -785,6 +786,11 @@ def _build_converter(full_page_ocr: bool):
         opts = PdfPipelineOptions(
             accelerator_options=AcceleratorOptions(num_threads=os.cpu_count() or 4)
         )
+        # RapidOCR's angle classifier flips some upright lines 180° and reads
+        # them upside down: a scanned book lost ~6% of its lines to junk like
+        # "ye e ee e oe oes" (conf ~0.6) — Schumpeter's definition among them.
+        # Pages reach OCR already upright (normalize_rotation), so it is off.
+        opts.ocr_options = RapidOcrOptions(use_cls=False)
         if full_page_ocr:
             try:
                 from docling.datamodel.pipeline_options import OcrMode
@@ -805,7 +811,8 @@ def _build_converter(full_page_ocr: bool):
 #   v3: scanned PDFs use full-page OCR (recovers dropped drop-cap initials).
 #   v4: partial Docling conversions are recovered page by page (and never
 #       cached); Docling `code` labels are kept as element type "code".
-_PARSE_CACHE_VERSION = 4
+#   v5: OCR without RapidOCR's angle classifier (it flipped upright lines).
+_PARSE_CACHE_VERSION = 5
 
 # A page "has text" in the PDF layer when PyMuPDF finds at least this many
 # words on it; such a page must never end up with zero text elements.
