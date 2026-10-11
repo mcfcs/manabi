@@ -236,3 +236,55 @@ def test_silence_matches_the_take_format():
             t.getsampwidth(),
         )
         assert w.getnframes() == t.getframerate() // 4
+
+
+@pytest.mark.asyncio
+async def test_a_take_only_recognition_doubts_is_kept_rather_than_dropping_the_text(monkeypatch):
+    monkeypatch.setattr(
+        tts,
+        "get_settings",
+        lambda: SimpleNamespace(
+            tts_url="http://voice",
+            tts_ref_audio="ref.wav",
+            tts_ref_text="Reference.",
+            tts_ref_bank={},
+            tts_speed=1,
+        ),
+    )
+    # English recognition never hears the Tagalog names right
+    monkeypatch.setattr(tts, "verify_wav", Mock(return_value="Voice transcript omits a phrase"))
+
+    def reply(request):
+        return httpx.Response(200, content=wav((3, 6000)))
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(reply)) as client:
+        audio = await tts._request_wav(
+            client, "Alyansang Bayanihan ng mga Magsasaka and Sanlakas won seats.", verify=True
+        )
+    assert seconds(audio) > 2.5
+
+
+@pytest.mark.asyncio
+async def test_silent_takes_still_fail_even_when_recognition_also_doubts(monkeypatch):
+    monkeypatch.setattr(
+        tts,
+        "get_settings",
+        lambda: SimpleNamespace(
+            tts_url="http://voice",
+            tts_ref_audio="ref.wav",
+            tts_ref_text="Reference.",
+            tts_ref_bank={},
+            tts_speed=1,
+        ),
+    )
+    monkeypatch.setattr(tts, "verify_wav", Mock(return_value="Voice transcript omits a phrase"))
+    calls = []
+
+    def reply(request):
+        calls.append(1)
+        # first take is complete but "unheard", the rest are silent
+        return httpx.Response(200, content=wav((3, 6000)) if len(calls) == 1 else wav((3, 0)))
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(reply)) as client:
+        with pytest.raises(tts.TTSQualityError):
+            await tts._request_wav(client, "This sentence has to be spoken in full.", verify=True)

@@ -276,6 +276,13 @@ async def _request_wav(
     settings = get_settings()
     ref_audio, ref_text = reference(mood)
     last: Exception | None = None
+    # A take that sounded complete but whose English transcript disagreed.
+    # Recognition cannot hear Tagalog or most names: a paragraph listing
+    # "Alyansang Bayanihan ng mga Magsasaka…" failed every take and was
+    # dropped from the reading. When every take fails ONLY that check, the
+    # last such take is kept instead of losing the paragraph.
+    unheard: bytes | None = None
+    acoustic_failures = 0
     for attempt in range(TAKE_ATTEMPTS):
         try:
             r = await client.get(
@@ -297,17 +304,25 @@ async def _request_wav(
                 timeout=300,
             )
             r.raise_for_status()
-            wav = await asyncio.to_thread(
-                _validate_and_trim_wav, r.content, text, settings.tts_speed
-            )
+            try:
+                wav = await asyncio.to_thread(
+                    _validate_and_trim_wav, r.content, text, settings.tts_speed
+                )
+            except TTSQualityError:
+                acoustic_failures += 1
+                raise
             if verify:
                 problem = await asyncio.to_thread(verify_wav, wav, text)
                 if problem:
+                    unheard = wav
                     raise TTSQualityError(problem)
             return wav
         except Exception as exc:  # noqa: BLE001
             last = exc
         log.warning("tts fragment retry (attempt %d): %s", attempt + 1, last)
+    if unheard is not None and acoustic_failures == 0:
+        log.warning("tts: keeping a take recognition could not confirm: %.60s", text)
+        return unheard
     raise last or ValueError("tts request failed")
 
 
