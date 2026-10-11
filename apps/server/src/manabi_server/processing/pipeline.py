@@ -654,10 +654,14 @@ COLUMN_GAP_MIN_FRAC = 0.12
 SPAN_WIDTH_FRAC = 0.6
 
 
-def _detect_column_split(boxed: list[dict], content_l: float, content_r: float) -> float | None:
+def _detect_column_split(
+    boxed: list[dict], content_l: float, content_r: float, min_per_side: int = 2
+) -> float | None:
     """If a page reads as two columns, return the x that separates them, else
     None. Looks for a wide gap between element centres in the middle of the
-    content, with real text on both sides (so figures/tables don't trip it)."""
+    content, with real text on both sides (so figures/tables don't trip it).
+    `min_per_side` is 1 on a scanned two-page spread: a book page holding a
+    single paragraph is still a page of its own."""
     width = content_r - content_l
     if width <= 0:
         return None
@@ -677,7 +681,7 @@ def _detect_column_split(boxed: list[dict], content_l: float, content_r: float) 
         return None
     left = sum(1 for c in centers if c < best_mid)
     right = len(centers) - left
-    return best_mid if left >= 2 and right >= 2 else None
+    return best_mid if left >= min_per_side and right >= min_per_side else None
 
 
 def _fix_reading_order(elements: list[dict], aggressive_columns: bool = False) -> list[dict]:
@@ -711,7 +715,12 @@ def _fix_reading_order(elements: list[dict], aggressive_columns: bool = False) -
 
         content_l = min(el["bbox"]["l"] for el in boxed)
         content_r = max(el["bbox"]["r"] for el in boxed)
-        split = _detect_column_split(boxed, content_l, content_r)
+        # On a spread the gutter is physical: one paragraph on the right-hand
+        # page is enough (Quimpo p.16's lone right-page paragraph was read in
+        # the middle of the left page's).
+        split = _detect_column_split(
+            boxed, content_l, content_r, min_per_side=1 if aggressive_columns else 2
+        )
 
         if split is not None and (aggressive_columns or scrambled):
             # Column-aware: left column fully (top→bottom), then right column.

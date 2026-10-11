@@ -39,6 +39,7 @@ from manabi_server.services.narration import (
     active_narration_job_filter,
     build_for_document,
     element_rows_query,
+    keep_recorded,
     narratable,
     segment_rows,
 )
@@ -220,6 +221,20 @@ async def prepare_narration(
             db.add(narration)
             await db.flush()
         else:
+            # An extractor fix re-scripts the reading; paragraphs whose spoken
+            # text is unchanged keep their recording.
+            old = (
+                (
+                    await db.execute(
+                        select(NarrationSegment).where(
+                            NarrationSegment.narration_id == narration.id
+                        )
+                    )
+                )
+                .scalars()
+                .all()
+            )
+            keep_recorded(old, rows)
             await db.execute(
                 delete(NarrationSegment).where(NarrationSegment.narration_id == narration.id)
             )

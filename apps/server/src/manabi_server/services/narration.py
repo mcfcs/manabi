@@ -74,6 +74,27 @@ def element_rows_query(document_id: int):
 SHORT_HEADING_WORDS = 4  # mirrors tts_client.TINY_GROUP_WORDS
 
 
+AUDIO_FIELDS = ("audio", "mime", "duration_ms", "voice")
+
+
+def keep_recorded(old: list, rows: list[dict]) -> int:
+    """Carry each old segment's recording onto the new row with the same
+    spoken text, so a re-script (an extractor fix) re-records only the
+    paragraphs that changed. Returns how many rows kept their audio."""
+    recorded = {
+        s.spoken_text: {f: getattr(s, f) for f in AUDIO_FIELDS}
+        for s in old
+        if getattr(s, "audio", None) is not None
+    }
+    kept = 0
+    for r in rows:
+        audio = recorded.get(r.get("spoken_text"))
+        if audio:
+            r.update(audio)
+            kept += 1
+    return kept
+
+
 def segment_rows(script: Script) -> list[dict]:
     """Rows for the segments worth recording. A segment whose spoken form holds
     no letter or digit is silence — it would only earn a 400 from the voice
@@ -155,6 +176,14 @@ def prepare_narration_sync(db: Session, doc: Document) -> int | None:
             db.add(narration)
             db.flush()
         else:
+            old = (
+                db.execute(
+                    select(NarrationSegment).where(NarrationSegment.narration_id == narration.id)
+                )
+                .scalars()
+                .all()
+            )
+            keep_recorded(old, rows)
             db.execute(
                 delete(NarrationSegment).where(NarrationSegment.narration_id == narration.id)
             )

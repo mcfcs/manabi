@@ -51,3 +51,33 @@ def test_the_bibliography_ends_the_reading():
         (6, "paragraph", "Abinales, P. 2000. Making Mindanao. Quezon City: Ateneo Press."),
     ]
     assert _texts(rows) == ["The last argued paragraph of the chapter ends here."]
+
+
+def test_a_rescript_keeps_the_recordings_of_unchanged_paragraphs():
+    from types import SimpleNamespace
+
+    from manabi_server.services.narration import keep_recorded
+
+    old = [
+        SimpleNamespace(
+            spoken_text="Same paragraph.",
+            audio=b"mp3",
+            mime="audio/mpeg",
+            duration_ms=900,
+            voice="steven",
+        ),
+        SimpleNamespace(
+            spoken_text="Old wrong order.",
+            audio=b"x",
+            mime="audio/mpeg",
+            duration_ms=1,
+            voice="steven",
+        ),
+        SimpleNamespace(
+            spoken_text="Never recorded.", audio=None, mime=None, duration_ms=None, voice=None
+        ),
+    ]
+    rows = [{"spoken_text": "Same paragraph."}, {"spoken_text": "New right order."}]
+    assert keep_recorded(old, rows) == 1
+    assert rows[0]["audio"] == b"mp3" and rows[0]["duration_ms"] == 900
+    assert "audio" not in rows[1]

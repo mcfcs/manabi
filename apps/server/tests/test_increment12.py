@@ -333,3 +333,19 @@ def test_ocr_zeros_and_end_accents():
     assert clean_ocr_text("Caoilí and Landé; Malacañang, Avendaño") == (
         "Caoilí and Landé; Malacañang, Avendaño"
     )
+
+
+def test_a_spread_page_with_one_paragraph_on_the_right_reads_left_first():
+    # Quimpo p.16: four paragraphs on the left page, one on the right; the OCR
+    # put the right one second, and Steven read it in the middle of the left.
+    els = [
+        _el("L1", 383, 45, 330),
+        _el("L2", 369, 29, 331),
+        _el("R1", 355, 428, 729),
+        _el("L3", 263, 29, 331),
+        _el("L4", 116, 29, 331),
+    ]
+    out = [e["text"] for e in pipeline._fix_reading_order(els, aggressive_columns=True)]
+    assert out == ["L1", "L2", "L3", "L4", "R1"]
+    # a single-page document still needs two per side before it is reordered
+    assert [e["text"] for e in pipeline._fix_reading_order(els)] == [e["text"] for e in els]
