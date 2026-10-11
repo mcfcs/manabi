@@ -264,7 +264,18 @@ async def prepare_narration(
     total = (
         await db.execute(select(func.count()).where(NarrationSegment.narration_id == narration.id))
     ).scalar_one()
-    if missing == 0:
+    untimed = (
+        await db.execute(
+            select(func.count()).where(
+                NarrationSegment.narration_id == narration.id,
+                NarrationSegment.audio.is_not(None),
+                NarrationSegment.word_times.is_(None),
+            )
+        )
+    ).scalar_one()
+    # Everything recorded and word-timed: nothing to do. Recorded before word
+    # timing existed: a job still runs, only to time the words for highlighting.
+    if missing == 0 and untimed == 0:
         narration.status = "ready"
         await db.commit()
         return PrepareOut(job_id=None, segment_count=total, status="ready")
