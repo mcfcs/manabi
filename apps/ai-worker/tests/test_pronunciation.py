@@ -193,3 +193,16 @@ def test_single_letter_syllables_are_never_candidates():
     assert not pronunciation._usable("Moo F")
     assert not pronunciation._usable("Hoo K")
     assert pronunciation._usable("Moof")
+
+
+@pytest.mark.asyncio
+async def test_a_probe_that_cannot_start_is_just_unavailable(monkeypatch):
+    from manabi_ai import g2p
+
+    monkeypatch.setattr(g2p, "_available", lambda python, root: True)
+
+    def boom(*a, **k):
+        raise NotImplementedError("no subprocess support on this event loop")
+
+    monkeypatch.setattr(g2p, "_run", boom)
+    assert await g2p.probe(["Quimpo"]) is None

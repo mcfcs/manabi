@@ -14,6 +14,7 @@ from manabi_core.models import (
     Artifact,
     ChatMessage,
     ChatThread,
+    Course,
     Job,
     JobStatus,
     LectureAudio,
@@ -42,12 +43,15 @@ async def _say_as(db, job, course, texts: list[str]) -> list[pronounce.Entry]:
     the recording), then return the course's pronunciation list."""
     if course is None:
         return []
+    job.progress_note = "Checking how to say the terms"
+    await db.commit()
+    # Its own session: a failure here once rolled back the recording's
+    # session, expiring every loaded segment, and the next read of one raised
+    # MissingGreenlet — the whole narration failed over an optional step.
     try:
-        job.progress_note = "Checking how to say the terms"
-        await db.commit()
-        await learn(db, course, texts)
+        async with session_factory()() as learn_db:
+            await learn(learn_db, await learn_db.get(Course, course.id), texts)
     except Exception:  # noqa: BLE001
-        await db.rollback()
         log.exception("pronunciation learning failed; recording as written")
     return await course_entries(db, course.id)
 
