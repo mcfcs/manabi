@@ -70,6 +70,16 @@ const FOLLOW_PAUSE_MS = 4000;
  * pan while zoomed or a vertical scroll that drifts sideways turned the page
  * on iPhone and iPad, and made zooming in impossible. */
 const SWIPE_MIN_PX = 70;
+
+/** The nearest ancestor that scrolls vertically (null = the page itself). */
+function scrollParent(el: Element | null): HTMLElement | null {
+  for (let n = el; n && n !== document.body; n = n.parentElement) {
+    const oy = getComputedStyle(n).overflowY;
+    if ((oy === "auto" || oy === "scroll") && n.scrollHeight > n.clientHeight + 1)
+      return n as HTMLElement;
+  }
+  return null;
+}
 const SWIPE_MAX_MS = 600;
 
 function loadMode(): ViewMode {
@@ -145,6 +155,10 @@ function PageText({
   }));
   // Whole-word terms + cross-tag annotations + find matches, baked into the HTML.
   const marked = useHighlightedHtml(html, terms, annotMarks, search);
+  // A stable object: React re-sets innerHTML whenever this prop object is new,
+  // even for identical HTML — every viewer re-render (each word Steven says)
+  // replaced the page's text nodes, losing the highlight and any selection.
+  const inner = useMemo(() => ({ __html: marked }), [marked]);
   if (!page.text_html) {
     return <p className="viewer-fallback-hint">No extracted text for this page yet.</p>;
   }
@@ -152,7 +166,7 @@ function PageText({
     <div
       className="viewer-text-content"
       // sanitized server-side: escaped text; b/i/p/br/code/table + margin style
-      dangerouslySetInnerHTML={{ __html: marked }}
+      dangerouslySetInnerHTML={inner}
       onClick={(e) => {
         const mark = (e.target as HTMLElement).closest("mark.annot");
         const raw = mark?.getAttribute("data-annot-ids");
@@ -214,6 +228,7 @@ function ContinuousText({
   search?: SearchSpec;
 }) {
   const marked = useHighlightedHtml(html, terms, annots, search);
+  const inner = useMemo(() => ({ __html: marked }), [marked]); // see PageText
   return (
     <article
       className="reader-doc note-editor-content"
@@ -225,7 +240,7 @@ function ContinuousText({
       }}
       // selection via useSelectionPopover; marks are part of the rendered HTML
       // eslint-disable-next-line react/no-danger
-      dangerouslySetInnerHTML={{ __html: marked }}
+      dangerouslySetInnerHTML={inner}
     />
   );
 }
@@ -627,14 +642,18 @@ export function DocumentViewer({
     }
     paint(now?.range ?? null, paragraph);
     if (speaking.follow && now && !userIsReading()) {
+      // Scroll to the WORD, not its paragraph: on a phone a paragraph is
+      // taller than the screen, and centring it left the word off-screen.
       const box = now.range.getBoundingClientRect();
-      const view = viewerEl.getBoundingClientRect();
-      const margin = view.height * 0.18;
-      if (box.top < view.top + margin || box.bottom > view.bottom - margin * 2) {
-        (now.range.startContainer.parentElement ?? null)?.scrollIntoView({
-          block: "center",
-          behavior: "smooth",
-        });
+      const scroller = scrollParent(now.range.startContainer.parentElement);
+      const view = scroller
+        ? scroller.getBoundingClientRect()
+        : { top: 0, bottom: window.innerHeight, height: window.innerHeight };
+      const bar = viewerEl.querySelector(".narration-bar")?.getBoundingClientRect();
+      const bottom = Math.min(view.bottom, bar?.top ?? view.bottom);
+      if (box.top < view.top + 24 || box.bottom > bottom - 24) {
+        const delta = box.top - (view.top + (bottom - view.top) * 0.33);
+        (scroller ?? window).scrollBy({ top: delta, behavior: "smooth" });
       }
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps

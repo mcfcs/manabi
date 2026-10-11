@@ -14,12 +14,15 @@ export interface WordRange {
 
 export const norm = (s: string) => s.toLowerCase().replace(/[^\p{L}\p{N}]/gu, "");
 
-const cache = new WeakMap<Element, { key: string; words: WordRange[] }>();
+const cache = new WeakMap<Element, { key: string; words: WordRange[]; first: Node | null }>();
 
 export function wordRanges(root: Element): WordRange[] {
   const key = String(root.textContent?.length ?? 0);
   const hit = cache.get(root);
-  if (hit && hit.key === key) return hit.words;
+  // React re-renders the page HTML with identical text: same length, new
+  // nodes. A live Range on a removed text node collapses onto the parent
+  // (still connected), so check the text node itself, not the range.
+  if (hit && hit.key === key && (!hit.first || hit.first.isConnected)) return hit.words;
   const words: WordRange[] = [];
   const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
   for (let node = walker.nextNode(); node; node = walker.nextNode()) {
@@ -33,7 +36,7 @@ export function wordRanges(root: Element): WordRange[] {
       words.push({ range, norm: n });
     }
   }
-  cache.set(root, { key, words });
+  cache.set(root, { key, words, first: words[0]?.range.startContainer ?? null });
   return words;
 }
 
