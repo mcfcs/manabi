@@ -61,7 +61,9 @@ def test_trims_edges_without_cutting_speech_or_internal_pauses():
     cleaned = tts._validate_and_trim_wav(
         wav((1, 0), (1, 6000), (0.4, 0), (1, 6000), (2, 0)), "An ordinary sentence with a pause."
     )
-    assert seconds(cleaned) == pytest.approx(2.68, abs=0.02)
+    # 2.4 s of speech and pause, plus the head and tail margins
+    margins = (tts.HEAD_MARGIN_MS + tts.TAIL_MARGIN_MS) / 1000
+    assert seconds(cleaned) == pytest.approx(2.4 + margins, abs=0.02)
 
 
 def test_rejects_truncated_wav():
@@ -130,7 +132,9 @@ async def test_shorter_fallback_must_preserve_and_synthesize_every_word(monkeypa
     source = "This is an unusually difficult sentence, but every word must still be spoken."
     request = AsyncMock(side_effect=[tts.TTSQualityError("short"), b"first", b"second"])
     monkeypatch.setattr(tts, "_request_wav", request)
-    assert await tts._fragment_wavs(None, source, verify=True) == [b"first", b"second"]
+    takes = await tts._fragment_wavs(None, source, verify=True)
+    # the inner cut keeps its boundary (a comma pause); the group's end is the caller's
+    assert takes == [(b"first", "clause"), (b"second", "")]
     parts = [c.args[1] for c in request.await_args_list[1:]]
     assert " ".join(parts) == source
     assert all(c.kwargs["verify"] for c in request.await_args_list)
@@ -158,3 +162,71 @@ async def test_audible_but_incomplete_speech_is_retried_before_caching(monkeypat
             client, "The President or Vice-President shall have qualified.", verify=True
         )
     assert len(requests) == verify.call_count == 2
+
+
+def _tone_wav(amplitude: int, seconds: float = 1.0, rate: int = 32000) -> bytes:
+    import io
+    import math
+    import struct
+    import wave
+
+    frames = b"".join(
+        struct.pack("<h", int(amplitude * math.sin(2 * math.pi * 220 * i / rate)))
+        for i in range(int(rate * seconds))
+    )
+    out = io.BytesIO()
+    with wave.open(out, "wb") as w:
+        w.setnchannels(1)
+        w.setsampwidth(2)
+        w.setframerate(rate)
+        w.writeframes(frames)
+    return out.getvalue()
+
+
+def _rms(wav: bytes) -> float:
+    import array
+    import io
+    import math
+    import wave
+
+    with wave.open(io.BytesIO(wav)) as w:
+        s = array.array("h", w.readframes(w.getnframes()))
+    return math.sqrt(sum(v * v for v in s) / len(s))
+
+
+def test_quiet_and_loud_takes_come_out_at_the_same_level():
+    from manabi_ai.tts_client import _validate_and_trim_wav
+
+    quiet = _validate_and_trim_wav(_tone_wav(2500), "one two three four five")
+    loud = _validate_and_trim_wav(_tone_wav(9000), "one two three four five")
+    assert abs(_rms(quiet) - _rms(loud)) / _rms(loud) < 0.1
+
+
+def test_levelling_never_clips():
+    import array
+    import io
+    import wave
+
+    from manabi_ai.tts_client import PEAK_CEILING, _validate_and_trim_wav
+
+    out = _validate_and_trim_wav(_tone_wav(400), "one two three four five")  # wants a big gain
+    with wave.open(io.BytesIO(out)) as w:
+        peak = max(abs(v) for v in array.array("h", w.readframes(w.getnframes())))
+    assert peak <= PEAK_CEILING
+
+
+def test_silence_matches_the_take_format():
+    import io
+    import wave
+
+    from manabi_ai.tts_client import _silence_wav
+
+    take = _tone_wav(5000)
+    gap = _silence_wav(take, 250)
+    with wave.open(io.BytesIO(gap)) as w, wave.open(io.BytesIO(take)) as t:
+        assert (w.getframerate(), w.getnchannels(), w.getsampwidth()) == (
+            t.getframerate(),
+            t.getnchannels(),
+            t.getsampwidth(),
+        )
+        assert w.getnframes() == t.getframerate() // 4

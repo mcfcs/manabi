@@ -81,7 +81,7 @@ async def synthesize_lecture(context, job_id: int, artifact_id: int) -> None:
                 job.progress_pct = int(100 * done / max(len(todo), 1))
                 job.progress_note = f"Synthesizing segment {i + 1}/{len(segments)}"
                 await db.commit()
-                audio, duration = await synthesize(seg.get("spoken_text", ""))
+                audio, duration = await synthesize(seg.get("spoken_text", ""), end="paragraph")
                 db.add(
                     LectureAudio(
                         artifact_id=artifact_id,
@@ -258,7 +258,12 @@ async def narrate_document(context, job_id: int, narration_id: int) -> None:
                 if not text:
                     continue
                 try:
-                    audio, duration = await synthesize(text, verify=settings.tts_verify_speech)
+                    audio, duration = await synthesize(
+                        text,
+                        verify=settings.tts_verify_speech,
+                        # the pause after it: a heading rests longer than a paragraph
+                        end=seg.kind if seg.kind in ("heading", "title") else "paragraph",
+                    )
                 except TTSQualityError as exc:
                     # A paragraph the voice cannot say — a real one was a line
                     # of Python (`re.sub(r'[^\x00-\x7f]', …)`) — failed all 70

@@ -87,3 +87,32 @@ def test_shorter_retry_chunks_do_not_strand_by_law_as_a_tiny_tail():
     assert " ".join(parts) == text
     assert parts[-1] != "by law."
     assert all(len(p) <= len(text) // 2 for p in parts)
+
+
+def test_split_parts_tags_how_each_piece_ends():
+    from manabi_ai.tts_client import split_parts
+
+    long = "The first part of the argument runs long enough to be cut, " * 4 + "and it ends."
+    parts = split_parts("Short one. " + long, group_chars=120)
+    assert parts[0] == ("Short one.", "sentence")
+    assert parts[-1][1] == "sentence"
+    assert {b for _, b in parts[1:-1]} <= {"clause", "word"}
+    assert any(b == "clause" for _, b in parts)
+
+
+def test_pauses_follow_the_boundary_and_the_text_end():
+    from manabi_ai.tts_client import END_PAUSE_MS, PAUSE_MS, pause_after
+
+    assert pause_after("clause", last=False, end="paragraph") == PAUSE_MS["clause"]
+    assert pause_after("sentence", last=False, end="none") == PAUSE_MS["sentence"]
+    assert PAUSE_MS["clause"] < PAUSE_MS["sentence"]
+    assert pause_after("sentence", last=True, end="heading") == END_PAUSE_MS["heading"]
+    assert pause_after("sentence", last=True, end="none") == 0  # chat joins its own audio
+    assert END_PAUSE_MS["paragraph"] < END_PAUSE_MS["heading"]
+
+
+def test_merge_tiny_parts_keeps_the_last_boundary():
+    from manabi_ai.tts_client import merge_tiny_parts
+
+    merged = merge_tiny_parts([("Welcome back.", "sentence"), ("We traced the stack,", "clause")])
+    assert merged == [("Welcome back. We traced the stack,", "clause")]

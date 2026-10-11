@@ -1,9 +1,10 @@
 """HTTP client for the local TTS server (GPT-SoVITS api_v2, port 9880).
 
 Long texts are synthesized in sentence groups (~200 chars — quality degrades
-on very long inputs), concatenated, and encoded to mono 64kbps MP3 via
-ffmpeg (iOS-safe; ~0.5 MB/min). Swapping engines (e.g. F5-TTS) only means
-changing `_request_wav`.
+on very long inputs), levelled, joined with pauses that follow the
+punctuation, and encoded to mono 96kbps MP3 via ffmpeg (iOS-safe;
+~0.7 MB/min). Swapping engines (e.g. F5-TTS) only means changing
+`_request_wav`.
 """
 
 import array
@@ -102,6 +103,15 @@ def split_sentences(text: str, group_chars: int = GROUP_CHARS) -> list[str]:
     single utterance at a time. Keep section labels and abbreviations attached;
     split long sentences at clauses where possible, then at word boundaries.
     Pieces with nothing to say are dropped."""
+    return [part for part, _ in split_parts(text, group_chars)]
+
+
+def split_parts(text: str, group_chars: int = GROUP_CHARS) -> list[tuple[str, str]]:
+    """split_sentences, with how each piece ends: "sentence", "clause" (cut at
+    a comma inside a long sentence) or "word" (cut mid-phrase). The boundary
+    sets the pause after it — every gap used to be the same ~0.3 s, so a comma
+    inside a sentence sounded like a full stop and a paragraph end like a
+    comma."""
     text = _normalize_for_tts(text)
     sentences: list[str] = []
     for s in _SENT_END.split(text):
@@ -112,7 +122,7 @@ def split_sentences(text: str, group_chars: int = GROUP_CHARS) -> list[str]:
             sentences[-1] += " " + s
         elif _speakable(s):
             sentences.append(s)
-    out: list[str] = []
+    out: list[tuple[str, str]] = []
     for s in sentences:
         while len(s) > group_chars:
             # A clause boundary keeps the voice's phrasing intact. Only fall
@@ -132,10 +142,10 @@ def split_sentences(text: str, group_chars: int = GROUP_CHARS) -> list[str]:
                     cut = earlier
             head = s[:cut].strip()
             if _speakable(head):
-                out.append(head)
+                out.append((head, "clause" if head[-1] in ",;:" else "word"))
             s = s[cut:].strip()
         if _speakable(s):
-            out.append(s)
+            out.append((s, "sentence"))
     return out
 
 
@@ -174,14 +184,63 @@ def _validate_and_trim_wav(content: bytes, text: str, speed: float = 1.0) -> byt
         )
     if any(b - a > 150 for a, b in zip(active, active[1:], strict=False)):
         raise TTSQualityError("Voice contains a long silent gap inside a sentence")
-    # A lower threshold plus margins protects soft consonants and breaths.
+    # A lower threshold plus margins protects soft consonants and breaths. The
+    # margins are short on purpose: the pause between pieces is added by
+    # synthesize() according to the boundary, not left to trimming.
     audible = [i for i, level in enumerate(levels) if level >= 58]  # -55 dBFS
-    first = max(0, audible[0] - 10) * window
-    last = min(len(samples), (audible[-1] + 19) * window)
+    first = max(0, audible[0] - HEAD_MARGIN_MS // 10) * window
+    last = min(len(samples), (audible[-1] + TAIL_MARGIN_MS // 10) * window)
+    piece = _level(samples[first:last], levels[audible[0] : audible[-1] + 1])
     output = io.BytesIO()
     with wave.open(output, "wb") as target:
         target.setparams(params)
-        target.writeframes(pcm[first * 2 : last * 2])
+        target.writeframes(piece.tobytes() if sys.byteorder == "little" else _swapped(piece))
+    return output.getvalue()
+
+
+HEAD_MARGIN_MS = 50
+TAIL_MARGIN_MS = 120
+# Silence added after a piece, by how it ends (on top of the two margins). A
+# comma inside a sentence breathes, a full stop rests, a paragraph or a
+# heading leaves room to take it in.
+PAUSE_MS = {"word": 0, "clause": 60, "sentence": 250}
+END_PAUSE_MS = {"paragraph": 480, "heading": 680, "title": 830}
+# Every take is sampled on its own, so loudness drifted from one sentence to
+# the next. Level each to the same speech loudness (-20 dBFS RMS over the
+# voiced 10 ms windows), within limits, and never past -0.3 dBFS peak.
+TARGET_RMS = 3277
+GAIN_RANGE = (0.5, 2.5)
+PEAK_CEILING = 31760
+
+
+def _level(samples: "array.array", levels: list[float]) -> "array.array":
+    voiced = [v for v in levels if v >= 184] or levels
+    rms = math.sqrt(sum(v * v for v in voiced) / max(1, len(voiced)))
+    peak = max((abs(v) for v in samples), default=0)
+    if rms <= 0 or peak <= 0:
+        return samples
+    gain = min(max(TARGET_RMS / rms, GAIN_RANGE[0]), GAIN_RANGE[1], PEAK_CEILING / peak)
+    if abs(gain - 1) < 0.02:
+        return samples
+    return array.array("h", (int(v * gain) for v in samples))
+
+
+def _swapped(piece: "array.array") -> bytes:
+    copy = array.array("h", piece)
+    copy.byteswap()
+    return copy.tobytes()
+
+
+def _silence_wav(like: bytes, ms: int) -> bytes:
+    """`ms` of silence in the same WAV format as `like`, so ffmpeg's concat
+    demuxer can join it without re-encoding."""
+    with wave.open(io.BytesIO(like), "rb") as source:
+        params = source.getparams()
+    frames = params.framerate * ms // 1000
+    output = io.BytesIO()
+    with wave.open(output, "wb") as target:
+        target.setparams(params)
+        target.writeframes(b"\x00" * frames * params.nchannels * params.sampwidth)
     return output.getvalue()
 
 
@@ -232,20 +291,24 @@ async def _request_wav(client: httpx.AsyncClient, text: str, *, verify: bool = F
 
 async def _fragment_wavs(
     client: httpx.AsyncClient, text: str, *, verify: bool = False
-) -> list[bytes]:
+) -> list[tuple[bytes, str]]:
+    """Takes for one group, each with the boundary after it ("" = the group's
+    own end, decided by the caller)."""
     try:
-        return [await _request_wav(client, text, verify=verify)]
+        return [(await _request_wav(client, text, verify=verify), "")]
     except TTSQualityError:
         # One bounded fallback: a stubborn sentence often works as shorter
         # clauses. Every clause must pass; a failure never silently drops one.
-        parts = split_sentences(text, group_chars=max(40, len(text) // 2))
+        parts = split_parts(text, group_chars=max(40, len(text) // 2))
         if len(parts) < 2:
             raise
-        return [await _request_wav(client, part, verify=verify) for part in parts]
+        out = [(await _request_wav(client, part, verify=verify), b) for part, b in parts]
+        out[-1] = (out[-1][0], "")
+        return out
 
 
 def _encode_mp3(wav_paths: list[Path], out_path: Path) -> None:
-    """Concatenate wavs and encode to mono 64kbps mp3."""
+    """Concatenate wavs and encode to mono 96kbps mp3 (64k smeared sibilants)."""
     list_file = out_path.with_suffix(".txt")
     list_file.write_text("\n".join(f"file '{p.as_posix()}'" for p in wav_paths), encoding="utf-8")
     subprocess.run(
@@ -261,7 +324,7 @@ def _encode_mp3(wav_paths: list[Path], out_path: Path) -> None:
             "-ac",
             "1",
             "-b:a",
-            "64k",
+            "96k",
             str(out_path),
         ],
         check=True,
@@ -299,37 +362,69 @@ def merge_tiny_groups(groups: list[str], max_chars: int = GROUP_CHARS) -> list[s
     new lecture opened with "Welcome back." as its own group, failed the
     quality check three times, and the whole recording failed. Spoken with the
     sentence after it, it is fine."""
-    out: list[str] = []
+    return [g for g, _ in merge_tiny_parts([(g, "sentence") for g in groups], max_chars)]
+
+
+def merge_tiny_parts(
+    parts: list[tuple[str, str]], max_chars: int = GROUP_CHARS
+) -> list[tuple[str, str]]:
+    """merge_tiny_groups over (text, boundary) pairs: a merged piece ends the
+    way its last part ends."""
+    out: list[tuple[str, str]] = []
     carry = ""
-    for g in groups:
+    for g, boundary in parts:
         g = f"{carry} {g}".strip() if carry else g
         carry = ""
         if len(g.split()) < TINY_GROUP_WORDS:
             carry = g
             continue
-        out.append(g)
+        out.append((g, boundary))
     if carry:
-        if out and len(out[-1]) + len(carry) + 1 <= max_chars * 2:
-            out[-1] = f"{out[-1]} {carry}"
+        if out and len(out[-1][0]) + len(carry) + 1 <= max_chars * 2:
+            out[-1] = (f"{out[-1][0]} {carry}", "sentence")
         else:
-            out.append(carry)
+            out.append((carry, "sentence"))
     return out
 
 
-async def synthesize(text: str, *, verify: bool = False) -> tuple[bytes, int]:
-    """Returns (mp3 bytes, duration_ms)."""
-    groups = merge_tiny_groups(split_sentences(text))
+def pause_after(boundary: str, *, last: bool, end: str) -> int:
+    """Silence (ms) to add after a piece. `end` is how the whole text ends:
+    "paragraph", "heading", "title" — or "none" when the caller joins the
+    audio itself (chat replies, previews)."""
+    if last:
+        return END_PAUSE_MS.get(end, 0)
+    return PAUSE_MS.get(boundary or "sentence", PAUSE_MS["sentence"])
+
+
+async def synthesize(text: str, *, verify: bool = False, end: str = "none") -> tuple[bytes, int]:
+    """Returns (mp3 bytes, duration_ms). `end` adds the pause that should
+    follow this text when it is one paragraph or heading of a longer reading
+    (see END_PAUSE_MS)."""
+    groups = merge_tiny_parts(split_parts(text))
     if not groups:
         raise ValueError("empty text")
     with tempfile.TemporaryDirectory(prefix="manabi_tts_") as tmp:
         tmpdir = Path(tmp)
         wavs: list[Path] = []
+
+        def add(audio: bytes) -> None:
+            p = tmpdir / f"{len(wavs):03d}.wav"
+            p.write_bytes(audio)
+            wavs.append(p)
+
         async with httpx.AsyncClient() as client:
-            for group in groups:
-                for wav in await _fragment_wavs(client, group, verify=verify):
-                    p = tmpdir / f"{len(wavs):03d}.wav"
-                    p.write_bytes(wav)
-                    wavs.append(p)
+            for n, (group, boundary) in enumerate(groups):
+                takes = await _fragment_wavs(client, group, verify=verify)
+                for k, (wav, inner) in enumerate(takes):
+                    add(wav)
+                    last_take = k == len(takes) - 1
+                    pause = pause_after(
+                        inner or boundary,
+                        last=last_take and n == len(groups) - 1,
+                        end=end,
+                    )
+                    if pause:
+                        add(_silence_wav(wav, pause))
         out = tmpdir / "out.mp3"
         await asyncio.to_thread(_encode_mp3, wavs, out)
         duration = await asyncio.to_thread(_probe_duration_ms, out)

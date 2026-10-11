@@ -53,7 +53,8 @@ def _run(monkeypatch, texts, unsayable):
     job = SimpleNamespace(status=None, progress_note=None, result=None, error=None)
     narration = SimpleNamespace(status=None, error=None)
     segments = [
-        SimpleNamespace(id=i, ord=i, spoken_text=t, audio=None) for i, t in enumerate(texts)
+        SimpleNamespace(id=i, ord=i, kind="paragraph", spoken_text=t, audio=None)
+        for i, t in enumerate(texts)
     ]
     session = _Session(job, narration, segments)
     monkeypatch.setattr(tasks_tts, "session_factory", lambda: lambda: session)
@@ -63,7 +64,7 @@ def _run(monkeypatch, texts, unsayable):
         lambda: SimpleNamespace(tts_enabled=True, tts_verify_speech=True, tts_voice="steven"),
     )
 
-    async def fake_synthesize(text, verify=False):
+    async def fake_synthesize(text, verify=False, end="none"):
         if text in unsayable:
             raise TTSQualityError("Voice transcript contains too little of the requested sentence")
         return b"mp3", 1000
