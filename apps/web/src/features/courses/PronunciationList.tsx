@@ -23,11 +23,10 @@ interface Pronunciation {
 /** Below this, the voice's real sounds strayed from the intended ones. */
 const LISTEN_BELOW = 0.8;
 
+// Includes a word kept as written because no respelling beat the voice's
+// own guess, when that guess is still off.
 const needsListen = (p: Pronunciation) =>
-  p.source === "auto" &&
-  p.say !== p.term &&
-  p.match != null &&
-  p.match < LISTEN_BELOW;
+  p.source === "auto" && p.match != null && p.match < LISTEN_BELOW;
 
 /** Play a line in Steven's voice through the voice lab's cached renders. */
 async function speak(text: string, audio: HTMLAudioElement): Promise<void> {
@@ -97,7 +96,7 @@ export function PronunciationList({ courseId }: { courseId: number }) {
 
   const rows = list.data ?? [];
   // Entries the voice already said right ("keep") are memory, not news.
-  const shown = rows.filter((p) => p.say !== p.term);
+  const shown = rows.filter((p) => p.say !== p.term || needsListen(p));
   const toListen = shown.filter(needsListen).length;
   const sorted = [...shown].sort(
     (a, b) =>

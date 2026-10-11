@@ -53,7 +53,7 @@ def letters(term: str) -> str:
     """An acronym read letter by letter: "PDSP" → "P D S P"; a lowercase
     plural keeps its s as a possessive, which the voice says as a plain
     "z" sound ("NGOs" → "N G O's")."""
-    m = re.fullmatch(r"([A-Z]{2,})s", term)
+    m = re.fullmatch(r"([A-Z]+)s", term)  # "Gs" too: "the three Gs"
     if m:
         *head, last = m.group(1)
         return " ".join([*head, f"{last}'s"])

@@ -69,9 +69,20 @@ For "word", give:
   words the Filipino way; Spanish surnames the Spanish way). Example: Quimpo
   → K IY1 M P OW0.
 - "candidates": three respellings made of ordinary English syllables,
-  SEPARATED BY SPACES, never hyphens — e.g. "Keem Poe", "Keem poh",
-  "Kim Poe". Prefer syllables that are real English words.
+  SEPARATED BY SPACES, never hyphens — e.g. "Keem Poe", "Lah Claw",
+  "Kerk Vleet". Any syllable of three letters or fewer MUST be a real
+  English word ("saw", "Poe", "nee", "moo"), because the voice spells short
+  unknown pieces out letter by letter ("sa" becomes "S A"). Never use a
+  single letter as a syllable ("Moo F" is read "moo eff"; write "Moof").
 For "keep" and "letters", leave "arpabet" "" and "candidates" []."""
+
+# A second try for respellings the voice still got wrong.
+PRONOUNCE_RETRY_BLOCK = """
+
+Some respellings did not come out right. For each TERM below you see the
+sounds you intended (WANT) and what the voice actually said for your best
+respelling (HEARD, in ARPAbet). Give three NEW candidates that fix the
+difference, following the same rules."""
 
 PRONOUNCE_SCHEMA = {
     "type": "object",

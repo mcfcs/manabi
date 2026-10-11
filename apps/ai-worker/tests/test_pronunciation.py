@@ -18,6 +18,7 @@ def test_plural_acronyms_are_read_as_letters():
     # "NGOs" was read as a word, "en-goes"; a possessive s is said as "z".
     assert apply("POs and NGOs work together.", []) == "P O's and N G O's work together."
     assert letters("PDSP") == "P D S P"
+    assert letters("Gs") == "G's"  # guns, goons and gold: "the three Gs"
 
 
 def test_respellings_replace_whole_words_and_keep_possessives():
@@ -130,3 +131,65 @@ async def test_learn_asks_only_about_unknown_words(monkeypatch):
     values = db.inserted[-1]
     says = sorted(v for k, v in values.items() if k.startswith("say"))
     assert says == ["Hook", "Keem Poe"]  # the hyphen was turned into a space
+
+
+def test_ocr_scraps_are_not_terms():
+    assert pronunciation._SCRAP.match("oo") and pronunciation._SCRAP.match("wB")
+    assert not pronunciation._SCRAP.match("Huk")  # a real short name
+    assert not pronunciation._SCRAP.match("Quimpo")
+
+
+@pytest.mark.asyncio
+async def test_a_weak_respelling_gets_one_retry_with_what_the_voice_said(monkeypatch):
+    course = SimpleNamespace(id=4, code="SocSc 14", name="Politics")
+    calls = []
+
+    async def entries(db, course_id):
+        return []
+
+    async def probe(texts):
+        phones = {
+            "Ed sa": ["EH1", "D", "EH1", "S", "EY1"],  # "sa" spelled out
+            "Ed saw": ["EH1", "D", "S", "AO1"],
+        }
+        return {t: {"known": t != "EDSA", "phones": phones.get(t, ["X"])} for t in texts}
+
+    async def generate(system, user, schema, **kw):
+        calls.append(user)
+        cand = ["Ed saw"] if "HEARD" in user else ["Ed sa"]
+        return {
+            "terms": [
+                {"term": "EDSA", "kind": "word", "arpabet": "EH1 D S AA0", "candidates": cand}
+            ]
+        }
+
+    monkeypatch.setattr(pronunciation, "course_entries", entries)
+    monkeypatch.setattr(pronunciation.g2p, "probe", probe)
+    monkeypatch.setattr(pronunciation, "generate_structured", generate)
+    db = _DB()
+    await pronunciation.learn(db, course, ["People gathered at EDSA."])
+    assert len(calls) == 2 and "HEARD: EH1 D EH1 S EY1" in calls[1]
+    values = db.inserted[-1]
+    assert [v for k, v in values.items() if k.startswith("say")] == ["Ed saw"]
+
+
+def test_a_respelling_is_used_only_when_it_beats_the_word_as_written():
+    want = "SH UH1 M P EY0 T ER0"
+    written = ["SH", "UH1", "M", "P", "EY1", "T", "ER0"]  # the voice already says it
+    # a weaker respelling is dropped: the word is read as written
+    assert pronunciation.settle("Schumpeter", want, "Shoom Pet", 0.57, written) == (
+        "Schumpeter",
+        1.0,
+    )
+    # a good one that beats the voice's own guess is used
+    guess = ["K", "IY1", "EH1", "M", "P", "IY1", "OW1"]
+    assert pronunciation.settle("Quimpo", "K IY1 M P OW0", "Keem Poe", 1.0, guess) == (
+        "Keem Poe",
+        1.0,
+    )
+
+
+def test_single_letter_syllables_are_never_candidates():
+    assert not pronunciation._usable("Moo F")
+    assert not pronunciation._usable("Hoo K")
+    assert pronunciation._usable("Moof")
