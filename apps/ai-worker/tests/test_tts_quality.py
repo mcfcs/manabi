@@ -86,6 +86,7 @@ async def test_silent_take_is_retried_with_engine_splitting_disabled(monkeypatch
             tts_url="http://voice",
             tts_ref_audio="ref.wav",
             tts_ref_text="Reference.",
+            tts_ref_bank={},
             tts_speed=1,
         ),
     )
@@ -112,6 +113,7 @@ async def test_all_bad_takes_fail_instead_of_returning_the_longest(monkeypatch):
             tts_url="http://voice",
             tts_ref_audio="ref.wav",
             tts_ref_text="Reference.",
+            tts_ref_bank={},
             tts_speed=1,
         ),
     )
@@ -146,7 +148,11 @@ async def test_audible_but_incomplete_speech_is_retried_before_caching(monkeypat
         tts,
         "get_settings",
         lambda: SimpleNamespace(
-            tts_url="http://voice", tts_ref_audio="ref.wav", tts_ref_text="Reference.", tts_speed=1
+            tts_url="http://voice",
+            tts_ref_audio="ref.wav",
+            tts_ref_text="Reference.",
+            tts_ref_bank={},
+            tts_speed=1,
         ),
     )
     verify = Mock(side_effect=["Voice transcript omits a phrase", None])

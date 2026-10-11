@@ -250,9 +250,31 @@ def _silence_wav(like: bytes, ms: int) -> bytes:
 TAKE_ATTEMPTS = 5
 
 
-async def _request_wav(client: httpx.AsyncClient, text: str, *, verify: bool = False) -> bytes:
+def mood_for(text: str, default: str = "calm") -> str:
+    """The delivery for one piece: a question asks, an exclamation lands
+    harder, anything else takes the caller's default (calm narration, warm
+    chat). Only moods with a clip in tts_refs change anything."""
+    end = text.rstrip(" \"'”’)")[-1:]
+    if end == "?":
+        return "question"
+    if end == "!":
+        return "emphatic"
+    return default
+
+
+def reference(mood: str = "calm") -> tuple[str, str]:
+    """(reference wav, its transcript) for a mood; the calm default when the
+    bank has no clip for it."""
+    settings = get_settings()
+    return settings.tts_ref_bank.get(mood) or (settings.tts_ref_audio, settings.tts_ref_text)
+
+
+async def _request_wav(
+    client: httpx.AsyncClient, text: str, *, verify: bool = False, mood: str = "calm"
+) -> bytes:
     """Retry failed takes with fresh sampling instead of caching missing speech."""
     settings = get_settings()
+    ref_audio, ref_text = reference(mood)
     last: Exception | None = None
     for attempt in range(TAKE_ATTEMPTS):
         try:
@@ -261,8 +283,8 @@ async def _request_wav(client: httpx.AsyncClient, text: str, *, verify: bool = F
                 params={
                     "text": text,
                     "text_lang": "en",
-                    "ref_audio_path": settings.tts_ref_audio,
-                    "prompt_text": settings.tts_ref_text,
+                    "ref_audio_path": ref_audio,
+                    "prompt_text": ref_text,
                     "prompt_lang": "en",
                     "speed_factor": settings.tts_speed,
                     # We already split sentences/clauses. The default cut5
@@ -290,19 +312,21 @@ async def _request_wav(client: httpx.AsyncClient, text: str, *, verify: bool = F
 
 
 async def _fragment_wavs(
-    client: httpx.AsyncClient, text: str, *, verify: bool = False
+    client: httpx.AsyncClient, text: str, *, verify: bool = False, mood: str = "calm"
 ) -> list[tuple[bytes, str]]:
     """Takes for one group, each with the boundary after it ("" = the group's
     own end, decided by the caller)."""
     try:
-        return [(await _request_wav(client, text, verify=verify), "")]
+        return [(await _request_wav(client, text, verify=verify, mood=mood), "")]
     except TTSQualityError:
         # One bounded fallback: a stubborn sentence often works as shorter
         # clauses. Every clause must pass; a failure never silently drops one.
         parts = split_parts(text, group_chars=max(40, len(text) // 2))
         if len(parts) < 2:
             raise
-        out = [(await _request_wav(client, part, verify=verify), b) for part, b in parts]
+        out = [
+            (await _request_wav(client, part, verify=verify, mood=mood), b) for part, b in parts
+        ]
         out[-1] = (out[-1][0], "")
         return out
 
@@ -396,10 +420,13 @@ def pause_after(boundary: str, *, last: bool, end: str) -> int:
     return PAUSE_MS.get(boundary or "sentence", PAUSE_MS["sentence"])
 
 
-async def synthesize(text: str, *, verify: bool = False, end: str = "none") -> tuple[bytes, int]:
+async def synthesize(
+    text: str, *, verify: bool = False, end: str = "none", mood: str = "calm"
+) -> tuple[bytes, int]:
     """Returns (mp3 bytes, duration_ms). `end` adds the pause that should
     follow this text when it is one paragraph or heading of a longer reading
-    (see END_PAUSE_MS)."""
+    (see END_PAUSE_MS); `mood` is the default delivery, overridden per
+    sentence for questions and exclamations (mood_for)."""
     groups = merge_tiny_parts(split_parts(text))
     if not groups:
         raise ValueError("empty text")
@@ -414,7 +441,9 @@ async def synthesize(text: str, *, verify: bool = False, end: str = "none") -> t
 
         async with httpx.AsyncClient() as client:
             for n, (group, boundary) in enumerate(groups):
-                takes = await _fragment_wavs(client, group, verify=verify)
+                takes = await _fragment_wavs(
+                    client, group, verify=verify, mood=mood_for(group, mood)
+                )
                 for k, (wav, inner) in enumerate(takes):
                     add(wav)
                     last_take = k == len(takes) - 1

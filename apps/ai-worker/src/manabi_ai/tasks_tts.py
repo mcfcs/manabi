@@ -106,7 +106,10 @@ async def synthesize_lecture(context, job_id: int, artifact_id: int) -> None:
                 job.progress_note = f"Synthesizing segment {i + 1}/{len(segments)}"
                 await db.commit()
                 audio, duration = await synthesize(
-                    pronounce.apply(seg.get("spoken_text", ""), say_as), end="paragraph"
+                    pronounce.apply(seg.get("spoken_text", ""), say_as),
+                    end="paragraph",
+                    # the welcome and the sign-off are warmer than the teaching
+                    mood="warm" if i in (0, len(segments) - 1) else "calm",
                 )
                 db.add(
                     LectureAudio(
@@ -161,7 +164,7 @@ async def speak_text(job_id: int, message_id: int) -> None:
                 )
                 say_as = await course_entries(db, course.id if course else None)
                 audio, duration = await synthesize(
-                    pronounce.apply(_chat_text_for_tts(message.content), say_as)
+                    pronounce.apply(_chat_text_for_tts(message.content), say_as), mood="warm"
                 )
                 db.add(
                     SpeechClip(

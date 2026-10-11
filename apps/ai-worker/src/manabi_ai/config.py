@@ -34,6 +34,11 @@ class WorkerSettings(CoreSettings):
     tts_ref_audio: str = ""  # path (on this machine) to a 3-10s reference wav
     tts_ref_text: str = ""  # exact transcript of the reference clip
     tts_speed: float = 1.0
+    # Extra reference clips by delivery, as JSON: {"question": {"path": "...",
+    # "text": "..."}, "emphatic": {...}, "warm": {...}}. The reference sets how
+    # a line is delivered (sampling does not), so this is the voice's only
+    # emotion lever. Empty = every line uses tts_ref_audio, as before.
+    tts_refs: str = ""
     # Document readings get a local CPU transcription check before caching.
     # The named model downloads once; an existing model directory also works.
     # The voice's own text front end, run as a subprocess to check what a
@@ -69,6 +74,22 @@ class WorkerSettings(CoreSettings):
     @property
     def tts_enabled(self) -> bool:
         return bool(self.tts_url and self.tts_ref_audio)
+
+    @property
+    def tts_ref_bank(self) -> dict[str, tuple[str, str]]:
+        """tts_refs parsed: mood -> (path, transcript). Bad entries are
+        ignored rather than breaking every recording."""
+        import json
+
+        try:
+            raw = json.loads(self.tts_refs) if self.tts_refs.strip() else {}
+        except ValueError:
+            return {}
+        bank: dict[str, tuple[str, str]] = {}
+        for mood, ref in (raw if isinstance(raw, dict) else {}).items():
+            if isinstance(ref, dict) and ref.get("path") and ref.get("text"):
+                bank[str(mood)] = (str(ref["path"]), str(ref["text"]))
+        return bank
 
 
 @lru_cache
