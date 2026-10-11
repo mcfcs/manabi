@@ -319,3 +319,17 @@ def test_ocr_noise_is_cleaned_but_real_accents_stay():
     )
     real = "Landé and principalía; liberté, egalité; Sørensen; Peña in 1986 and 2001."
     assert clean_ocr_text(real) == real
+
+
+def test_ocr_zeros_and_end_accents():
+    from manabi_server.processing.text_health import clean_ocr_text
+
+    assert clean_ocr_text("In 2ooo, $5 to $1o billion; About 12o,ooo people (1993a:1o).") == (
+        "In 2000, $5 to $10 billion; About 120,000 people (1993a:10)."
+    )
+    assert clean_ocr_text("Marcos alsò, the status quò, participatión, politićs, Aκo") == (
+        "Marcos also, the status quo, participation, politics, Ako"
+    )
+    assert clean_ocr_text("Caoilí and Landé; Malacañang, Avendaño") == (
+        "Caoilí and Landé; Malacañang, Avendaño"
+    )

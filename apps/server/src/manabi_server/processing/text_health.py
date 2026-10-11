@@ -211,41 +211,62 @@ def _letters(text: str) -> int:
 # Marks no English or Filipino word carries: comma below, cedilla, ogonek, dot
 # above — always folded. Acute/grave/circumflex are folded only away from the
 # word's end, so "Landé", "liberté" and "principalía" keep theirs.
-_ALWAYS_FOLD = {"̦", "̧", "̨", "̇"}
-_FOLD_INSIDE = {"̀", "́", "̂"}
+_ALWAYS_FOLD = {"̦", "̧", "̨", "̇", "̀"}  # …and grave
+_ACCENTS = {"́", "̂"}  # acute, circumflex
 _STROKES = str.maketrans({"ħ": "h", "ı": "i", "ł": "l"})
+# Greek look-alikes inside a Latin word ("Aκo" for AKO)
+_GREEK_LOOKALIKE = str.maketrans(
+    {"α": "a", "ε": "e", "ι": "i", "κ": "k", "ν": "v", "ο": "o", "ρ": "p", "τ": "t"}
+)
 _OCR_WORD = re.compile(r"[^\W\d_]+", re.UNICODE)
 _SUPERSCRIPT_NOTE = re.compile(r"(?<=[^\s\d])[0-9]*[⁰¹²³⁴⁵⁶⁷⁸⁹º][0-9⁰¹²³⁴⁵⁶⁷⁸⁹º]*")
-_OCR_YEAR = re.compile(r"\b([12][0-9oO]{3})(s?)\b")
+# A number with letter-o for zeros: "2oo4", "199os", "$1o", "12o,ooo", ":2o".
+_OCR_NUMBER = re.compile(r"(?<![A-Za-z])\d[\doO]*(?:,[\doO]{3})*(?=s?(?![A-Za-z]))")
+_VOWELS = set("aeiouAEIOU")
+
+
+def _keep_end_accent(word: str, i: int) -> bool:
+    """A real accent near a word's end: a name (Landé, Caoilí), French é
+    (liberté) or the Spanish -ía (principalía)."""
+    plain = unicodedata.normalize("NFD", word)
+    plain = "".join(c for c in plain if not unicodedata.combining(c))
+    return (
+        word[:1].isupper()
+        or (i == len(word) - 1 and plain[i].lower() == "e")
+        or (i == len(word) - 2 and plain[i:].lower() == "ia")
+    )
 
 
 def _fold_word(word: str) -> str:
+    word = word.translate(_STROKES)
     if word.isascii():
-        return word.translate(_STROKES)
+        return word
+    if any(c.isascii() and c.isalpha() for c in word):
+        word = word.translate(_GREEK_LOOKALIKE)
     out = []
-    for i, ch in enumerate(word.translate(_STROKES)):
+    for i, ch in enumerate(word):
         parts = unicodedata.normalize("NFD", ch)
         base, marks = parts[0], set(parts[1:])
-        near_end = i >= len(word) - 2 and len(word) > 1
-        if marks & _ALWAYS_FOLD or (marks & _FOLD_INSIDE and not near_end):
-            out.append(base)
-        else:
-            out.append(ch)
+        noise = marks & _ACCENTS and (
+            base not in _VOWELS  # an accented consonant is noise: "politićs"
+            or i < len(word) - 2
+            or len(word) == 1
+            or not _keep_end_accent(word, i)
+        )
+        out.append(base if marks & _ALWAYS_FOLD or noise else ch)
     return "".join(out)
 
 
-def _fix_year(m: re.Match) -> str:
-    year, s = m.group(1), m.group(2)
-    if not re.search(r"[oO]", year) or sum(c.isdigit() for c in year) < 2:
-        return m.group(0)
-    return year.replace("o", "0").replace("O", "0") + s
+def _fix_number(m: re.Match) -> str:
+    n = m.group(0)
+    return n.replace("o", "0").replace("O", "0") if "o" in n or "O" in n else n
 
 
 def clean_ocr_text(text: str) -> str:
     """Undo the OCR noise above in one element's text."""
     text = _SUPERSCRIPT_NOTE.sub("", text)
     text = re.sub(r"\s*·\s*", " ", text)
-    text = _OCR_YEAR.sub(_fix_year, text)
+    text = _OCR_NUMBER.sub(_fix_number, text)
     return _OCR_WORD.sub(lambda m: _fold_word(m.group(0)), text)
 
 
