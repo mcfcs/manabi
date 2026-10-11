@@ -49,6 +49,50 @@ bonus trivia included)."""
 
 QUIZ_STYLE_MAX_CHARS = 4000  # a pasted style block, not a second source
 
+# How Steven should say words his voice does not know (manabi_ai.pronunciation).
+PRONOUNCE_PROMPT = """You decide how a text-to-speech voice should say unfamiliar
+words from a university course: {course}.
+
+The voice reads with an American English accent. It spells out unknown short
+words letter by letter and guesses longer ones badly, but it says ordinary
+English syllables correctly. For each TERM below (shown with a line where it
+appears), choose:
+- "keep": an ordinary English word or well-known name the voice already says
+  correctly as written.
+- "letters": an initialism read letter by letter (PDSP, ND, UG).
+- "word": everything else — personal and place names, Filipino, Spanish or
+  other non-English words, and acronyms said as a word (EDSA, NATO).
+
+For "word", give:
+- "arpabet": the intended pronunciation in ARPAbet with stress digits, the way
+  a native speaker of the word's language says it (Filipino names and Tagalog
+  words the Filipino way; Spanish surnames the Spanish way). Example: Quimpo
+  → K IY1 M P OW0.
+- "candidates": three respellings made of ordinary English syllables,
+  SEPARATED BY SPACES, never hyphens — e.g. "Keem Poe", "Keem poh",
+  "Kim Poe". Prefer syllables that are real English words.
+For "keep" and "letters", leave "arpabet" "" and "candidates" []."""
+
+PRONOUNCE_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "terms": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "term": {"type": "string"},
+                    "kind": {"type": "string", "enum": ["keep", "letters", "word"]},
+                    "arpabet": {"type": "string"},
+                    "candidates": {"type": "array", "items": {"type": "string"}, "maxItems": 4},
+                },
+                "required": ["term", "kind", "arpabet", "candidates"],
+            },
+        }
+    },
+    "required": ["terms"],
+}
+
 SUMMARY_PROMPT = f"""You are creating structured study notes for a university module.
 
 {_GROUNDING}

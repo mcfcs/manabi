@@ -32,6 +32,7 @@ from manabi_server.api import (
     narration,
     notes,
     practice,
+    pronunciations,
     push,
     review,
     roundups,
@@ -117,6 +118,7 @@ app.include_router(practice.router)
 app.include_router(roundups.router)
 app.include_router(voice.router)
 app.include_router(narration.router)
+app.include_router(pronunciations.router)
 app.include_router(settings_api.router)
 
 # Serve the built SPA (apps/web/dist) so one process on 0.0.0.0:56690 covers

@@ -26,6 +26,7 @@ import { Announcements } from "./Announcements";
 import { CanvasFilesModal } from "./CanvasFilesModal";
 import { CanvasSyncModal } from "./CanvasSyncModal";
 import { ClassLog } from "./ClassLog";
+import { PronunciationList } from "./PronunciationList";
 import { CodeDemosModal } from "./CodeDemosModal";
 import { CourseDialog } from "./CourseDialog";
 import { CourseFiles } from "./CourseFiles";
@@ -409,6 +410,8 @@ export function CoursePage() {
       <CourseLinks courseId={courseId} />
 
       <CourseFiles courseId={courseId} />
+
+      <PronunciationList courseId={Number(courseId)} />
 
       {kitPlanOpen && (
         <StudyKitPlanModal courseId={Number(courseId)} onClose={() => setKitPlanOpen(false)} />

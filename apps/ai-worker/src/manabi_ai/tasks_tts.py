@@ -9,9 +9,11 @@ import logging
 import re
 from datetime import UTC, datetime
 
+from manabi_core import pronounce
 from manabi_core.models import (
     Artifact,
     ChatMessage,
+    ChatThread,
     Job,
     JobStatus,
     LectureAudio,
@@ -25,6 +27,7 @@ from sqlalchemy import select
 from manabi_ai.app import app
 from manabi_ai.config import get_settings
 from manabi_ai.db import session_factory
+from manabi_ai.pronunciation import course_entries, course_of_document, course_of_module, learn
 from manabi_ai.tts_client import TTSQualityError, synthesize
 
 log = logging.getLogger("manabi_ai.tts")
@@ -32,6 +35,21 @@ log = logging.getLogger("manabi_ai.tts")
 # Paragraphs a narration may drop as unsayable before the voice server itself
 # is presumed broken (or a tenth of the document, if larger).
 _MAX_UNSAYABLE = 3
+
+
+async def _say_as(db, job, course, texts: list[str]) -> list[pronounce.Entry]:
+    """Learn this recording's unfamiliar words first (a failure never stops
+    the recording), then return the course's pronunciation list."""
+    if course is None:
+        return []
+    try:
+        job.progress_note = "Checking how to say the terms"
+        await db.commit()
+        await learn(db, course, texts)
+    except Exception:  # noqa: BLE001
+        await db.rollback()
+        log.exception("pronunciation learning failed; recording as written")
+    return await course_entries(db, course.id)
 
 
 def _chat_text_for_tts(text: str) -> str:
@@ -69,6 +87,12 @@ async def synthesize_lecture(context, job_id: int, artifact_id: int) -> None:
                 ).scalars()
             }
             todo = [(i, s) for i, s in enumerate(segments) if i not in existing]
+            say_as = await _say_as(
+                db,
+                job,
+                await course_of_module(db, artifact.module_id),
+                [s.get("spoken_text", "") for _, s in todo],
+            )
             for done, (i, seg) in enumerate(todo):
                 if context is not None and context.should_abort():
                     # Segments already committed stay valid; the task resumes
@@ -81,7 +105,9 @@ async def synthesize_lecture(context, job_id: int, artifact_id: int) -> None:
                 job.progress_pct = int(100 * done / max(len(todo), 1))
                 job.progress_note = f"Synthesizing segment {i + 1}/{len(segments)}"
                 await db.commit()
-                audio, duration = await synthesize(seg.get("spoken_text", ""), end="paragraph")
+                audio, duration = await synthesize(
+                    pronounce.apply(seg.get("spoken_text", ""), say_as), end="paragraph"
+                )
                 db.add(
                     LectureAudio(
                         artifact_id=artifact_id,
@@ -127,7 +153,16 @@ async def speak_text(job_id: int, message_id: int) -> None:
                 message = (
                     await db.execute(select(ChatMessage).where(ChatMessage.id == message_id))
                 ).scalar_one()
-                audio, duration = await synthesize(_chat_text_for_tts(message.content))
+                thread = await db.get(ChatThread, message.thread_id)
+                course = (
+                    await course_of_module(db, thread.module_id)
+                    if thread is not None and thread.module_id
+                    else None
+                )
+                say_as = await course_entries(db, course.id if course else None)
+                audio, duration = await synthesize(
+                    pronounce.apply(_chat_text_for_tts(message.content), say_as)
+                )
                 db.add(
                     SpeechClip(
                         chat_message_id=message_id,
@@ -242,6 +277,12 @@ async def narrate_document(context, job_id: int, narration_id: int) -> None:
                     select(NarrationSegment.id).where(NarrationSegment.narration_id == narration_id)
                 )
             ).all()
+            say_as = await _say_as(
+                db,
+                job,
+                await course_of_document(db, narration.document_id),
+                [s.spoken_text or "" for s in todo],
+            )
             skipped: list[int] = []
             for done, seg in enumerate(todo):
                 if context is not None and context.should_abort():
@@ -259,7 +300,7 @@ async def narrate_document(context, job_id: int, narration_id: int) -> None:
                     continue
                 try:
                     audio, duration = await synthesize(
-                        text,
+                        pronounce.apply(text, say_as),
                         verify=settings.tts_verify_speech,
                         # the pause after it: a heading rests longer than a paragraph
                         end=seg.kind if seg.kind in ("heading", "title") else "paragraph",

@@ -36,6 +36,11 @@ class WorkerSettings(CoreSettings):
     tts_speed: float = 1.0
     # Document readings get a local CPU transcription check before caching.
     # The named model downloads once; an existing model directory also works.
+    # The voice's own text front end, run as a subprocess to check what a
+    # respelling really sounds like (manabi_ai.g2p). Missing → respellings are
+    # still learned, just unverified.
+    tts_g2p_python: str = "C:/GPT-SoVITS/.venv/Scripts/python.exe"
+    tts_g2p_root: str = "C:/GPT-SoVITS"
     tts_verify_speech: bool = True
     tts_verification_model: str = "small"
     # Voice-lab A/B: weight sets for "base" (pretrained zero-shot) and

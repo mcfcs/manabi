@@ -801,3 +801,76 @@ a.course-file-name:hover {
     gap: 2px;
   }
 }
+
+/* How Steven says terms — collapsed by default */
+.say-list {
+  margin-bottom: var(--s-5);
+}
+.say-list-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0;
+  border: 0;
+  background: none;
+  font: 600 12px var(--font-ui);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--ink-soft);
+  cursor: pointer;
+}
+.say-list-flag {
+  font-size: 11px;
+  letter-spacing: 0;
+  text-transform: none;
+  color: var(--stale);
+}
+.say-list-body {
+  margin-top: var(--s-2);
+  border-top: 1px solid var(--rule);
+}
+.say-row {
+  display: grid;
+  grid-template-columns: minmax(80px, 160px) minmax(0, 1fr) auto auto auto;
+  align-items: center;
+  gap: var(--s-2);
+  padding: 6px 0;
+  border-bottom: 1px solid var(--rule);
+}
+.say-row.listen .say-meta {
+  color: var(--stale);
+}
+.say-term {
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+.say-input {
+  min-width: 0;
+  min-height: 32px;
+  padding-block: 4px;
+}
+.say-meta {
+  font-size: 11px;
+  color: var(--ink-faint);
+}
+.say-error {
+  grid-column: 1 / -1;
+}
+.say-add {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--s-2);
+  padding-top: var(--s-2);
+}
+.say-add .input {
+  flex: 1 1 160px;
+  min-width: 0;
+}
+@media (max-width: 767px) {
+  .say-row {
+    grid-template-columns: minmax(0, 1fr) auto auto auto;
+  }
+  .say-term {
+    grid-column: 1 / -1;
+  }
+}

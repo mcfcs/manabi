@@ -51,7 +51,7 @@ class _Session:
 
 def _run(monkeypatch, texts, unsayable):
     job = SimpleNamespace(status=None, progress_note=None, result=None, error=None)
-    narration = SimpleNamespace(status=None, error=None)
+    narration = SimpleNamespace(status=None, error=None, document_id=7)
     segments = [
         SimpleNamespace(id=i, ord=i, kind="paragraph", spoken_text=t, audio=None)
         for i, t in enumerate(texts)
@@ -69,7 +69,11 @@ def _run(monkeypatch, texts, unsayable):
             raise TTSQualityError("Voice transcript contains too little of the requested sentence")
         return b"mp3", 1000
 
+    async def no_course(db, document_id):
+        return None
+
     monkeypatch.setattr(tasks_tts, "synthesize", fake_synthesize)
+    monkeypatch.setattr(tasks_tts, "course_of_document", no_course)
     asyncio.run(tasks_tts.narrate_document.func(None, job_id=1, narration_id=1))
     return job, narration, segments, session
 

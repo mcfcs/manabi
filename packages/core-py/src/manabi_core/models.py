@@ -863,6 +863,31 @@ class ClassRoundup(Base, TimestampMixin):
     )
 
 
+class Pronunciation(Base, TimestampMixin):
+    """How Steven says one term in a course (0047): "Quimpo" → "Keem Poe".
+    `say` is fed to the voice in place of the term (manabi_core.pronounce);
+    the transcript keeps the real word. source: "auto" (learned when a
+    reading was narrated) or "user" (typed or corrected on the course page).
+    `match` is how close the voice's actual sounds came to the intended ones
+    (1 = exact) — low ones are worth a listen."""
+
+    __tablename__ = "pronunciations"
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    course_id: Mapped[int] = mapped_column(
+        BigInteger, ForeignKey("courses.id", ondelete="CASCADE"), nullable=False
+    )
+    term: Mapped[str] = mapped_column(String(80), nullable=False)
+    say: Mapped[str] = mapped_column(String(160), nullable=False)
+    source: Mapped[str] = mapped_column(String(8), nullable=False, default="auto")
+    match: Mapped[float | None] = mapped_column(Float)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False
+    )
+
+    __table_args__ = (UniqueConstraint("course_id", "term", name="uq_pronunciations_course_term"),)
+
+
 class GradeComponent(Base, TimestampMixin):
     """One weighted section of a course's syllabus breakdown ("Quizzes 30%").
 
