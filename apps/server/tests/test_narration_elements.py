@@ -89,3 +89,10 @@ def test_a_rescript_keeps_the_recordings_of_unchanged_paragraphs():
     assert rows[0]["audio"] == b"mp3" and rows[0]["duration_ms"] == 900
     assert rows[0]["word_times"] == [0, 300]  # the word timings travel with the audio
     assert "audio" not in rows[1]
+
+
+def test_untimed_word_times_stay_sql_null():
+    # a carried-over None saved as JSON null hid every paragraph from the backfill
+    from manabi_core.models import NarrationSegment
+
+    assert NarrationSegment.__table__.c.word_times.type.none_as_null is True

@@ -1256,7 +1256,9 @@ class NarrationSegment(Base):
     voice: Mapped[str | None] = mapped_column(String(64))
     # Start time (ms) of each whitespace token of `text` in the audio (0048),
     # for word highlighting while Steven reads. NULL until aligned.
-    word_times: Mapped[list | None] = mapped_column(JSONB)
+    # none_as_null: a carried-over None must stay SQL NULL — JSON null hid
+    # every paragraph from the backfill that looks for NULL.
+    word_times: Mapped[list | None] = mapped_column(JSONB(none_as_null=True))
 
     __table_args__ = (
         UniqueConstraint("narration_id", "ord", name="uq_narration_segments_ord"),
