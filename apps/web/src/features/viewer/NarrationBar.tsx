@@ -16,7 +16,16 @@ import {
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { api, type NarrationOut, type NarrationSegmentOut } from "../../lib/api";
+import { activeToken, tokenStarts } from "./narrationHighlight";
 import "./narration.css";
+
+/** What Steven is saying right now, for the reader to highlight. */
+export interface Speaking {
+  segment: NarrationSegmentOut;
+  tokens: string[];
+  word: number;
+  follow: boolean;
+}
 
 const SPEEDS = [0.9, 1, 1.25, 1.5];
 const GAP_MS = 250; // additional pause after the clip's own breath/tail
@@ -59,11 +68,13 @@ export function NarrationBar({
   documentId,
   onGoToPage,
   onClose,
+  onSpeaking,
   isPlainText = false,
 }: {
   documentId: string;
   onGoToPage: (page: number) => void;
   onClose: () => void;
+  onSpeaking?: (s: Speaking | null) => void;
   isPlainText?: boolean;
 }) {
   const queryClient = useQueryClient();
@@ -74,10 +85,12 @@ export function NarrationBar({
     refetchInterval: (q) => (q.state.data?.job_active ? 4000 : false),
   });
   const prepare = useMutation({
-    mutationFn: (force: boolean) =>
+    // keepAudio=false: the player's Re-record (new voice settings) replaces
+    // every paragraph; a re-script otherwise keeps unchanged recordings.
+    mutationFn: ({ force, keepAudio = true }: { force: boolean; keepAudio?: boolean }) =>
       api.post<{ job_id: number | null; segment_count: number; status: string }>(
         `/api/documents/${documentId}/narration/prepare`,
-        { force },
+        { force, keep_audio: keepAudio },
       ),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ["narration", documentId] }),
   });
@@ -106,6 +119,43 @@ export function NarrationBar({
   const seg = segments[index];
   const next = segments[index + 1];
   const waiting = playing && seg && !seg.audio_ready;
+
+  // ── The word being spoken ──
+  const tokens = useMemo(() => (seg?.text ?? "").split(/\s+/).filter(Boolean), [seg?.text]);
+  const starts = useMemo(
+    () => tokenStarts(tokens, seg?.word_times ?? null, seg?.duration_ms ?? 0),
+    [tokens, seg?.word_times, seg?.duration_ms],
+  );
+  const [word, setWord] = useState(-1);
+  const wordRef = useRef(-1);
+  useEffect(() => {
+    wordRef.current = -1;
+    setWord(-1);
+  }, [seg?.id]);
+  // timeupdate fires ~4×/s, too coarse for words: read the clock every frame.
+  useEffect(() => {
+    if (!playing || !seg?.audio_ready) return;
+    let raf = 0;
+    const tick = () => {
+      const audio = audioRef.current;
+      if (audio && !audio.paused) {
+        const i = activeToken(starts, audio.currentTime * 1000);
+        if (i !== wordRef.current) {
+          wordRef.current = i;
+          setWord(i);
+        }
+      }
+      raf = requestAnimationFrame(tick);
+    };
+    raf = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(raf);
+  }, [playing, seg?.id, seg?.audio_ready, starts]);
+  useEffect(() => {
+    if (!onSpeaking) return;
+    onSpeaking(seg && word >= 0 ? { segment: seg, tokens, word, follow } : null);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [seg?.id, word, follow]);
+  useEffect(() => () => onSpeaking?.(null), [onSpeaking]);
 
   // The expanded paragraph and the full script are mutually exclusive so the
   // bar never stacks both and swallows the page.
@@ -275,7 +325,7 @@ export function NarrationBar({
           </span>
           <button
             className="btn btn-sm"
-            onClick={() => prepare.mutate(false)}
+            onClick={() => prepare.mutate({ force: false })}
             disabled={prepare.isPending || !data.voice_available}
             title={
               data.voice_available
@@ -306,7 +356,7 @@ export function NarrationBar({
                 </span>
                 <button
                   className="btn btn-primary"
-                  onClick={() => prepare.mutate(false)}
+                  onClick={() => prepare.mutate({ force: false })}
                   disabled={prepare.isPending || recording}
                 >
                   {prepare.isPending || recording ? (
@@ -396,7 +446,13 @@ export function NarrationBar({
                     : ""}
               </span>
               <p className={`narration-text${seg?.kind === "heading" ? " is-heading" : ""}`}>
-                {seg?.text}
+                {word < 0
+                  ? seg?.text
+                  : tokens.map((t, i) => (
+                      <span key={i} className={i === word ? "narration-word-now" : undefined}>
+                        {t}{" "}
+                      </span>
+                    ))}
               </p>
             </div>
             <button
@@ -425,7 +481,7 @@ export function NarrationBar({
               if (!window.confirm("Re-record this reading? This replaces the saved audio using the current voice settings.")) return;
               setPlaying(false);
               go(0);
-              prepare.mutate(true);
+              prepare.mutate({ force: true, keepAudio: false });
             }}
           >
             <RotateCw size={16} strokeWidth={1.75} />

@@ -449,6 +449,8 @@ export interface NarrationSegmentOut {
   audio_ready: boolean;
   audio_id: number | null;
   duration_ms: number | null;
+  /** start ms of each whitespace token of `text` (null until aligned) */
+  word_times?: number[] | null;
 }
 
 export interface SyncAllOut {

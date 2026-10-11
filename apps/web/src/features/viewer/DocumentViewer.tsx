@@ -1,7 +1,8 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import { Modal } from "../../components/Modal";
-import { NarrationBar } from "./NarrationBar";
+import { NarrationBar, type Speaking } from "./NarrationBar";
+import { locate, paint, wordFor, wordRanges } from "./narrationHighlight";
 import { ViewerSearch } from "./ViewerSearch";
 import { Link, useNavigate, useParams, useSearch } from "@tanstack/react-router";
 import {
@@ -61,6 +62,15 @@ import {
 import "./viewer.css";
 
 type ViewMode = "single" | "scroll" | "grid" | "original" | "read";
+
+/** After the reader scrolls by hand, the narration stops pulling the view
+ * along for this long. */
+const FOLLOW_PAUSE_MS = 4000;
+/** A page turn is a deliberate horizontal flick with one finger: a pinch, a
+ * pan while zoomed or a vertical scroll that drifts sideways turned the page
+ * on iPhone and iPad, and made zooming in impossible. */
+const SWIPE_MIN_PX = 70;
+const SWIPE_MAX_MS = 600;
 
 function loadMode(): ViewMode {
   const saved = localStorage.getItem("manabi-viewer-mode");
@@ -323,7 +333,7 @@ export function DocumentViewer({
       mode === "read" || (mode === "scroll" && showText && showContinuous),
     staleTime: 60_000,
   });
-  const touchStartX = useRef<number | null>(null);
+  const swipe = useRef<{ x: number; y: number; t: number; multi: boolean } | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   // Callback ref (not useRef): the `.viewer` container renders behind a loading
   // gate, so the selection-popover hook's effect must re-run once it actually
@@ -567,6 +577,81 @@ export function DocumentViewer({
     el?.scrollIntoView({ block: "start" });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [mode]);
+
+  // ── Steven's word, highlighted in the text being shown ───────────────
+  const [speaking, setSpeaking] = useState<Speaking | null>(null);
+  const userScrolledAt = useRef(0);
+  useEffect(() => {
+    if (!viewerEl) return;
+    // Real gestures only — the reader's own smooth scrolling must not count.
+    const mark = () => (userScrolledAt.current = Date.now());
+    const opts = { passive: true, capture: true } as const;
+    viewerEl.addEventListener("wheel", mark, opts);
+    viewerEl.addEventListener("touchmove", mark, opts);
+    return () => {
+      viewerEl.removeEventListener("wheel", mark, opts);
+      viewerEl.removeEventListener("touchmove", mark, opts);
+    };
+  }, [viewerEl]);
+  const userIsReading = () => Date.now() - userScrolledAt.current < FOLLOW_PAUSE_MS;
+
+  useEffect(() => {
+    if (!viewerEl || !speaking) {
+      paint(null, null);
+      return;
+    }
+    const pageNo = speaking.segment.page_no;
+    const containers: Element[] = [];
+    const read = viewerEl.querySelector(".viewer-read, .scroll-continuous");
+    if (read) containers.push(read);
+    else
+      for (const n of [pageNo, pageNo + 1]) {
+        const el = viewerEl.querySelector(
+          `.viewer-text-panel[data-page-no="${n}"], .scroll-row[data-page-no="${n}"] .scroll-text`,
+        );
+        if (el) containers.push(el);
+      }
+    const words = containers.flatMap((c) => wordRanges(c));
+    const start = locate(words, speaking.tokens);
+    if (start < 0) {
+      paint(null, null);
+      return;
+    }
+    const now = wordFor(words, start, speaking.tokens, speaking.word);
+    const last = wordFor(words, start, speaking.tokens, speaking.tokens.length - 1);
+    let paragraph: Range | null = null;
+    if (now && last) {
+      paragraph = document.createRange();
+      paragraph.setStart(words[start].range.startContainer, words[start].range.startOffset);
+      paragraph.setEnd(last.range.endContainer, last.range.endOffset);
+    }
+    paint(now?.range ?? null, paragraph);
+    if (speaking.follow && now && !userIsReading()) {
+      const box = now.range.getBoundingClientRect();
+      const view = viewerEl.getBoundingClientRect();
+      const margin = view.height * 0.18;
+      if (box.top < view.top + margin || box.bottom > view.bottom - margin * 2) {
+        (now.range.startContainer.parentElement ?? null)?.scrollIntoView({
+          block: "center",
+          behavior: "smooth",
+        });
+      }
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [speaking, viewerEl, mode, showText, page, reader.data?.html]);
+  useEffect(() => () => paint(null, null), []);
+
+  /** Follow the narration to its page, in whichever view is open. */
+  function followToPage(p: number) {
+    if (mode === "single") {
+      if (p !== page) goTo(p);
+    } else if (mode === "scroll" && !continuousView && !userIsReading()) {
+      scrollRef.current
+        ?.querySelector(`[data-page-no="${p}"]`)
+        ?.scrollIntoView({ block: "start", behavior: "smooth" });
+    }
+    // read / continuous views: the word highlight scrolls the text itself
+  }
 
   // One selection→popover handler covering every mode (only one renders at a
   // time); mouse and touch both, so highlighting works on iOS.
@@ -952,12 +1037,32 @@ export function DocumentViewer({
       {mode === "single" && (
         <div
           className="viewer-stage"
-          onTouchStart={(e) => (touchStartX.current = e.touches[0].clientX)}
+          onTouchStart={(e) => {
+            if (e.touches.length > 1) {
+              if (swipe.current) swipe.current.multi = true; // a pinch
+              return;
+            }
+            const t = e.touches[0];
+            swipe.current = { x: t.clientX, y: t.clientY, t: Date.now(), multi: false };
+          }}
           onTouchEnd={(e) => {
-            if (touchStartX.current === null) return;
-            const dx = e.changedTouches[0].clientX - touchStartX.current;
-            if (Math.abs(dx) > 60) goTo(page + (dx < 0 ? 1 : -1));
-            touchStartX.current = null;
+            const s = swipe.current;
+            if (!s || e.touches.length > 0) return; // wait for the last finger
+            swipe.current = null;
+            const zoomed = (window.visualViewport?.scale ?? 1) > 1.01;
+            const t = e.changedTouches[0];
+            const dx = t.clientX - s.x;
+            const dy = t.clientY - s.y;
+            if (
+              s.multi ||
+              zoomed ||
+              Date.now() - s.t > SWIPE_MAX_MS ||
+              Math.abs(dx) < SWIPE_MIN_PX ||
+              Math.abs(dx) < 2 * Math.abs(dy) ||
+              !!window.getSelection()?.toString()
+            )
+              return;
+            goTo(page + (dx < 0 ? 1 : -1));
           }}
         >
           {showText && current ? (
@@ -997,9 +1102,8 @@ export function DocumentViewer({
         <NarrationBar
           documentId={documentId}
           isPlainText={isPlainText}
-          onGoToPage={(p) => {
-            if (p !== page) goTo(p);
-          }}
+          onGoToPage={followToPage}
+          onSpeaking={setSpeaking}
           onClose={() => toggleNarration(false)}
         />
       )}

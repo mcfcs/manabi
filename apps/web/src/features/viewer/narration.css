@@ -251,3 +251,19 @@
     order: 3;
   }
 }
+
+/* ── The word Steven is saying ─────────────────────────────────────────
+   In the reader via the CSS Custom Highlight API (narrationHighlight.ts):
+   a soft wash on the paragraph, a stronger mark on the word. */
+::highlight(narration-paragraph) {
+  background-color: color-mix(in srgb, var(--accent-blue) 9%, transparent);
+}
+::highlight(narration-word) {
+  background-color: color-mix(in srgb, var(--accent-blue) 30%, transparent);
+  color: inherit;
+}
+.narration-word-now {
+  border-radius: 3px;
+  background: color-mix(in srgb, var(--accent-blue) 26%, transparent);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent-blue) 26%, transparent);
+}
