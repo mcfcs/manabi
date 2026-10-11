@@ -255,6 +255,16 @@
   aspect-ratio: 896 / 1152;
   user-select: none;
   pointer-events: none;
+  opacity: 0;
+  transition: opacity 220ms var(--ease);
+}
+.steven-sprite.ready {
+  opacity: 1;
+}
+@media (prefers-reduced-motion: reduce) {
+  .steven-sprite {
+    transition: none;
+  }
 }
 .steven-layer,
 .steven-head {
@@ -370,4 +380,17 @@
   overflow: hidden;
   -webkit-mask-image: linear-gradient(to top, transparent 0, #000 22%);
   mask-image: linear-gradient(to top, transparent 0, #000 22%);
+}
+
+.teacher-steven-toggle[aria-pressed="true"] {
+  color: var(--accent-blue);
+}
+/* phone: the title gets its own line, the actions sit under it */
+@media (max-width: 767px) {
+  .teacher-head {
+    flex-wrap: wrap;
+  }
+  .teacher-head-text {
+    flex-basis: 100%;
+  }
 }

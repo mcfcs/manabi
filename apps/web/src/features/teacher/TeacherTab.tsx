@@ -5,6 +5,8 @@ import {
   ChevronRight,
   GraduationCap,
   RotateCw,
+  UserRound,
+  UserRoundX,
   X,
 } from "lucide-react";
 import { useCallback, useRef, useState } from "react";
@@ -16,7 +18,7 @@ import { CitationPill, JobProgress, StalenessBadge, useGenerationJob } from "../
 import { lectureAudioUrl, LecturePlayer, type PlayerStatus } from "./LecturePlayer";
 import type { CheckpointState } from "./spriteState";
 import { createFrameStore, StevenLive, useBlink, useStevenDriver } from "./StevenStage";
-import { usePrefersReducedMotion, useSpritesAvailable } from "./StevenSprite";
+import { usePrefersReducedMotion, useSpritesAvailable, useStevenMode } from "./StevenSprite";
 import "./teacher.css";
 
 const MODES = [
@@ -97,6 +99,8 @@ export function TeacherTab({ moduleId }: { moduleId: string }) {
 
   // Steven's sprite (only when public/steven/ is installed — it isn't in git)
   const sprites = useSpritesAvailable();
+  const [stevenMode, setStevenMode] = useStevenMode();
+  const showSprites = !!sprites && stevenMode;
   const reduced = usePrefersReducedMotion();
   const [store] = useState(createFrameStore);
   const audioRef = useRef<HTMLAudioElement | null>(null);
@@ -153,9 +157,9 @@ export function TeacherTab({ moduleId }: { moduleId: string }) {
       : cur?.checkpoint && status.endedOn === cur.index && answered[cur.index] == null
         ? "waiting"
         : "none";
-  useBlink(store, !!sprites && !reduced);
+  useBlink(store, showSprites && !reduced);
   useStevenDriver(store, {
-    enabled: !!sprites && !!l,
+    enabled: showSprites && !!l,
     audioRef,
     playing: status.playing,
     segment: cur,
@@ -169,11 +173,11 @@ export function TeacherTab({ moduleId }: { moduleId: string }) {
     return (
       <div className="teacher-tab">
         <div className="teacher-hero">
-          {sprites ? (
+          {showSprites ? (
             <div className="teacher-hero-steven">
               <StevenLive store={store} />
             </div>
-          ) : sprites === false ? (
+          ) : sprites === false || !stevenMode ? (
             <GraduationCap size={28} strokeWidth={1.25} />
           ) : null}
           <h2>Have Steven teach this module</h2>
@@ -208,7 +212,7 @@ export function TeacherTab({ moduleId }: { moduleId: string }) {
     );
   }
 
-  const steven = !!sprites && !!l;
+  const steven = showSprites && !!l;
   return (
     <div className={`teacher-tab${steven ? " has-steven" : ""}`}>
       <div className="teacher-main">
@@ -222,6 +226,28 @@ export function TeacherTab({ moduleId }: { moduleId: string }) {
                   {l.model_name} <StalenessBadge staleness={l.staleness as never} />
                 </span>
               </div>
+              {sprites && (
+                <button
+                  className="icon-btn teacher-steven-toggle"
+                  onClick={() => {
+                    setStevenMode(!stevenMode);
+                    setFloating(false);
+                  }}
+                  aria-pressed={stevenMode}
+                  aria-label={stevenMode ? "Hide Steven" : "Show Steven"}
+                  title={
+                    stevenMode
+                      ? "Steven mode on — hide Steven (text-only lecture)"
+                      : "Steven mode off — show Steven beside the lecture"
+                  }
+                >
+                  {stevenMode ? (
+                    <UserRound size={15} strokeWidth={1.5} />
+                  ) : (
+                    <UserRoundX size={15} strokeWidth={1.5} />
+                  )}
+                </button>
+              )}
               <button
                 className="btn"
                 onClick={() => remediate.mutate()}

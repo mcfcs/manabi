@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import type { Face, Mouth, Pose } from "./spriteState";
 
@@ -53,6 +53,29 @@ export function useSpritesAvailable(): boolean | null {
   return ok;
 }
 
+const MODE_KEY = "manabi-steven";
+
+/** Steven mode, per device: on unless switched off on this browser (a phone
+ * can skip the sprites while the laptop keeps him). */
+export function useStevenMode(): [boolean, (on: boolean) => void] {
+  const [on, setOn] = useState(() => {
+    try {
+      return localStorage.getItem(MODE_KEY) !== "0";
+    } catch {
+      return true;
+    }
+  });
+  const set = (v: boolean) => {
+    try {
+      localStorage.setItem(MODE_KEY, v ? "1" : "0");
+    } catch {
+      // private mode: still applies for this visit
+    }
+    setOn(v);
+  };
+  return [on, set];
+}
+
 export function usePrefersReducedMotion(): boolean {
   const query = "(prefers-reduced-motion: reduce)";
   const [reduced, setReduced] = useState(
@@ -85,8 +108,27 @@ export function StevenSprite({
   const { pose, face, mouth, blink } = frame;
   const pointing = pose === "point";
   const show = (on: boolean) => (on ? "steven-layer on" : "steven-layer");
+
+  // hidden until every layer has decoded: the small face patches arrive
+  // before the 600 KB poses, and a floating head is worse than a beat of nothing
+  const root = useRef<HTMLDivElement>(null);
+  const [ready, setReady] = useState(false);
+  useEffect(() => {
+    const imgs = [...(root.current?.querySelectorAll("img") ?? [])];
+    const check = () => {
+      if (imgs.every((i) => i.complete && i.naturalWidth > 0)) setReady(true);
+    };
+    imgs.forEach((i) => i.addEventListener("load", check));
+    check();
+    return () => imgs.forEach((i) => i.removeEventListener("load", check));
+  }, []);
+
   const body = (
-    <div className={`steven-sprite${pointing ? " pointing" : ""}`} aria-hidden>
+    <div
+      ref={root}
+      className={`steven-sprite${pointing ? " pointing" : ""}${ready ? " ready" : ""}`}
+      aria-hidden
+    >
       {POSES.map((p) => (
         <img
           key={p}
