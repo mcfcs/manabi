@@ -56,6 +56,7 @@ class NarrationSegmentOut(BaseModel):
     audio_ready: bool
     audio_id: int | None  # cache-buster; None until synthesized
     duration_ms: int | None
+    word_times: list[int] | None = None  # start ms per whitespace token of `text`
 
 
 class NarrationOut(BaseModel):
@@ -73,6 +74,10 @@ class NarrationOut(BaseModel):
 
 class PrepareIn(BaseModel):
     force: bool = False  # re-script even when a narration already exists
+    # On a re-script, keep the recording of every paragraph whose spoken text
+    # is unchanged (an extractor fix). False = record everything again (the
+    # player's Re-record, after a voice change).
+    keep_audio: bool = True
 
 
 class PrepareOut(BaseModel):
@@ -103,6 +108,7 @@ async def _segments(db: AsyncSession, narration_id: int) -> list[NarrationSegmen
                 NarrationSegment.text,
                 NarrationSegment.duration_ms,
                 NarrationSegment.audio.is_not(None),
+                NarrationSegment.word_times,
             )
             .where(NarrationSegment.narration_id == narration_id)
             .order_by(NarrationSegment.ord)
@@ -118,6 +124,7 @@ async def _segments(db: AsyncSession, narration_id: int) -> list[NarrationSegmen
             duration_ms=r[5],
             audio_ready=bool(r[6]),
             audio_id=r[0] if r[6] else None,
+            word_times=r[7] if r[6] else None,
         )
         for r in rows
     ]
@@ -234,7 +241,8 @@ async def prepare_narration(
                 .scalars()
                 .all()
             )
-            keep_recorded(old, rows)
+            if data is None or data.keep_audio:
+                keep_recorded(old, rows)
             await db.execute(
                 delete(NarrationSegment).where(NarrationSegment.narration_id == narration.id)
             )

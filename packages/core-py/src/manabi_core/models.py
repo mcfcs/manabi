@@ -1254,6 +1254,9 @@ class NarrationSegment(Base):
     mime: Mapped[str | None] = mapped_column(String(64))
     duration_ms: Mapped[int | None] = mapped_column()
     voice: Mapped[str | None] = mapped_column(String(64))
+    # Start time (ms) of each whitespace token of `text` in the audio (0048),
+    # for word highlighting while Steven reads. NULL until aligned.
+    word_times: Mapped[list | None] = mapped_column(JSONB)
 
     __table_args__ = (
         UniqueConstraint("narration_id", "ord", name="uq_narration_segments_ord"),

@@ -65,6 +65,7 @@ def test_a_rescript_keeps_the_recordings_of_unchanged_paragraphs():
             mime="audio/mpeg",
             duration_ms=900,
             voice="steven",
+            word_times=[0, 300],
         ),
         SimpleNamespace(
             spoken_text="Old wrong order.",
@@ -72,12 +73,19 @@ def test_a_rescript_keeps_the_recordings_of_unchanged_paragraphs():
             mime="audio/mpeg",
             duration_ms=1,
             voice="steven",
+            word_times=None,
         ),
         SimpleNamespace(
-            spoken_text="Never recorded.", audio=None, mime=None, duration_ms=None, voice=None
+            spoken_text="Never recorded.",
+            audio=None,
+            mime=None,
+            duration_ms=None,
+            voice=None,
+            word_times=None,
         ),
     ]
     rows = [{"spoken_text": "Same paragraph."}, {"spoken_text": "New right order."}]
     assert keep_recorded(old, rows) == 1
     assert rows[0]["audio"] == b"mp3" and rows[0]["duration_ms"] == 900
+    assert rows[0]["word_times"] == [0, 300]  # the word timings travel with the audio
     assert "audio" not in rows[1]

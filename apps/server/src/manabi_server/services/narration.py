@@ -74,7 +74,7 @@ def element_rows_query(document_id: int):
 SHORT_HEADING_WORDS = 4  # mirrors tts_client.TINY_GROUP_WORDS
 
 
-AUDIO_FIELDS = ("audio", "mime", "duration_ms", "voice")
+AUDIO_FIELDS = ("audio", "mime", "duration_ms", "voice", "word_times")
 
 
 def keep_recorded(old: list, rows: list[dict]) -> int:

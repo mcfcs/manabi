@@ -5,6 +5,7 @@ the app server's storage. Idempotent per segment so retries are safe and the
 UI can play early segments while later ones render.
 """
 
+import asyncio
 import logging
 import re
 from datetime import UTC, datetime
@@ -30,6 +31,7 @@ from manabi_ai.config import get_settings
 from manabi_ai.db import session_factory
 from manabi_ai.pronunciation import course_entries, course_of_document, course_of_module, learn
 from manabi_ai.tts_client import TTSQualityError, synthesize
+from manabi_ai.word_timing import word_starts
 
 log = logging.getLogger("manabi_ai.tts")
 
@@ -331,7 +333,31 @@ async def narrate_document(context, job_id: int, narration_id: int) -> None:
                 seg.mime = "audio/mpeg"
                 seg.duration_ms = duration
                 seg.voice = settings.tts_voice
+                seg.word_times = await asyncio.to_thread(word_starts, audio, seg.text, duration)
                 await db.commit()  # per-segment: playable immediately
+            # Paragraphs recorded before word timing existed (or kept across a
+            # re-script) get their timings now, so the whole reading highlights.
+            untimed = (
+                (
+                    await db.execute(
+                        select(NarrationSegment).where(
+                            NarrationSegment.narration_id == narration_id,
+                            NarrationSegment.audio.is_not(None),
+                            NarrationSegment.word_times.is_(None),
+                        )
+                    )
+                )
+                .scalars()
+                .all()
+            )
+            for n, seg in enumerate(untimed):
+                if context is not None and context.should_abort():
+                    break
+                job.progress_note = f"Timing words {n + 1}/{len(untimed)}"
+                seg.word_times = await asyncio.to_thread(
+                    word_starts, seg.audio, seg.text, seg.duration_ms or 0
+                )
+                await db.commit()
             narration.status = "ready"
             job.status = JobStatus.succeeded
             job.progress_pct = 100
