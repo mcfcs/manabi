@@ -97,9 +97,47 @@ def unshout(text: str) -> str:
     return _CAPS_RUN.sub(lambda m: _title_case(m.group(0)), text)
 
 
+# A year inside a citation, OCR "i" for 1 included ("i995", "i993b").
+# glued to a name too: OCR "Landé1965:54"
+_CITE_YEAR = re.compile(r"(?<!\d)(?:1[5-9]|20|i9)\d\d[a-z]?(?![\w])|forthcoming|n\.d\.")
+# What may stand before the year: names, initials, institutions, "and",
+# "et al.", "translated in", "see"…
+_CITE_NAMES = re.compile(
+    r"^(?:(?:see|e\.g\.|cf\.|translated in|quoted in|cited in)\s+)?"
+    r"(?:[A-Z][\w'’.-]*\.?|and|&|et|al\.?|of|for|the|de|del|van|von|der|la|le)"
+    r"(?:[\s,]+(?:[A-Z][\w'’.-]*\.?|and|&|et|al\.?|of|for|the|de|del|van|von|der|la|le))*"
+    r"[\s,:]*$"
+)
+# What may follow a year: more years, pages, chapters.
+_CITE_TAIL = re.compile(
+    r"^(?:[\s,:–\-]|\d+[a-z]?|i\d+|chaps?\.?|pp?\.|and|ff?\.?|n\.|"
+    r"(?:1[5-9]|20)\d\d[a-z]?)*$"
+)
+_PAREN = re.compile(r"\s?\(([^()]{1,240})\)")
+
+
+def _cite_part(part: str) -> bool:
+    m = _CITE_YEAR.search(part)
+    if not m:
+        return False
+    before, after = part[: m.start()].strip(), part[m.end() :]
+    return (not before or bool(_CITE_NAMES.match(before))) and bool(_CITE_TAIL.match(after))
+
+
+def is_citation(inner: str) -> bool:
+    """Is a parenthetical a reference? Every ;-part must be names, then a
+    year, then page or chapter numbers. A bare year range "(1970–92)" is a
+    date in the sentence, not a reference, and stays."""
+    if re.fullmatch(r"\s*(?:1[5-9]|20)\d\d\s*[–-]\s*\d{2,4}\s*", inner):
+        return False
+    parts = [p for p in inner.split(";") if p.strip()]
+    return bool(parts) and all(_cite_part(p) for p in parts)
+
+
 def strip_citations(text: str) -> str:
     text = _PAREN_CITATION.sub("", text)
     text = _INLINE_YEAR.sub("", text)
+    text = _PAREN.sub(lambda m: "" if is_citation(m.group(1)) else m.group(0), text)
     text = _BRACKET_CITATION.sub("", text)
     return _EMPTY_PARENS.sub("", text)
 

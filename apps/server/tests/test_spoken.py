@@ -84,3 +84,30 @@ def test_to_spoken_paragraph_end_to_end():
         "see and for example, the IPPG findings."
     )
     assert ensure_stop("done") == "done." and ensure_stop("why?") == "why?"
+
+
+def test_book_style_citations_are_not_read_aloud():
+    cases = [
+        "(M. Thompson 1995:168–69, 221)",
+        "(National Statistical Coordination Board 2003)",
+        "(L. Constantino 1991:6)",
+        "(Bello et al. 2004:chaps. 1 and 7)",
+        "(i999)",
+        "(M. Thompson 1996:197; Case 1999:469, 485)",
+        "(1985:chap. 4, 1987:79)",
+        "(1974a, 1974b; Nowak 1974)",
+        "(Kerkvliet i995:405)",
+        "(Tiglao: 1979:45)",
+        "(Landé1965:54)",
+        "(translated in Derbyshire 1963:290)",
+        "(Kerkvliet 1990:16–17, 244–47 and 1995: 418)",
+        "(Center for Environmental Concerns 1996; H. Thompson 2001)",
+    ]
+    for c in cases:
+        assert strip_citations(f"The claim stands {c}. Next.") == "The claim stands. Next.", c
+
+
+def test_dates_numbers_and_asides_in_parentheses_stay():
+    for keep in ["(1970–92)", "(1)", "(33.7 percent of Filipino families)", "(PDSP)"]:
+        text = f"It happened {keep} here."
+        assert strip_citations(text) == text, keep
