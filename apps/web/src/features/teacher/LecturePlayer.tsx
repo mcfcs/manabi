@@ -1,9 +1,23 @@
 import { Loader2, Pause, Play, SkipBack, SkipForward } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type ReactNode, type RefObject } from "react";
 
 import type { LectureOut } from "../../lib/api";
 
 const SPEEDS = [0.9, 1, 1.25, 1.5];
+
+export const lectureAudioUrl = (lecture: LectureOut, i: number): string | null => {
+  const s = lecture.segments[i];
+  return s?.audio_ready
+    ? `/api/artifacts/${lecture.artifact_id}/audio/${i}?v=${s.audio_id ?? 0}`
+    : null;
+};
+
+export interface PlayerStatus {
+  playing: boolean;
+  current: number;
+  /** the checkpoint segment the lecture stopped on, until it moves on */
+  endedOn: number | null;
+}
 
 /** Single-audio-element lecture player: auto-advance, checkpoint pauses
  * happen naturally (segments end), MediaSession lockscreen controls. Hidden
@@ -12,15 +26,25 @@ export function LecturePlayer({
   lecture,
   activeIndex,
   onSeek,
+  audioRef: externalRef,
+  onStatus,
+  trailing,
 }: {
   lecture: LectureOut;
   activeIndex: number | null;
   onSeek: (i: number) => void;
+  /** shares the <audio> element (read-only use: Steven's lip-sync) */
+  audioRef?: RefObject<HTMLAudioElement | null>;
+  onStatus?: (s: PlayerStatus) => void;
+  /** extra content at the bar's end (Steven's phone crop) */
+  trailing?: ReactNode;
 }) {
-  const audioRef = useRef<HTMLAudioElement>(null);
+  const ownRef = useRef<HTMLAudioElement>(null);
+  const audioRef = externalRef ?? ownRef;
   const [playing, setPlaying] = useState(false);
   const [current, setCurrent] = useState(0);
   const [speed, setSpeed] = useState(1);
+  const [endedOn, setEndedOn] = useState<number | null>(null);
 
   const ready = lecture.segments.filter((s) => s.audio_ready);
   const anyAudio = ready.length > 0;
@@ -35,7 +59,15 @@ export function LecturePlayer({
     const audio = audioRef.current;
     if (!audio) return;
     audio.playbackRate = speed;
-  }, [speed, current]);
+  }, [audioRef, speed, current]);
+
+  useEffect(() => {
+    if (endedOn != null && (playing || endedOn !== current)) setEndedOn(null);
+  }, [endedOn, playing, current]);
+
+  useEffect(() => {
+    onStatus?.({ playing, current, endedOn });
+  }, [onStatus, playing, current, endedOn]);
 
   useEffect(() => {
     if (!("mediaSession" in navigator) || !seg) return;
@@ -75,7 +107,10 @@ export function LecturePlayer({
     // checkpoints pause the lecture: the student answers, then presses play
     if (currentSeg?.checkpoint || next >= lecture.segments.length) {
       setPlaying(false);
-      if (currentSeg?.checkpoint) onSeek(current);
+      if (currentSeg?.checkpoint) {
+        setEndedOn(current);
+        onSeek(current);
+      }
       return;
     }
     setCurrent(next);
@@ -96,7 +131,7 @@ export function LecturePlayer({
     <div className="lecture-player">
       <audio
         ref={audioRef}
-        src={`/api/artifacts/${lecture.artifact_id}/audio/${current}?v=${seg?.audio_id ?? 0}`}
+        src={lectureAudioUrl(lecture, current) ?? undefined}
         onEnded={onEnded}
         onPlay={() => setPlaying(true)}
         onPause={() => setPlaying(false)}
@@ -131,6 +166,7 @@ export function LecturePlayer({
       >
         {speed}×
       </button>
+      {trailing}
     </div>
   );
 }

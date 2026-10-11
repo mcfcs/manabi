@@ -10,7 +10,7 @@ import { clientsClaim } from "workbox-core";
 import { ExpirationPlugin } from "workbox-expiration";
 import { cleanupOutdatedCaches, createHandlerBoundToURL, precacheAndRoute } from "workbox-precaching";
 import { NavigationRoute, registerRoute } from "workbox-routing";
-import { NetworkFirst } from "workbox-strategies";
+import { CacheFirst, NetworkFirst } from "workbox-strategies";
 
 precacheAndRoute(self.__WB_MANIFEST);
 cleanupOutdatedCaches();
@@ -57,6 +57,17 @@ registerRoute(
     cacheName: "manabi-renders",
     networkTimeoutSeconds: 5,
     plugins: [new ExpirationPlugin({ maxEntries: 300, maxAgeSeconds: 30 * 24 * 3600 })],
+  }),
+);
+
+// Steven's teaching sprites: big, never change, and not in the build (they're
+// copied into public/steven/ locally, so they are never precached) — cache on
+// first use.
+registerRoute(
+  ({ url, request }) => request.method === "GET" && url.pathname.startsWith("/steven/"),
+  new CacheFirst({
+    cacheName: "manabi-steven",
+    plugins: [new ExpirationPlugin({ maxEntries: 40, maxAgeSeconds: 90 * 24 * 3600 })],
   }),
 );
 

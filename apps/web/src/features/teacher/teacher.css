@@ -245,3 +245,129 @@
   font-style: italic;
   color: var(--ink-faint);
 }
+
+/* ── Steven (sprites in public/steven/, not in git) ───────── */
+
+/* one 896×1152 box; every layer is a full frame stacked on it, shown or hidden */
+.steven-sprite {
+  position: relative;
+  width: 100%;
+  aspect-ratio: 896 / 1152;
+  user-select: none;
+  pointer-events: none;
+}
+.steven-layer,
+.steven-head {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+}
+.steven-layer {
+  visibility: hidden;
+}
+.steven-layer.on {
+  visibility: visible;
+}
+/* the pointing frame is idle slid 220 px right, so its right side is cut
+   flat at the frame edge: fade that edge out instead of showing the cut */
+.steven-pose-point {
+  -webkit-mask-image: linear-gradient(to left, transparent 0, #000 9%);
+  mask-image: linear-gradient(to left, transparent 0, #000 9%);
+}
+
+.teacher-main {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-4);
+  min-width: 0;
+}
+
+/* he faces screen-left, toward the lecture: content left, Steven right */
+.teacher-steven {
+  display: none;
+}
+@media (min-width: 768px) {
+  .teacher-tab.has-steven {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) 220px;
+    gap: var(--s-4);
+    max-width: calc(760px + 220px + var(--s-4));
+  }
+  .teacher-steven {
+    display: block;
+    position: sticky;
+    top: var(--s-2);
+    align-self: start;
+    overflow: hidden;
+    /* the frames stop at mid-thigh: fade that edge rather than cut it */
+    -webkit-mask-image: linear-gradient(to top, transparent 0, #000 14%);
+    mask-image: linear-gradient(to top, transparent 0, #000 14%);
+  }
+}
+@media (min-width: 1024px) {
+  .teacher-tab.has-steven {
+    grid-template-columns: minmax(0, 1fr) 300px;
+    max-width: calc(760px + 300px + var(--s-5));
+    gap: var(--s-5);
+  }
+}
+
+/* phone: head and shoulders in the player bar; tap for the whole of him */
+.lecture-steven {
+  position: relative;
+  flex: none;
+  width: 56px;
+  height: 56px;
+  margin: calc(-1 * var(--s-2)) calc(-1 * var(--s-3)) calc(-1 * var(--s-2)) 0;
+  padding: 0;
+  border: 0;
+  border-left: 1px solid var(--rule);
+  border-radius: 0 var(--radius) var(--radius) 0;
+  background: none;
+  cursor: pointer;
+  overflow: hidden;
+}
+/* a 400×400 frame-px window on the head (x 118–518, y 78–478) */
+.steven-crop {
+  position: absolute;
+  inset: 0;
+}
+.steven-crop .steven-sprite {
+  position: absolute;
+  width: 224%;
+  left: -29.5%;
+  top: -19.5%;
+}
+.steven-crop.pointing .steven-sprite {
+  left: -84.5%;
+}
+.steven-float {
+  position: fixed;
+  right: var(--s-3);
+  bottom: calc(var(--bottom-nav-h) + env(safe-area-inset-bottom) + var(--s-3));
+  z-index: 30;
+  width: min(44vw, 180px);
+  padding: var(--s-2) 0 0;
+  background: var(--surface-raised);
+  border: 1px solid var(--rule);
+  border-radius: var(--radius);
+  box-shadow: 0 8px 24px rgb(0 0 0 / 0.18);
+  overflow: hidden;
+  cursor: pointer;
+}
+@media (min-width: 768px) {
+  .lecture-steven,
+  .steven-float {
+    display: none;
+  }
+}
+
+/* the hero: waist up */
+.teacher-hero-steven {
+  width: 150px;
+  aspect-ratio: 896 / 760;
+  overflow: hidden;
+  -webkit-mask-image: linear-gradient(to top, transparent 0, #000 22%);
+  mask-image: linear-gradient(to top, transparent 0, #000 22%);
+}
