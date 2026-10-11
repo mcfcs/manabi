@@ -463,6 +463,63 @@ def build_script(pdf_doc) -> Script:
     )
 
 
+_ELEMENT_KINDS = {"heading": "heading", "paragraph": "paragraph", "list_item": "paragraph"}
+_TITLE_SMALL = frozenset(
+    ("a", "an", "and", "as", "at", "by", "for", "from", "in", "of", "on", "or", "the", "to")
+)
+
+
+def _looks_like_title(text: str) -> bool:
+    """A short line with every major word capitalised ("The Importance of the
+    Study") — a heading, not the first half of a sentence."""
+    words = re.findall(r"[A-Za-z][\w'’-]*", text)
+    return 0 < len(words) <= 9 and all(w[0].isupper() or w.lower() in _TITLE_SMALL for w in words)
+
+
+def build_script_from_elements(rows: list[tuple[int, str, str]]) -> Script:
+    """Script from the extracted elements (page_no, element_type, text) — the
+    text the viewer shows. For a scanned PDF the layout pass has no text layer
+    to read and found "nothing readable" in a 27-page book chapter; the OCR'd
+    elements are the only text there is.
+
+    OCR breaks a paragraph wherever a line or page ends ("…Estrada had
+    shrewdly" | "cultivated the image…"), so a paragraph that does not end in
+    terminal punctuation is joined to the next when that one starts in
+    lowercase or the first ends in a hyphen. A bibliography heading ends the
+    reading."""
+    merged: list[list] = []  # [page_no, kind, text]
+    for page_no, etype, text in rows:
+        kind = _ELEMENT_KINDS.get(etype)
+        text = re.sub(r"\s+", " ", (text or "")).strip()
+        if kind is None or not text or not re.search(r"[A-Za-z]", text):
+            continue  # a lone page or note number would glue onto the next line
+        if kind == "heading" and _REFERENCE_HEADINGS.match(text.rstrip(". ")):
+            break
+        prev = merged[-1] if merged else None
+        if kind == "paragraph" and prev is not None and prev[1] == "paragraph":
+            pt = prev[2]
+            if pt.endswith("-") and text[0].islower():
+                prev[2] = pt[:-1] + text  # "espe-" + "cially"
+                continue
+            # A paragraph does not end mid-sentence: "…elections, Eric" |
+            # "Gutierrez, Ildefonso…" is one sentence even though the next
+            # piece starts with a capital — unless the first looks like a
+            # heading the extractor left as a paragraph.
+            if pt[-1] not in _TERMINAL and (text[0].islower() or not _looks_like_title(pt)):
+                prev[2] = f"{pt} {text}"
+                continue
+        merged.append([page_no, kind, text])
+    segments: list[Segment] = []
+    for page_no, kind, text in merged:
+        spoken = to_spoken(text, kind)
+        if word_count(spoken) == 0 or (kind != "heading" and word_count(spoken) < 3):
+            continue  # page numbers and OCR scraps
+        if not speakable(spoken):
+            continue
+        segments.append(Segment(len(segments), page_no, kind, text, spoken))
+    return Script(segments=segments, blocks=[], body_size=0, body_font="", title=None, authors=None)
+
+
 def build_script_from_path(pdf_path: str) -> Script:
     import pymupdf
 

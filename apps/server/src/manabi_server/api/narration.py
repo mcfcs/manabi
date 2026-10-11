@@ -38,6 +38,7 @@ from manabi_server.services.narration import (
     SCRIPT_VERSION,
     active_narration_job_filter,
     build_for_document,
+    element_rows_query,
     narratable,
     segment_rows,
 )
@@ -207,7 +208,8 @@ async def prepare_narration(
         ).scalar_one()
         need_script = count == 0
     if need_script:
-        script = await asyncio.to_thread(build_for_document, doc)
+        elements = [tuple(r) for r in (await db.execute(element_rows_query(doc.id))).all()]
+        script = await asyncio.to_thread(build_for_document, doc, elements)
         rows = segment_rows(script)
         if not rows:
             raise HTTPException(

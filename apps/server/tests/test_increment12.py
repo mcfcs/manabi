@@ -304,3 +304,18 @@ def test_ocr_runs_without_the_angle_classifier():
     conv = pipeline._build_converter(True)
     ocr = conv.format_to_options[InputFormat.PDF].pipeline_options.ocr_options
     assert ocr.kind == "rapidocr" and ocr.use_cls is False
+
+
+def test_ocr_noise_is_cleaned_but_real_accents_stay():
+    from manabi_server.processing.text_health import clean_ocr_text
+
+    noisy = (
+        "Marcos.·The free electións aņd çoercion of démocracy in 199os and 2oo4, "
+        "In à study, Moúffe wrote; politics.¹5 parties.1º"
+    )
+    assert clean_ocr_text(noisy) == (
+        "Marcos. The free elections and coercion of democracy in 1990s and 2004, "
+        "In a study, Mouffe wrote; politics. parties."
+    )
+    real = "Landé and principalía; liberté, egalité; Sørensen; Peña in 1986 and 2001."
+    assert clean_ocr_text(real) == real

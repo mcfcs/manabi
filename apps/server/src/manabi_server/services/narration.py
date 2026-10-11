@@ -12,8 +12,10 @@ import re
 from manabi_core.models import (
     AINodeHeartbeat,
     AppSettings,
+    DocElement,
     Document,
     DocumentKind,
+    DocumentPage,
     Job,
     JobQueue,
     JobStatus,
@@ -23,7 +25,11 @@ from manabi_core.models import (
 from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 
-from manabi_server.processing.narration_script import Script, build_script_from_path
+from manabi_server.processing.narration_script import (
+    Script,
+    build_script_from_elements,
+    build_script_from_path,
+)
 
 log = logging.getLogger("manabi_server")
 
@@ -39,15 +45,30 @@ DEFAULT_OPTIONS = {
 }
 
 
-def build_for_document(doc: Document) -> Script:
-    """Read plain text directly or run a layout pass over the normalized PDF."""
+def build_for_document(doc: Document, elements: list[tuple[int, str, str]] | None = None) -> Script:
+    """Read plain text directly or run a layout pass over the normalized PDF.
+    A PDF whose layout pass finds nothing — a scan has no text layer — is
+    read from its extracted (OCR) `elements` instead: (page_no, type, text)."""
     from manabi_server.processing.pipeline import parse_source_path
 
     if doc.kind == DocumentKind.txt:
         from manabi_server.processing.plain_text import build_text_script, decode_text
 
         return build_text_script(decode_text(parse_source_path(doc).read_bytes()))
-    return build_script_from_path(str(parse_source_path(doc)))
+    script = build_script_from_path(str(parse_source_path(doc)))
+    if not script.segments and elements:
+        script = build_script_from_elements(elements)
+    return script
+
+
+def element_rows_query(document_id: int):
+    """(page_no, element_type, text) in reading order — the viewer's text."""
+    return (
+        select(DocumentPage.page_no, DocElement.element_type, DocElement.text_content)
+        .join(DocumentPage, DocumentPage.id == DocElement.page_id)
+        .where(DocElement.document_id == document_id)
+        .order_by(DocElement.order_index)
+    )
 
 
 SHORT_HEADING_WORDS = 4  # mirrors tts_client.TINY_GROUP_WORDS
@@ -121,7 +142,8 @@ def prepare_narration_sync(db: Session, doc: Document) -> int | None:
         if not tts_available_sync(db):
             log.info("narration: voice offline, not queuing doc %s", doc.id)
             return None
-        script = build_for_document(doc)
+        elements = [tuple(r) for r in db.execute(element_rows_query(doc.id)).all()]
+        script = build_for_document(doc, elements)
         rows = segment_rows(script)
         if not rows:
             return None

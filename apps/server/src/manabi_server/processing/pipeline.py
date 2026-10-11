@@ -472,6 +472,7 @@ def _restore_pptx_line_breaks(elements: list[dict], source: Path) -> None:
 def _heal_text(elements: list[dict], source: Path, doc: Document) -> list[dict]:
     from manabi_server.processing import layout
     from manabi_server.processing.text_health import (
+        clean_ocr_elements,
         heal_elements,
         normalize_ligatures,
         pymupdf_clip_code,
@@ -490,7 +491,8 @@ def _heal_text(elements: list[dict], source: Path, doc: Document) -> list[dict]:
 
         with pymupdf.open(str(source)) as pdf:
             if not layout.has_native_text(pdf):
-                return heal_elements(elements, None)  # scans: OCR text, no span layer
+                # scans: OCR text, no span layer — and OCR's own noise to undo
+                return clean_ocr_elements(heal_elements(elements, None))
             healed = heal_elements(elements, pymupdf_clip_text(pdf), pymupdf_clip_code(pdf))
     except Exception:  # noqa: BLE001 — healing must never fail a parse
         log.exception("text healing skipped for doc %s", doc.id)
