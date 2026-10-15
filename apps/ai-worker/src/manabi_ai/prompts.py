@@ -5,7 +5,7 @@ outside the prompt: schema-constrained decoding, source-id resolution against
 the job's scope, and post-hoc support scoring.
 """
 
-PROMPT_VERSION = "v12"  # v12: quiz questions stand alone (no pointing at unseen slides)
+PROMPT_VERSION = "v13"  # v13: a question's table is its whole dataset; audit solves from it
 
 _GROUNDING = """RULES — follow strictly:
 - Use ONLY the numbered SOURCE MATERIAL. Do not add outside knowledge.
@@ -442,7 +442,11 @@ Question types (use exactly these): {{types}}.
   described"). To test a worked example (an imputation, a binning, a
   calculation), write the data the question needs INTO the prompt — a small
   markdown table (header row, then a |---| row) or the values inline — or
-  apply the same method to a fresh example. Name a case study by what it was
+  apply the same method to a fresh example. A table is the WHOLE dataset the
+  answer uses: every row and column the computation touches, never an
+  excerpt of a bigger table (8 of 10 rows changes every mean). Mark a missing
+  value as "?". Then compute the answer in "working" from the table exactly
+  as written, not from the version in the material. Name a case study by what it was
   ("a study of one-hit-wonder artists"), not by where it appeared. Questions
   that point at unseen material are discarded.
 
@@ -615,6 +619,9 @@ Rules:
 - FIRST re-derive the correct answer yourself, step by step, from the
   sources or from first principles. Do NOT assume the stored answer is
   right — it may contain an error; that is why the student disputed it.
+- When the question supplies its own data (a table, a list of values, a
+  program), judge against THAT data exactly as written — even where the
+  sources show a larger or different version of it.
 - stored_answer_correct: is the stored answer actually correct?
 - user_answer_correct: is the student's answer acceptable? Equivalent
   formulations, orderings, or wording count as correct.
@@ -716,6 +723,9 @@ numbered question below on your own.
 - Work each one out step by step in "working" first, from the SOURCE
   MATERIAL when it is given and from careful reasoning otherwise; only then
   give the answer.
+- When a question supplies its own data (a table, a list of values, a
+  program), answer from THAT data exactly as written, even where the SOURCE
+  MATERIAL shows a larger or different version of it.
 - "n": the question's number.
 - "answer_option": for multiple choice, the 0-based index of the option you
   choose (else -1).
