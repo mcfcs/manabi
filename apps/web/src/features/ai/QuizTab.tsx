@@ -77,17 +77,31 @@ function QuizPlayer({
   const [attemptId, setAttemptId] = useState<number | null>(null);
   const [responses, setResponses] = useState<Record<string, unknown>>({});
   // Per-question input snapshots so answered questions can be revisited
-  // (review-only — outcomes are final once graded).
+  // (review-only — outcomes are final once graded). `seen`: the answer was
+  // revealed before the question was left.
   type Snapshot = {
     selected: string | null;
     shortInput: string;
     enumInput: string;
     longInput: string;
+    seen: boolean;
+  };
+  const BLANK: Snapshot = {
+    selected: null,
+    shortInput: "",
+    enumInput: "",
+    longInput: "",
+    seen: false,
   };
   const [answered, setAnswered] = useState<Snapshot[]>([]);
   // Stashes the in-progress (frontier) question's inputs while reviewing.
   const draftRef = useRef<(Snapshot & { checked: boolean }) | null>(null);
   const reviewing = index < results.length;
+  // A skip means "come back later": revisiting a question skipped before its
+  // answer was shown reopens it, unanswered. Graded ones stay locked.
+  const reopened =
+    reviewing && results[index] === "skip" && !answered[index]?.seen;
+  const live = !reviewing || reopened;
 
   const started = useRef(false);
   const start = useMutation({
@@ -137,7 +151,11 @@ function QuizPlayer({
         : q.qtype === "essay" || q.qtype === "coding" || q.qtype === "output"
           ? longInput
           : shortInput;
-    const newResults = [...results, outcome];
+    // Answering a reopened skip replaces its result in place.
+    const revisit = index < results.length;
+    const newResults = revisit
+      ? results.map((r, i) => (i === index ? outcome : r))
+      : [...results, outcome];
     // The grade travels with the answer: wrong ones join the Mistakes deck.
     const newResponses = {
       ...responses,
@@ -146,17 +164,22 @@ function QuizPlayer({
         grade: outcome,
       },
     };
+    const snap: Snapshot = { selected, shortInput, enumInput, longInput, seen: checked };
+    const newAnswered = revisit
+      ? answered.map((s, i) => (i === index ? snap : s))
+      : [...answered, snap];
     setResults(newResults);
     setResponses(newResponses);
-    setAnswered([...answered, { selected, shortInput, enumInput, longInput }]);
-    setChecked(false);
-    setSelected(null);
-    setShortInput("");
-    setEnumInput("");
-    setLongInput("");
-    setChallengeJobId(null);
-    setIndex((i) => i + 1);
-    const done = index + 1 >= quiz.questions.length;
+    setAnswered(newAnswered);
+    if (revisit) {
+      enter(index + 1, newResults, newAnswered);
+    } else {
+      restoreSnapshot(BLANK);
+      setChecked(false);
+      setChallengeJobId(null);
+      setIndex((i) => i + 1);
+    }
+    const done = !revisit && index + 1 >= quiz.questions.length;
     if (attemptId != null) {
       const answered = newResults.filter((r) => r !== "skip").length;
       const right = newResults.filter((r) => r === "right").length;
@@ -183,33 +206,35 @@ function QuizPlayer({
     setLongInput(s.longInput);
   }
 
+  // Show question i: a graded one read-only, an unseen skip reopened blank,
+  // the frontier with whatever was typed before leaving it.
+  function enter(i: number, res = results, ans = answered) {
+    setChallengeJobId(null);
+    if (i < res.length) {
+      const s = ans[i];
+      const reopen = res[i] === "skip" && !s.seen;
+      restoreSnapshot(reopen ? BLANK : s);
+      setChecked(!reopen);
+    } else {
+      const d = draftRef.current;
+      restoreSnapshot(d ?? BLANK);
+      setChecked(d?.checked ?? false);
+      draftRef.current = null;
+    }
+    setIndex(i);
+  }
+
   function goPrev() {
     if (index === 0) return;
     if (!reviewing) {
       // leaving the live question — stash its inputs so nothing is lost
-      draftRef.current = { selected, shortInput, enumInput, longInput, checked };
+      draftRef.current = { selected, shortInput, enumInput, longInput, seen: checked, checked };
     }
-    restoreSnapshot(answered[index - 1]);
-    setChecked(true);
-    setChallengeJobId(null);
-    setIndex(index - 1);
+    enter(index - 1);
   }
 
   function goForward() {
-    const nextIdx = index + 1;
-    setChallengeJobId(null);
-    if (nextIdx < results.length) {
-      restoreSnapshot(answered[nextIdx]);
-      setChecked(true);
-    } else {
-      const d = draftRef.current;
-      restoreSnapshot(
-        d ?? { selected: null, shortInput: "", enumInput: "", longInput: "" },
-      );
-      setChecked(d?.checked ?? false);
-      draftRef.current = null;
-    }
-    setIndex(nextIdx);
+    enter(index + 1);
   }
 
   // ── "Think this answer is wrong?" — AI adjudication ─────────────────
@@ -349,6 +374,15 @@ function QuizPlayer({
           >
             <ChevronLeft size={15} strokeWidth={1.75} /> Previous
           </button>
+          {reopened && !checked && (
+            <button
+              className="btn"
+              onClick={goForward}
+              title="Leave it skipped for now"
+            >
+              <SkipForward size={15} strokeWidth={1.75} /> Skip
+            </button>
+          )}
           {!reviewing && (
             <>
               <button
@@ -380,9 +414,14 @@ function QuizPlayer({
         </span>
       </div>
 
-      {reviewing && (
+      {reviewing && !reopened && (
         <p className="quiz-pending-line">
           Reviewing an answered question — its result is locked in.
+        </p>
+      )}
+      {reopened && !checked && (
+        <p className="quiz-pending-line">
+          You skipped this one — answer it now, or skip it again.
         </p>
       )}
 
@@ -398,7 +437,7 @@ function QuizPlayer({
         </p>
       )}
 
-      <Markdown className="quiz-question">{question.prompt}</Markdown>
+      <Markdown className="quiz-question" gfm>{question.prompt}</Markdown>
 
       {question.qtype === "mcq" && question.options && (
         <div className="quiz-options">
@@ -539,7 +578,7 @@ function QuizPlayer({
 
       {checked && (
         <div className="quiz-feedback">
-          {reviewing && (
+          {!live && (
             <p
               className={
                 results[index] === "right"
@@ -556,14 +595,14 @@ function QuizPlayer({
                   : "You skipped this one"}
             </p>
           )}
-          {!reviewing &&
+          {live &&
             (question.answer.kind === "mcq" ||
               question.answer.kind === "tf") && (
               <p className={correctResponse ? "quiz-right" : "quiz-wrong"}>
                 {correctResponse ? "Correct" : "Not quite"}
               </p>
             )}
-          {!reviewing && verdict !== null && (
+          {live && verdict !== null && (
             <p className={verdict ? "quiz-right" : "quiz-wrong"}>
               {verdict ? "Correct" : "Not quite"}
             </p>
@@ -609,7 +648,7 @@ function QuizPlayer({
               )}
             </>
           )}
-          {(question.answer.kind === "coding" || question.answer.kind === "essay") && !reviewing && (
+          {(question.answer.kind === "coding" || question.answer.kind === "essay") && live && (
             <AutoGrade key={question.id} q={question} response={longInput} onGrade={() => undefined} />
           )}
           {question.answer.kind === "coding" && (
@@ -713,7 +752,7 @@ function QuizPlayer({
               </div>
             )}
           </div>
-          {reviewing ? (
+          {!live ? (
             <button className="btn btn-primary" onClick={goForward}>
               {index + 1 < results.length ? "Next" : "Back to current"}{" "}
               <ChevronRight size={15} strokeWidth={2} />
