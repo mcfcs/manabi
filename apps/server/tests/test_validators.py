@@ -133,6 +133,46 @@ def test_dedup_questions_drops_near_duplicates():
     assert len(deduped) == 2
 
 
+def test_questions_leaning_on_unseen_material_are_flagged():
+    """Real ISCS 30.18 quiz questions that pointed at slides the student
+    couldn't see while answering."""
+    from manabi_ai.validators import references_unseen_material
+
+    bad = [
+        "Using the 'average of the row' imputation strategy on the sample dataset, "
+        "the missing value in row D for Time 1 is imputed as 3.5.",
+        "Consider the 'Time 1' column in the sample dataset provided in the sources. "
+        "If all missing values are replaced with zero, what is the new mean?",
+        "In the example of discretization by grouping into equal intervals provided in "
+        "the source material, which bin does a score of 85 fall into?",
+        "According to the source material, which feature is used to measure sentiment?",
+        "In the spam filtering process described, users with more than 5 hashtags "
+        "were removed from the dataset.",
+        "Which of the following is defined in the slides as a wrapper method?",
+    ]
+    for prompt in bad:
+        assert references_unseen_material({"prompt": prompt, "options": []}), prompt
+    assert references_unseen_material(
+        {"prompt": "Which strategy fits?", "options": ["As shown in the lecture", "b", "c", "d"]}
+    )
+
+
+def test_standalone_questions_pass():
+    from manabi_ai.validators import references_unseen_material
+
+    good = [
+        "The text preprocessing technique of converting words into their root form is called what?",
+        "In a study of one-hit-wonder artists, which technique decided whether two song "
+        "titles were duplicates?",
+        "Open-source tools such as pandas are commonly used for data cleaning.",
+        "Using 'average of the row' imputation on the sample dataset below, what value "
+        "fills the missing Time 1 cell in row D?\n\n"
+        "| Row | Time 1 | Time 2 | Time 3 |\n|---|---|---|---|\n| D | ? | 1 | 6 |",
+    ]
+    for prompt in good:
+        assert not references_unseen_material({"prompt": prompt, "options": []}), prompt
+
+
 def test_acronym_scanner_finds_candidates():
     chunks = [
         _chunk(1),

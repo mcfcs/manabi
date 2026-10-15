@@ -125,7 +125,7 @@ def test_server_allowlist_matches():
 
 
 def test_prompt_version_current():
-    assert prompts.PROMPT_VERSION == "v11"
+    assert prompts.PROMPT_VERSION == "v12"
 
 
 def test_quiz_prompts_describe_new_types():

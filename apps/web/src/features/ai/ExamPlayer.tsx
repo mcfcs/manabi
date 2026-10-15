@@ -242,7 +242,7 @@ function ReviewItem({
       </button>
       {open && (
         <div className="exam-review-body">
-          <Markdown className="quiz-question">{q.prompt}</Markdown>
+          <Markdown className="quiz-question" gfm>{q.prompt}</Markdown>
           {q.qtype === "mcq" && q.options && (
             <ol className="exam-review-options" type="A">
               {q.options.map((o, i) => (
@@ -721,7 +721,7 @@ export function ExamPlayer({
               <span className="exam-q-topic">{[q.topic, moduleTitle].filter(Boolean).join(", ")}</span>
             )}
           </div>
-          <Markdown className="quiz-question exam-prompt">{q.prompt}</Markdown>
+          <Markdown className="quiz-question exam-prompt" gfm>{q.prompt}</Markdown>
           <AnswerInput q={q} value={value} onChange={(v) => setAnswers((a) => ({ ...a, [q.id]: v }))} />
 
           <footer className="exam-q-nav">

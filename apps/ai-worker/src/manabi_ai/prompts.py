@@ -5,7 +5,7 @@ outside the prompt: schema-constrained decoding, source-id resolution against
 the job's scope, and post-hoc support scoring.
 """
 
-PROMPT_VERSION = "v11"  # v11: quiz fields ordered so working precedes the answer
+PROMPT_VERSION = "v12"  # v12: quiz questions stand alone (no pointing at unseen slides)
 
 _GROUNDING = """RULES — follow strictly:
 - Use ONLY the numbered SOURCE MATERIAL. Do not add outside knowledge.
@@ -433,8 +433,18 @@ Question types (use exactly these): {{types}}.
 
 - Each question tests ONE thing, and no two questions test the same thing.
 - VARY the question stems: never open more than one question with the same
-  phrase (e.g. "According to the source material…" or "Which of the
-  following…") — repeated openings read as duplicates and are discarded.
+  phrase (e.g. "Which of the following…" or "What is…") — repeated openings
+  read as duplicates and are discarded.
+- Every question must STAND ALONE: the student answers with the slides and
+  readings closed. Never mention "the sources", "the source material", "the
+  slides" or "the lecture", and never point at a dataset, table, figure or
+  example the student cannot see ("the sample dataset", "row D", "the process
+  described"). To test a worked example (an imputation, a binning, a
+  calculation), write the data the question needs INTO the prompt — a small
+  markdown table (header row, then a |---| row) or the values inline — or
+  apply the same method to a fresh example. Name a case study by what it was
+  ("a study of one-hit-wonder artists"), not by where it appeared. Questions
+  that point at unseen material are discarded.
 
 Produce JSON matching the schema with exactly {{count}} questions."""
 
@@ -654,7 +664,10 @@ QUIZ_PLAN_PROMPT = """You are planning a university exam on the SOURCE MATERIAL.
 List {count} DISTINCT things an exam could test from this material — each a
 specific concept, rule, construct or skill, not a whole chapter. Spread them
 across the WHOLE material in its order (do not cluster on the first pages),
-and never list two targets that would produce the same question.
+and never list two targets that would produce the same question. The exam is
+taken with the material closed: every target must be testable by a question
+that stands alone, so a target built on a worked example must say which data
+the question will spell out (or that it uses a fresh example).
 
 For each target:
 - "topic": 2-6 words naming it (e.g. "pointer arithmetic on arrays",

@@ -225,6 +225,26 @@
   font-size: 19px;
   line-height: 1.5;
 }
+/* Worked-example data written into the question (a few rows of values). */
+.quiz-question table {
+  display: block;
+  max-width: 100%;
+  overflow-x: auto;
+  border-collapse: collapse;
+  margin: var(--s-3) 0;
+  font-family: var(--font-ui);
+  font-size: 15px;
+  font-variant-numeric: tabular-nums;
+}
+.quiz-question th,
+.quiz-question td {
+  border: 1px solid var(--rule);
+  padding: 4px 12px;
+  text-align: left;
+}
+.quiz-question th {
+  font-weight: 600;
+}
 
 .quiz-options {
   display: flex;

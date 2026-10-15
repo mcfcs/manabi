@@ -171,6 +171,37 @@ def dedup_cards(
     return kept
 
 
+# A quiz is taken with the slides closed, so a question that points at the
+# material ("the sample dataset provided in the source material", "the process
+# described,") cannot be answered: the student never sees what it points at.
+# The blind audit can't catch these — it is handed the sources.
+_UNSEEN_MATERIAL = re.compile(
+    r"\bsource\s+materials?\b"
+    r"|\b(?:the|these|those)\s+sources\b"
+    r"|\baccording\s+to\s+(?:the\s+)?sources?\b"
+    r"|\b(?:in|from|on)\s+the\s+(?:slides?|lecture|readings?|handouts?)\b"
+    r"|\b(?:described|shown|given|provided|presented|discussed|defined|mentioned)\s+in\s+"
+    r"the\s+(?:sources?|slides?|lecture|material|readings?)\b"
+    r"|\b(?:described|mentioned|shown)\s*(?:above|earlier)?\s*[,;:?]",
+    re.IGNORECASE,
+)
+# "The sample dataset" is fine only when the question carries that dataset.
+_UNSEEN_DATA = re.compile(
+    r"\b(?:sample|example|given|provided)\s+(?:dataset|data\s+set|table)\b", re.IGNORECASE
+)
+_MARKDOWN_TABLE = re.compile(r"^\s*\|.*\|\s*$\n^\s*\|?\s*:?-{3,}", re.MULTILINE)
+
+
+def references_unseen_material(item: dict) -> bool:
+    """True when a question's prompt or options lean on material the student
+    can't see while answering it."""
+    prompt = item.get("prompt") or ""
+    texts = [prompt, *[o for o in item.get("options") or [] if isinstance(o, str)]]
+    if any(_UNSEEN_MATERIAL.search(t) for t in texts):
+        return True
+    return bool(_UNSEEN_DATA.search(prompt)) and not _MARKDOWN_TABLE.search(prompt)
+
+
 def dedup_questions(items: list[ResolvedItem], threshold: float = 0.8) -> list[ResolvedItem]:
     """Drop near-duplicate question stems (difflib ratio)."""
     kept: list[ResolvedItem] = []

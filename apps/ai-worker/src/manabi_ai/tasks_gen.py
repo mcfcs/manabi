@@ -60,6 +60,7 @@ from manabi_ai.validators import (
     dedup_cards,
     dedup_questions,
     match_element_ids,
+    references_unseen_material,
     resolve_items,
 )
 
@@ -1451,11 +1452,18 @@ async def generate_quiz(
                 candidates.extend((0, k) for k in kept)
 
             def usable(pairs: list[tuple[int, ResolvedItem]]) -> list[tuple[int, ResolvedItem]]:
-                return [
+                kept = [
                     (u, c)
                     for u, c in pairs
                     if c.item.get("qtype") in types and _question_answer(c.item) is not None
                 ]
+                # Questions pointing at slides the student can't see; the
+                # top-up pass writes their replacements.
+                alone = [(u, c) for u, c in kept if not references_unseen_material(c.item)]
+                if len(alone) < len(kept):
+                    log.info("quiz: dropped %d question(s) leaning on unseen material",
+                             len(kept) - len(alone))
+                return alone
 
             def dedup(
                 pairs: list[tuple[int, ResolvedItem]], against: list[ResolvedItem] | None = None
@@ -1830,6 +1838,7 @@ async def regenerate_question(job_id: int, question_id: int) -> None:
                     if (
                         cand.item.get("qtype") == question.qtype
                         and _question_answer(cand.item) is not None
+                        and not references_unseen_material(cand.item)
                         and not any(_near_duplicate(stem, p, 0.8) for p in existing)
                         and not any(
                             quizplan.same_answer(
@@ -2613,7 +2622,11 @@ async def sample_question(
             for item in result.get("questions", []):
                 finalize_question(item)
                 kept, _ = resolve_items([item], ctx.index_map, scope, require_sources=True)
-                if kept and _question_answer(kept[0].item) is not None:
+                if (
+                    kept
+                    and _question_answer(kept[0].item) is not None
+                    and not references_unseen_material(kept[0].item)
+                ):
                     picked = kept[0].item
                     break
             if picked is None:

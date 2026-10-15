@@ -5,22 +5,25 @@ import { useMemo } from "react";
 /** Render a small subset of Markdown (bold, italics, lists, code, headings)
  * as sanitized HTML. Used for AI-authored fragments that carry markdown —
  * e.g. the lecture "On the board" panel — which were previously shown raw,
- * so asterisks and dashes leaked to the screen. GFM off; newlines → <br>. */
+ * so asterisks and dashes leaked to the screen. GFM off unless `gfm` (quiz
+ * prompts carry small data tables); newlines → <br>. */
 export function Markdown({
   children,
   className,
+  gfm = false,
 }: {
   children: string;
   className?: string;
+  gfm?: boolean;
 }) {
   const html = useMemo(() => {
     const raw = marked.parse(children ?? "", {
       breaks: true,
-      gfm: false,
+      gfm,
       async: false,
     }) as string;
     return DOMPurify.sanitize(raw);
-  }, [children]);
+  }, [children, gfm]);
   return (
     <div
       className={`md${className ? ` ${className}` : ""}`}
