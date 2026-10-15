@@ -676,7 +676,7 @@ function QuizPlayer({
             </>
           )}
           {question.explanation && (
-            <Markdown className="quiz-explanation">{question.explanation}</Markdown>
+            <Markdown className="quiz-explanation" gfm>{question.explanation}</Markdown>
           )}
           <div className="quiz-sources">
             {question.citations.map((c) => (

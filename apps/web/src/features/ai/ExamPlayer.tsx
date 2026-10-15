@@ -282,7 +282,7 @@ function ReviewItem({
           {q.explanation && (
             <div className="exam-explanation">
               <span className="field-label">Why</span>
-              <Markdown className="quiz-explanation">{q.explanation}</Markdown>
+              <Markdown className="quiz-explanation" gfm>{q.explanation}</Markdown>
             </div>
           )}
           {(q.qtype === "coding" || q.qtype === "essay") && (

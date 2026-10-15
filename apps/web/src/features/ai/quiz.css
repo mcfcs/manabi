@@ -225,25 +225,53 @@
   font-size: 19px;
   line-height: 1.5;
 }
-/* Worked-example data written into the question (a few rows of values). */
-.quiz-question table {
+/* Worked-example data written into the question (a few rows of values):
+   a compact data card that scrolls sideways on phones instead of squeezing. */
+.quiz-question table,
+.quiz-explanation table {
   display: block;
+  width: max-content;
   max-width: 100%;
   overflow-x: auto;
-  border-collapse: collapse;
-  margin: var(--s-3) 0;
+  border-collapse: separate;
+  border-spacing: 0;
+  border: 1px solid var(--rule);
+  border-radius: 8px;
+  margin: var(--s-3) 0 var(--s-4);
+  background: var(--surface-raised);
   font-family: var(--font-ui);
   font-size: 15px;
+  line-height: 1.4;
   font-variant-numeric: tabular-nums;
 }
 .quiz-question th,
-.quiz-question td {
-  border: 1px solid var(--rule);
-  padding: 4px 12px;
+.quiz-question td,
+.quiz-explanation th,
+.quiz-explanation td {
+  padding: 6px 16px;
   text-align: left;
+  white-space: nowrap;
+  border-bottom: 1px solid var(--rule);
 }
-.quiz-question th {
+.quiz-question :is(th, td) + :is(th, td),
+.quiz-explanation :is(th, td) + :is(th, td) {
+  border-left: 1px solid var(--rule);
+}
+.quiz-question tbody tr:last-child td,
+.quiz-explanation tbody tr:last-child td {
+  border-bottom: 0;
+}
+.quiz-question th,
+.quiz-explanation th {
+  background: var(--surface);
+  color: var(--ink-soft);
+  font-size: 13px;
   font-weight: 600;
+  letter-spacing: 0.02em;
+}
+.quiz-question tbody tr:nth-child(even) td,
+.quiz-explanation tbody tr:nth-child(even) td {
+  background: color-mix(in srgb, var(--surface) 45%, transparent);
 }
 
 .quiz-options {
