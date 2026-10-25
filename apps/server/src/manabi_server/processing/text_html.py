@@ -459,11 +459,15 @@ def build_text_html(db: Session, document_id: int) -> int:
     else:
         import fitz
 
-        from manabi_server.processing.pipeline import parse_source_path
-
         # Read the normalized (spread-split) PDF so native spans line up with
         # the same logical pages the elements/renders use.
+        from manabi_server.processing.layout import has_native_text
+        from manabi_server.processing.pipeline import parse_source_path
+
         with fitz.open(parse_source_path(doc)) as pdf:
+            # A layer whose fonts don't map to characters shows glyph soup:
+            # read such a PDF from its OCR'd elements, like a scan.
+            native_ok = has_native_text(pdf)
             skip = repeated_keys({no: _pdf_page_line_keys(pdf[no]) for no in range(pdf.page_count)})
             for page in pages:
                 if (page.text_html or "").startswith(USER_EDITED_MARKER):
@@ -475,7 +479,7 @@ def build_text_html(db: Session, document_id: int) -> int:
                     html_text = _elements_page_html(page_elements)
                 else:
                     native = None
-                    if 1 <= page.page_no <= pdf.page_count:
+                    if native_ok and 1 <= page.page_no <= pdf.page_count:
                         native = _pdf_page_html(pdf[page.page_no - 1], skip)
                     html_text = native or _elements_page_html(page_elements)
                     if html_text:

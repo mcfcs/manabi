@@ -47,14 +47,24 @@ DEFAULT_OPTIONS = {
 
 def build_for_document(doc: Document, elements: list[tuple[int, str, str]] | None = None) -> Script:
     """Read plain text directly or run a layout pass over the normalized PDF.
-    A PDF whose layout pass finds nothing — a scan has no text layer — is
-    read from its extracted (OCR) `elements` instead: (page_no, type, text)."""
+    A PDF without a readable text layer — a scan, or fonts that don't map back
+    to characters — is read from its extracted (OCR) `elements` instead:
+    (page_no, type, text)."""
     from manabi_server.processing.pipeline import parse_source_path
 
     if doc.kind == DocumentKind.txt:
         from manabi_server.processing.plain_text import build_text_script, decode_text
 
         return build_text_script(decode_text(parse_source_path(doc).read_bytes()))
+    if elements and doc.kind == DocumentKind.pdf:
+        import pymupdf
+
+        from manabi_server.processing.layout import has_native_text
+
+        with pymupdf.open(str(parse_source_path(doc))) as pdf:
+            readable = has_native_text(pdf)
+        if not readable:
+            return build_script_from_elements(elements)
     script = build_script_from_path(str(parse_source_path(doc)))
     if not script.segments and elements:
         script = build_script_from_elements(elements)

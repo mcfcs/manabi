@@ -64,6 +64,38 @@ def test_has_native_text_gate():
     assert layout.has_native_text(blank) is False
 
 
+# Page 1 of Sen, "The Importance of Democracy" (ch. 6): subset CID fonts with
+# no usable ToUnicode map, so the "text" is glyph ids.
+_GLYPH_SOUP = (
+    '\x02\x04\x01\x05\x07\x03\x06\x08\n=@!"@,<)Q=<QD*"Q\x0f\x1cLQ=$Q\x0f#<)\x1c5\x03Q '
+    "\x1cDQD*#Q C=GD*#@<Q#!)#Q=$Q\x0f\x1c<)6\x1c!#C*Q\n\x1d<!Q =$Q \x1b#CEQ \x0f#<)\x1c8Q"
+)
+
+
+def test_text_layer_readable_rejects_glyph_ids_and_keeps_prose_and_code():
+    assert layout.text_layer_readable(_GLYPH_SOUP) is False
+    prose = (
+        "Bordering on the Bay of Bengal, at the southern edge of Bangladesh and of "
+        "West Bengal in India, there is the Sundarban—which means “beautiful forest.”"
+    )
+    assert layout.text_layer_readable(prose) is True
+    # C slides were the lowest real score (0.62): code must not read as garbage
+    code_slide = (
+        "Pointers in C\nint x = 5;\nint *p = &x;\nprintf(\"%d\\n\", *p);\n"
+        "A pointer stores the address of another variable.\n*p dereferences it."
+    )
+    assert layout.text_layer_readable(code_slide) is True
+
+
+def test_has_native_text_false_for_unreadable_layer():
+    doc = pymupdf.open()
+    for _ in range(3):
+        page = doc.new_page(width=612, height=792)
+        soup = '=@!"@,<)Q=<QD*"Q LQ=$Q #<)5Q D*#Q ' * 40
+        page.insert_textbox(pymupdf.Rect(72, 72, 540, 720), soup, fontsize=11)
+    assert layout.has_native_text(doc) is False
+
+
 # ── Rotation baking (scanned pages) ───────────────────────────────────────
 
 

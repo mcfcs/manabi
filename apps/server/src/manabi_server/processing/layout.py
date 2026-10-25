@@ -17,6 +17,7 @@ and take a document-level majority vote.
 from __future__ import annotations
 
 import logging
+import re
 
 log = logging.getLogger("manabi.layout")
 
@@ -33,6 +34,15 @@ _SPREAD_DOC_VOTE = 0.50      # ≥ half the pages show a gutter → split the do
 # Native-text gate: only scanned PDFs are spread candidates.
 _NATIVE_SAMPLE_PAGES = 8
 _NATIVE_MIN_CHARS_PER_PAGE = 40
+
+# A text layer can be there and still be unreadable: subset CID fonts with no
+# usable ToUnicode map hand back glyph ids ("=@!\"@,<)Q=<QD*\"Q" for "Bordering
+# on the Bay of Bengal" — Sen ch. 6). Such a PDF must be OCR'd like a scan.
+# Measured over every stored PDF: word-like share 0.62 (C code slides) to 0.99,
+# control chars <= 0.005; the Sen chapter: 0.06 and 0.053.
+_WORDLIKE = re.compile(r"^[(\[\"'“‘]*[^\W\d_]+(?:[-'’][^\W\d_]+)*[)\]\"'”’.,;:!?]*$")
+_MIN_WORDLIKE_SHARE = 0.35
+_MAX_CONTROL_SHARE = 0.02
 
 
 def _page_gutter(page) -> float | None:
@@ -151,11 +161,27 @@ def split_spread_pdf(fitz_doc, gutters: list[float | None]):
     return out
 
 
+def text_layer_readable(text: str) -> bool:
+    """Whether extracted text reads as words rather than glyph-id soup."""
+    tokens = text.split()
+    if not tokens:
+        return False
+    wordlike = sum(1 for t in tokens if _WORDLIKE.match(t)) / len(tokens)
+    control = sum(1 for c in text if ord(c) < 32 and c not in "\n\t\r") / len(text)
+    return wordlike >= _MIN_WORDLIKE_SHARE and control <= _MAX_CONTROL_SHARE
+
+
 def has_native_text(fitz_doc) -> bool:
-    """True if the PDF carries a real text layer (not a pure scan). Only
-    text-less scans are spread candidates under 'auto'."""
+    """True if the PDF carries a real, READABLE text layer. A pure scan, or a
+    layer whose fonts don't map back to characters, is OCR'd instead — and
+    only those are spread candidates under 'auto'."""
     n = min(_NATIVE_SAMPLE_PAGES, fitz_doc.page_count)
     if n == 0:
         return False
-    total = sum(len(fitz_doc[i].get_text("text").strip()) for i in range(n))
-    return total >= _NATIVE_MIN_CHARS_PER_PAGE * n
+    texts = [fitz_doc[i].get_text("text") for i in range(n)]
+    if sum(len(t.strip()) for t in texts) < _NATIVE_MIN_CHARS_PER_PAGE * n:
+        return False
+    if not text_layer_readable("\n".join(texts)):
+        log.warning("text layer present but unreadable (unmapped fonts) — treating as a scan")
+        return False
+    return True

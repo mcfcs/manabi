@@ -403,7 +403,11 @@ def _coverage_warning(elements: list[dict], source: Path) -> str | None:
     try:
         import pymupdf
 
+        from manabi_server.processing import layout
+
         with pymupdf.open(str(source)) as pdf:
+            if not layout.has_native_text(pdf):
+                return None  # nothing trustworthy to measure coverage against
             native = {i + 1: len(pdf[i].get_text().split()) for i in range(pdf.page_count)}
     except Exception:  # noqa: BLE001 — diagnostics only
         return None
@@ -988,8 +992,10 @@ def _docling_parse(source: Path, cache_key: str | None = None) -> dict:
     with pymupdf.open(str(source)) as _probe:
         is_scan = not layout.has_native_text(_probe)
         if is_pdf:
+            # An unreadable layer's "words" are glyph ids: count none.
             native_words = {
-                i + 1: len(_probe[i].get_text().split()) for i in range(_probe.page_count)
+                i + 1: 0 if is_scan else len(_probe[i].get_text().split())
+                for i in range(_probe.page_count)
             }
     converter = _get_converter(full_page_ocr=is_scan)
     result = _convert_locked(converter, source)
@@ -1037,7 +1043,7 @@ def _docling_parse(source: Path, cache_key: str | None = None) -> dict:
             if page_failed or page_no in failed:
                 unresolved.add(page_no)
             fallback_pages.append(page_no)
-        if fallback_pages:
+        if fallback_pages and not is_scan:
             with pymupdf.open(str(source)) as pdf:
                 for page_no in fallback_pages:
                     extra = _pymupdf_page_elements(pdf[page_no - 1], page_no)
