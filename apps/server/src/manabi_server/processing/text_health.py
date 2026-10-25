@@ -223,6 +223,27 @@ _SUPERSCRIPT_NOTE = re.compile(r"(?<=[^\s\d])[0-9]*[⁰¹²³⁴⁵⁶⁷⁸⁹�
 # A number with letter-o for zeros: "2oo4", "199os", "$1o", "12o,ooo", ":2o".
 _OCR_NUMBER = re.compile(r"(?<![A-Za-z])\d[\doO]*(?:,[\doO]{3})*(?=s?(?![A-Za-z]))")
 _VOWELS = set("aeiouAEIOU")
+# Book faces with old-style figures print "1" like a small-cap I, and OCR reads
+# it as a letter: Kerala's fertility "r.7", "mid-x970s", "I993", "chapter r"
+# (Sen, Development as Freedom). Only where a digit makes the number certain.
+_OLDSTYLE_ONE = "rxIil"
+_ONE_DECIMAL = re.compile(rf"(?<![\w.])[{_OLDSTYLE_ONE}]\.(\d)(?![\w])")
+_ONE_YEAR = re.compile(rf"(?<![\w])[{_OLDSTYLE_ONE}](\d{{3}})(s?)(?![\w])")
+_ONE_CHAPTER = re.compile(rf"\b([Cc]hapters?)\s+[{_OLDSTYLE_ONE}](?=[\s,.;:)]|$)")
+# "(… China's r.9}": a closing brace for a paren, in prose that has no braces.
+_BRACE_FOR_PAREN = re.compile(r"(\([^(){}]*)\}")
+
+
+def _fix_year(m: re.Match) -> str:
+    year = int("1" + m.group(1))
+    return f"{year}{m.group(2)}" if 1000 <= year <= 1999 else m.group(0)
+
+
+def _fix_oldstyle_one(text: str) -> str:
+    text = _ONE_DECIMAL.sub(r"1.\1", text)
+    text = _ONE_YEAR.sub(_fix_year, text)
+    text = _ONE_CHAPTER.sub(r"\1 1", text)
+    return _BRACE_FOR_PAREN.sub(r"\1)", text) if "{" not in text else text
 
 
 def _keep_end_accent(word: str, i: int) -> bool:
@@ -267,6 +288,7 @@ def clean_ocr_text(text: str) -> str:
     text = _SUPERSCRIPT_NOTE.sub("", text)
     text = re.sub(r"\s*·\s*", " ", text)
     text = _OCR_NUMBER.sub(_fix_number, text)
+    text = _fix_oldstyle_one(text)
     return _OCR_WORD.sub(lambda m: _fold_word(m.group(0)), text)
 
 

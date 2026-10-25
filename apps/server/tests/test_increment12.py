@@ -367,6 +367,24 @@ def test_ocr_zeros_and_end_accents():
     )
 
 
+def test_ocr_oldstyle_one_read_as_a_letter():
+    # Sen, Development as Freedom ch. 6: old-style "1" OCR'd as r / x / I
+    from manabi_server.processing.text_health import clean_ocr_text
+
+    assert clean_ocr_text(
+        "Kerala now has a fertility rate of r.7 (similar to Britain, below China's r.9}, and"
+    ) == "Kerala now has a fertility rate of 1.7 (similar to Britain, below China's 1.9), and"
+    assert clean_ocr_text("declared in the mid-x970s, in I993 and i998") == (
+        "declared in the mid-1970s, in 1993 and 1998"
+    )
+    assert clean_ocr_text("described in chapter r. As discussed in chapters I and 4") == (
+        "described in chapter 1. As discussed in chapters 1 and 4"
+    )
+    # letters that are really letters stay: i.e., Dr.7?, "I am", World War I, x-axis
+    real = "I am sure, i.e. the point; Dr.7 is odd; World War I and the x-axis; r is 5"
+    assert clean_ocr_text(real) == real
+
+
 def test_a_spread_page_with_one_paragraph_on_the_right_reads_left_first():
     # Quimpo p.16: four paragraphs on the left page, one on the right; the OCR
     # put the right one second, and Steven read it in the middle of the left.
