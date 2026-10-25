@@ -143,6 +143,24 @@ def card_key(front: str, back: str) -> str | None:
     return min(sides, key=lambda s: len(s.split())).lower() if sides else None
 
 
+_KEY_STOP = frozenset(("a", "an", "the", "of", "in", "on", "for", "to", "and", "its", "their"))
+
+
+def _same_concept(a: str, b: str, threshold: float) -> bool:
+    """Card keys name one concept when they near-match, or when the shorter
+    one (two or more words) is how the longer begins: "instrumental role" vs
+    "instrumental role of political freedoms" scored 0.61 and a Sen deck asked
+    five concepts both ways. A prefix, not any subset: "economic needs" and
+    "conceptualization of economic needs" stay two concepts."""
+    if _near_duplicate(a, b, threshold):
+        return True
+    wa, wb = (
+        [w for w in re.findall(r"[a-z0-9]+", s.lower()) if w not in _KEY_STOP] for s in (a, b)
+    )
+    short, long_ = (wa, wb) if len(wa) <= len(wb) else (wb, wa)
+    return len(short) >= 2 and long_[: len(short)] == short
+
+
 def dedup_cards(
     new_items: list[ResolvedItem],
     existing_fronts: list[str],
@@ -162,7 +180,7 @@ def dedup_cards(
             continue
         if keys is not None:
             key = card_key(front, item.item.get("back") or "")
-            if key and any(_near_duplicate(key, k, threshold) for k in keys):
+            if key and any(_same_concept(key, k, threshold) for k in keys):
                 continue
             if key:
                 keys.append(key)

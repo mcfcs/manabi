@@ -83,6 +83,28 @@ def test_slide_labels_are_not_terms():
     )
 
 
+def test_a_term_with_a_qualifier_is_the_same_concept():
+    # Sen deck: "instrumental role" asked one way, "Instrumental role of
+    # political freedoms" the other
+    from manabi_ai.validators import ResolvedItem, dedup_cards
+
+    def card(front, back):
+        return ResolvedItem(item={"front": front, "back": back}, chunks=[])
+
+    keys = ["instrumental role", "economic needs"]
+    new = [
+        card("Instrumental role of political freedoms", "Political freedoms help people be heard."),
+        card("Conceptualization of economic needs", "Needs are understood through debate."),
+        card("Famine prevention in democracies", "No famine in a democracy with a free press."),
+        card("No famine has occurred in a democracy with a free press.", "famine prevention"),
+    ]
+    kept = dedup_cards(new, [], existing_keys=keys)
+    assert [c.item["front"] for c in kept] == [
+        "Conceptualization of economic needs",
+        "Famine prevention in democracies",
+    ]
+
+
 def test_one_card_per_concept_across_directions():
     from manabi_ai.validators import ResolvedItem, card_key, dedup_cards
 
