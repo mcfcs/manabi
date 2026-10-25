@@ -463,7 +463,10 @@ def build_script(pdf_doc) -> Script:
     )
 
 
-_ELEMENT_KINDS = {"heading": "heading", "paragraph": "paragraph", "list_item": "paragraph"}
+# The extractor stores Docling list items as "list" (pipeline._docling_elements);
+# "list_item" never occurs, and a list read as nothing skipped Sen's three
+# considerations — the chapter's frame.
+_ELEMENT_KINDS = {"heading": "heading", "paragraph": "paragraph", "list": "paragraph"}
 _TITLE_SMALL = frozenset(
     ("a", "an", "and", "as", "at", "by", "for", "from", "in", "of", "on", "or", "the", "to")
 )

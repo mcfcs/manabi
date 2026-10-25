@@ -7,6 +7,20 @@ def _texts(rows):
     return [s.text for s in build_script_from_elements(rows).segments]
 
 
+def test_list_items_are_read():
+    # Sen ch. 6 p.148: the three considerations are stored as "list" elements
+    rows = [
+        (3, "paragraph", "There are three different considerations that take us there:"),
+        (3, "list", "their direct importance in human living associated with basic capabilities;"),
+        (3, "list", "their instrumental role in enhancing the hearing that people get;"),
+        (3, "list", "their constructive role in the conceptualization of needs."),
+        (3, "paragraph", "These different considerations will be discussed presently."),
+    ]
+    texts = _texts(rows)
+    assert len(texts) == 5
+    assert texts[2].startswith("their instrumental role")
+
+
 def test_a_paragraph_split_by_ocr_is_read_as_one():
     rows = [
         (1, "paragraph", "Throughout his long reel and political life, Estrada had shrewdly"),

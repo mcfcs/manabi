@@ -294,7 +294,7 @@ def clean_ocr_text(text: str) -> str:
 
 def clean_ocr_elements(elements: list[dict]) -> list[dict]:
     for el in elements:
-        if el.get("type") in ("paragraph", "heading", "list_item", "caption") and el.get("text"):
+        if el.get("type") in ("paragraph", "heading", "list", "caption") and el.get("text"):
             el["text"] = clean_ocr_text(el["text"])
     return elements
 

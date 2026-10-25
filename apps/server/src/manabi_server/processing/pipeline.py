@@ -640,7 +640,7 @@ def _strip_note_markers(elements: list[dict]) -> list[dict]:
         return m.group(1) + m.group(2)
 
     for el in elements:
-        if el.get("type") in ("paragraph", "list_item") and el.get("text"):
+        if el.get("type") in ("paragraph", "list") and el.get("text"):
             el["text"] = _NOTE_MARKER_RE.sub(strip, el["text"])
     if total:
         log.info("stripped %d glued note markers", total)
