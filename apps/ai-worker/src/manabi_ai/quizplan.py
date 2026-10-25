@@ -287,6 +287,17 @@ def same_answer(qtype: str, a: dict | None, b: dict | None) -> bool:
 # ── Choosing the final questions ─────────────────────────────────────────
 
 
+def _spread(candidates: list[int], q: int) -> list[int]:
+    """`q` of the candidates, evenly spaced. They come in plan order, which
+    follows the material, so taking the first q kept the opening pages and
+    cut the ending: a 12-of-16 Sen quiz had nothing from its last three pages
+    (the concluding "three virtues")."""
+    n = len(candidates)
+    if q >= n:
+        return candidates
+    return [candidates[int((k + 0.5) * n / q)] for k in range(q)]
+
+
 def select_by_quota(
     items: list[tuple[int, str]],
     owed: dict[int, int],
@@ -313,7 +324,7 @@ def select_by_quota(
         taken = 0
         have: dict[str, int] = {}
         for t, q in quota.items():
-            for i in [i for i in mine if items[i][1] == t][:q]:
+            for i in _spread([i for i in mine if items[i][1] == t], q):
                 chosen.add(i)
                 have[t] = have.get(t, 0) + 1
                 taken += 1

@@ -105,6 +105,15 @@ def test_selection_follows_the_mix_not_the_generation_order():
     assert [items[i][1] for i in picked].count("output") == 2
 
 
+def test_selection_spreads_over_the_material_not_its_opening():
+    from manabi_ai.quizplan import select_by_quota
+
+    # 8 tf candidates in material order, 4 wanted: keep some from the end
+    items = [(0, "tf")] * 8
+    picked = select_by_quota(items, {0: 4}, {"tf": 1}, 4)
+    assert len(picked) == 4 and max(picked) >= 6 and min(picked) <= 1
+
+
 def test_selection_fills_a_missing_type_from_the_rest():
     from manabi_ai.quizplan import select_by_quota
 
