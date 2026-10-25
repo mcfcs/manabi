@@ -173,6 +173,41 @@ def test_standalone_questions_pass():
         assert not references_unseen_material({"prompt": prompt, "options": []}), prompt
 
 
+def test_item_writing_flaws_from_the_sen_quiz():
+    from manabi_ai.validators import item_writing_flaw
+
+    leak = {
+        "qtype": "identification",
+        "prompt": "The argument that political freedom is a specifically 'Western' priority that "
+        "goes against 'Asian values,' which emphasize order and discipline, is known as the "
+        "______ argument.",
+        "correct_text": "Asian values",
+    }
+    assert item_writing_flaw(leak) == "answer in stem"
+    list_essay = {
+        "qtype": "essay",
+        "prompt": "List the specific 'helpful policies' for economic development that the text "
+        "states are compatible with democracy.",
+    }
+    assert item_writing_flaw(list_essay) == "essay asks for a list"
+    clean = [
+        {
+            "qtype": "identification",
+            "prompt": "The claim that political freedoms hamper economic growth is called the "
+            "______ thesis.",
+            "correct_text": "Lee",
+        },
+        {
+            "qtype": "essay",
+            "prompt": "How did public discussion and female literacy contribute to the decline "
+            "in fertility rates in Kerala?",
+        },
+        {"qtype": "tf", "prompt": "Asian values stress order.", "correct_text": ""},
+    ]
+    for item in clean:
+        assert item_writing_flaw(item) is None, item["prompt"]
+
+
 def test_acronym_scanner_finds_candidates():
     chunks = [
         _chunk(1),

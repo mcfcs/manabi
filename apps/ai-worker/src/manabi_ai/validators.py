@@ -202,6 +202,30 @@ def references_unseen_material(item: dict) -> bool:
     return bool(_UNSEEN_DATA.search(prompt)) and not _MARKDOWN_TABLE.search(prompt)
 
 
+# An essay that only asks for a list is an enumeration in disguise ("List the
+# specific 'helpful policies'…" — Sen quiz): it tests recall, not synthesis.
+_LIST_ASK = re.compile(r"^\s*(?:list|enumerate|name (?:all|the|each|every))\b", re.IGNORECASE)
+
+
+def _norm(text: str) -> str:
+    return " ".join(re.sub(r"[^\w\s]", " ", text.lower()).split())
+
+
+def item_writing_flaw(item: dict) -> str | None:
+    """A defect code can see: the key printed in its own stem ("…against
+    'Asian values'… is known as the ______ argument." → "Asian values"), or an
+    essay that is really a list. None when the item is clean."""
+    qtype = item.get("qtype")
+    prompt = item.get("prompt") or ""
+    if qtype in ("identification", "short"):
+        answer = _norm(item.get("correct_text") or "")
+        if answer and re.search(rf"(?<!\w){re.escape(answer)}(?!\w)", _norm(prompt)):
+            return "answer in stem"
+    if qtype == "essay" and _LIST_ASK.match(prompt):
+        return "essay asks for a list"
+    return None
+
+
 def dedup_questions(items: list[ResolvedItem], threshold: float = 0.8) -> list[ResolvedItem]:
     """Drop near-duplicate question stems (difflib ratio)."""
     kept: list[ResolvedItem] = []

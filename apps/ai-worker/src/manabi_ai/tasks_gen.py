@@ -59,6 +59,7 @@ from manabi_ai.validators import (
     card_key,
     dedup_cards,
     dedup_questions,
+    item_writing_flaw,
     match_element_ids,
     references_unseen_material,
     resolve_items,
@@ -1457,12 +1458,19 @@ async def generate_quiz(
                     for u, c in pairs
                     if c.item.get("qtype") in types and _question_answer(c.item) is not None
                 ]
-                # Questions pointing at slides the student can't see; the
+                # Questions pointing at slides the student can't see, keys
+                # printed in their own stem, essays that only want a list; the
                 # top-up pass writes their replacements.
-                alone = [(u, c) for u, c in kept if not references_unseen_material(c.item)]
-                if len(alone) < len(kept):
-                    log.info("quiz: dropped %d question(s) leaning on unseen material",
-                             len(kept) - len(alone))
+                alone = []
+                for u, c in kept:
+                    flaw = (
+                        "unseen material" if references_unseen_material(c.item)
+                        else item_writing_flaw(c.item)
+                    )
+                    if flaw:
+                        log.info("quiz: dropped a question (%s): %.80s", flaw, c.item.get("prompt"))
+                    else:
+                        alone.append((u, c))
                 return alone
 
             def dedup(
@@ -1839,6 +1847,7 @@ async def regenerate_question(job_id: int, question_id: int) -> None:
                         cand.item.get("qtype") == question.qtype
                         and _question_answer(cand.item) is not None
                         and not references_unseen_material(cand.item)
+                        and not item_writing_flaw(cand.item)
                         and not any(_near_duplicate(stem, p, 0.8) for p in existing)
                         and not any(
                             quizplan.same_answer(
@@ -2626,6 +2635,7 @@ async def sample_question(
                     kept
                     and _question_answer(kept[0].item) is not None
                     and not references_unseen_material(kept[0].item)
+                    and not item_writing_flaw(kept[0].item)
                 ):
                     picked = kept[0].item
                     break
