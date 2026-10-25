@@ -105,6 +105,37 @@ def test_selection_follows_the_mix_not_the_generation_order():
     assert [items[i][1] for i in picked].count("output") == 2
 
 
+def test_a_correction_that_breaks_the_key_rules_drops_the_question(monkeypatch):
+    # Sen quiz job 612 crashed on {**None}: the solver's 9-word answer replaced
+    # an identification key, which then failed the ≤6-word rule.
+    import asyncio
+    from types import SimpleNamespace
+
+    from manabi_ai import tasks_gen
+    from manabi_ai.validators import ResolvedItem
+
+    async def solve(*_a, **_k):
+        return {"answers": [{"n": 1, "working": "", "answer_option": -1, "answer_bool": False,
+                             "answer_text": "the role political freedoms play in shaping needs"}]}
+
+    async def adjudicate(*_a, **_k):
+        return {"stored_answer_correct": False, "user_answer_correct": True, "verdict": "x"}
+
+    async def progress(*_a, **_k):
+        return None
+
+    monkeypatch.setattr(tasks_gen, "generate_structured", solve)
+    monkeypatch.setattr(tasks_gen, "_adjudicate", adjudicate)
+    monkeypatch.setattr(tasks_gen, "_progress", progress)
+    item = {"qtype": "identification", "prompt": "The ______ role.", "correct_text": "constructive"}
+    kept, stats = asyncio.run(
+        tasks_gen._audit_candidates(
+            None, SimpleNamespace(), None, [(0, ResolvedItem(item=item, chunks=[]))], {0: "src"}
+        )
+    )
+    assert kept == [] and stats["dropped"] == 1
+
+
 def test_selection_spreads_over_the_material_not_its_opening():
     from manabi_ai.quizplan import select_by_quota
 

@@ -1200,6 +1200,13 @@ async def _audit_candidates(
                     stats["upheld"] += 1
                     r.item["_audit"] = "upheld"
                 elif verdict.get("user_answer_correct") and _apply_solve(r.item, a):
+                    if _question_answer(r.item) is None:
+                        # The solver's answer breaks a key rule (a 9-word
+                        # "identification"): no valid key left. Saving it
+                        # crashed the quiz job on {**None}.
+                        stats["dropped"] += 1
+                        dropped_ids.add(id(r))
+                        continue
                     stats["corrected"] += 1
                     r.item["_audit"] = "corrected"
                     why = (verdict.get("verdict") or "").strip()
