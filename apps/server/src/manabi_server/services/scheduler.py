@@ -18,7 +18,7 @@ import asyncio
 import logging
 from datetime import timedelta
 
-from manabi_core.models import AppSettings, Course, ScheduleBlock, StudyTask
+from manabi_core.models import AppSettings, Course, DayMark, ScheduleBlock, StudyTask
 from sqlalchemy import select
 
 from manabi_server.config import get_settings
@@ -37,6 +37,15 @@ CANVAS_SYNC_INTERVAL = timedelta(minutes=10)
 def canvas_sync_due(last_synced_at, now) -> bool:
     """Pure predicate so the cadence is testable: never-synced or stale."""
     return last_synced_at is None or now - last_synced_at > CANVAS_SYNC_INTERVAL
+
+
+def class_mode(course_id: int, marks: list[tuple[int | None, int | None, str]]) -> str:
+    """A class's mode on a day — the calendar's meetingMode: its own mark wins,
+    then the whole-day class mark (course and block both unset), else onsite.
+    `marks` are that day's (course_id, block_id, mode); async = no meeting."""
+    own = next((m for c, _b, m in marks if c == course_id), None)
+    whole = next((m for c, b, m in marks if c is None and b is None), None)
+    return own or whole or "onsite"
 
 
 async def _tick(sessionmaker) -> None:
@@ -187,19 +196,36 @@ async def _tick(sessionmaker) -> None:
             in_semester = (
                 app.semester_start <= today_manila() <= app.semester_end
             )
-            for block, course in rows:
-                if in_semester and minute_now + 10 <= block.start_minute < minute_now + 15:
-                    await send_to_all(
-                        db,
-                        {
-                            "title": f"{course.code} soon",
-                            "body": f"Starts {block.start_minute // 60:02d}:"
-                            f"{block.start_minute % 60:02d}"
-                            + (f" · {block.location}" if block.location else ""),
-                            "tag": f"manabi-class-{block.id}",
-                            "url": "/schedule",
-                        },
+            # Async-marked classes (whole day or that course) don't meet:
+            # reminding about them was the bug. Sync ones meet online.
+            marks = [
+                tuple(r)
+                for r in (
+                    await db.execute(
+                        select(DayMark.course_id, DayMark.block_id, DayMark.mode).where(
+                            DayMark.date == today_manila()
+                        )
                     )
+                ).all()
+            ]
+            for block, course in rows:
+                if not (in_semester and minute_now + 10 <= block.start_minute < minute_now + 15):
+                    continue
+                mode = class_mode(course.id, marks)
+                if mode == "async":
+                    continue
+                where = "online" if mode == "sync" else block.location
+                await send_to_all(
+                    db,
+                    {
+                        "title": f"{course.code} soon",
+                        "body": f"Starts {block.start_minute // 60:02d}:"
+                        f"{block.start_minute % 60:02d}"
+                        + (f" · {where}" if where else ""),
+                        "tag": f"manabi-class-{block.id}",
+                        "url": "/schedule",
+                    },
+                )
 
 
 async def run_scheduler(sessionmaker) -> None:

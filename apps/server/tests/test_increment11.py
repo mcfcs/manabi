@@ -10,7 +10,7 @@ from manabi_server.api.notes import (
     derive_plain_text,
     sniff_image_ext,
 )
-from manabi_server.services.scheduler import canvas_sync_due
+from manabi_server.services.scheduler import canvas_sync_due, class_mode
 from manabi_server.storage.files import note_asset_path
 
 NOW = datetime(2026, 8, 10, 12, 0, tzinfo=UTC)
@@ -25,6 +25,19 @@ def test_canvas_sync_due_when_never_synced():
 
 def test_canvas_sync_not_due_when_fresh():
     assert canvas_sync_due(NOW - timedelta(minutes=9), NOW) is False
+
+
+def test_class_mode_matches_the_calendar():
+    # Nov 2: whole-day async (course and block unset) — reminders still fired
+    whole_async = [(None, None, "async")]
+    assert class_mode(2, whole_async) == "async"
+    # a class's own mark beats the whole-day one
+    assert class_mode(2, [(None, None, "async"), (2, None, "sync")]) == "sync"
+    assert class_mode(7, [(7, None, "async")]) == "async"
+    assert class_mode(2, [(7, None, "async")]) == "onsite"
+    # an internship's RTO/WFH mark (block set) says nothing about classes
+    assert class_mode(2, [(None, 38, "rto")]) == "onsite"
+    assert class_mode(2, []) == "onsite"
 
 
 def test_canvas_sync_due_when_stale():
