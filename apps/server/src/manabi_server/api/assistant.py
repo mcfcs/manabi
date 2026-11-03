@@ -118,14 +118,36 @@ async def _briefing_in_flight(db: AsyncSession, thread_id: int) -> Job | None:
     ).scalar_one_or_none()
 
 
+async def _briefing_failed(db: AsyncSession, thread_id: int) -> bool:
+    """Whether the latest briefing job for this thread ended in failure."""
+    status = (
+        await db.execute(
+            select(Job.status)
+            .where(
+                Job.job_type == "daily_briefing",
+                Job.payload["thread_id"].as_string() == str(thread_id),
+            )
+            .order_by(Job.id.desc())
+            .limit(1)
+        )
+    ).scalar_one_or_none()
+    return status == JobStatus.failed
+
+
 @router.post("/briefing", dependencies=[Depends(require_csrf)])
 async def ensure_daily_briefing(
     user: User = Depends(get_default_user), db: AsyncSession = Depends(get_db)
 ) -> BriefingOut:
-    """Ensure today's (Manila) morning briefing exists. Steven posts a "good day"
-    digest as his first assistant message in a per-day thread; the greeting text
-    is returned in `body` once written. Idempotent per Manila day — called on
-    both the home page and the assistant open."""
+    """Ensure today's (Manila) morning briefing exists — the home page's "letter
+    from Steven" and the assistant open both call this."""
+    return await ensure_briefing(db, user)
+
+
+async def ensure_briefing(db: AsyncSession, user: User) -> BriefingOut:
+    """Steven posts a "good day" digest as his first assistant message in a
+    per-day thread; the greeting text is returned in `body` once written.
+    Idempotent per Manila day: the scheduler calls it just after midnight so the
+    letter is waiting, and a page opened later finds it instead of writing one."""
     # Lazy imports (mirror api/chat.py) to avoid app-startup import cycles.
     from manabi_server.api.settings import get_app_settings
     from manabi_server.services.context import build_personal_context
@@ -174,8 +196,9 @@ async def ensure_daily_briefing(
         if in_flight is not None:
             return BriefingOut(thread_id=thread.id, job_id=in_flight.id, generating=True)
         # Thread exists, no greeting, no job: if already briefed today, don't
-        # loop — otherwise fall through and (re)generate.
-        if settings.last_briefing_date == today:
+        # loop — unless that attempt failed (the midnight one can, with the
+        # model machine asleep): opening the page then tries once more.
+        if settings.last_briefing_date == today and not await _briefing_failed(db, thread.id):
             return BriefingOut(thread_id=thread.id, generating=False)
 
     if thread is None:

@@ -295,6 +295,27 @@ async def test_briefing_idempotent_same_day(monkeypatch):
     assert "task" not in captured  # no new job deferred
 
 
+async def test_a_failed_midnight_letter_is_retried_when_the_page_opens(monkeypatch):
+    from manabi_core.models import JobStatus
+
+    asst, captured, _ = _patch_briefing_deps(monkeypatch, last_date=_dt.date(2026, 8, 12))
+    thread = types.SimpleNamespace(id=5)
+    # thread found · no greeting · nothing in flight · the last job failed
+    db = _ScriptedDB([_Res(thread), _Res(None), _Res(None), _Res(JobStatus.failed)])
+    out = await asst.ensure_briefing(db, _User())
+    assert out.generating is True and captured["task"] == asst.DAILY_BRIEFING_TASK
+
+
+async def test_a_briefed_day_is_not_rewritten(monkeypatch):
+    from manabi_core.models import JobStatus
+
+    asst, captured, _ = _patch_briefing_deps(monkeypatch, last_date=_dt.date(2026, 8, 12))
+    thread = types.SimpleNamespace(id=5)
+    db = _ScriptedDB([_Res(thread), _Res(None), _Res(None), _Res(JobStatus.succeeded)])
+    out = await asst.ensure_briefing(db, _User())
+    assert out.generating is False and "task" not in captured
+
+
 # ── Steven takes actions ──────────────────────────────────────────────────
 
 import pytest  # noqa: E402

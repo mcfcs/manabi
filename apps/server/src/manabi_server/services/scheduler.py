@@ -11,6 +11,7 @@ Per tick:
   2b. Canvas announcement poll (~30 min, daytime).
   2c. Reap jobs whose Procrastinate task is already over (they block features).
   2d. Purge documents soft-deleted longer ago than the retention window.
+  2e. Steven's daily letter (briefing) on the first tick of the Manila day.
   3. Optional class-starting-soon pushes (app_settings.class_reminders).
 """
 
@@ -169,6 +170,26 @@ async def _tick(sessionmaker) -> None:
                 log.info("reaped %d dead job(s): %s", len(reaped), reaped)
         except Exception:  # noqa: BLE001 — cleanup must never kill the tick
             log.exception("job reap failed")
+
+        # 2e. Steven's daily letter, written once the Manila day starts — it
+        # was only ever written when a page opened that day. The once-a-day
+        # gate (last_briefing_date) is shared with the endpoint, so a page
+        # opened later reads this one instead of writing another.
+        if app is not None and app.last_briefing_date != today_manila():
+            try:
+                from manabi_core.models import User
+
+                from manabi_server.api.assistant import ensure_briefing
+
+                user = (
+                    await db.execute(select(User).order_by(User.id).limit(1))
+                ).scalar_one_or_none()
+                if user is not None:
+                    out = await ensure_briefing(db, user)
+                    log.info("daily letter queued (job %s)", out.job_id)
+            except Exception:  # noqa: BLE001 — the letter must never kill the tick
+                await db.rollback()
+                log.exception("daily letter failed")
 
         # 2d. purge long-deleted documents (and the files nothing else frees)
         try:
