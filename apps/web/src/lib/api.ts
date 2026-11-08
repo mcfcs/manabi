@@ -377,6 +377,8 @@ export interface SettingsOut {
   canvas_token_source: "settings" | "env" | null;
   /** Last characters of the Settings token (the token itself never leaves the server) */
   canvas_token_tail: string | null;
+  /** Start of a Canvas outage (over an hour) that Backfill hasn't caught up yet */
+  canvas_backfill_since: string | null;
   chat_autovoice: boolean;
   general_chat_model: string | null;
   /** Blur every grade figure until it is clicked */

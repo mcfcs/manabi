@@ -4,11 +4,11 @@ validation + ingestion path as manual uploads."""
 
 import asyncio
 from collections.abc import Awaitable, Iterable
-from datetime import datetime
+from datetime import UTC, datetime, timedelta
 
 import httpx
 from fastapi import APIRouter, Depends, HTTPException
-from manabi_core.models import Course, Module, User
+from manabi_core.models import AppSettings, Course, Module, User
 from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -314,9 +314,14 @@ def _html_to_text(html_text: str) -> str:
 
 
 async def fetch_announcements(
-    db: AsyncSession, user_id: int, course_id: int | None = None, limit: int = 5
+    db: AsyncSession,
+    user_id: int,
+    course_id: int | None = None,
+    limit: int = 5,
+    since: datetime | None = None,
 ) -> list[AnnouncementOut]:
-    """Shared fetch core — used by the API route and the scheduler poll."""
+    """Shared fetch core — used by the API route, the scheduler poll and
+    Backfill. Without `since` Canvas answers for the last 14 days only."""
     query = select(Course).where(
         Course.user_id == user_id,
         Course.archived_at.is_(None),
@@ -329,13 +334,12 @@ async def fetch_announcements(
         return []
     by_context = {f"course_{c.canvas_course_id}": c for c in courses}
 
-    data = await _canvas_get_all(
-        "/announcements",
-        {
-            "context_codes[]": list(by_context.keys()),
-            "active_only": "true",
-        },
-    )
+    params: dict = {"context_codes[]": list(by_context.keys()), "active_only": "true"}
+    if since is not None:
+        # end_date defaults to start_date + 28 days: a longer gap needs it set.
+        params["start_date"] = since.astimezone(UTC).isoformat()
+        params["end_date"] = (datetime.now(UTC) + timedelta(days=1)).isoformat()
+    data = await _canvas_get_all("/announcements", params)
     out: list[AnnouncementOut] = []
     for a in data:
         if not isinstance(a, dict) or not a.get("id"):
@@ -357,7 +361,7 @@ async def fetch_announcements(
             )
         )
     out.sort(key=lambda x: x.posted_at or "", reverse=True)
-    return out[: max(1, min(limit, 20))]
+    return out[: max(1, min(limit, 100))]
 
 
 @router.get("/announcements")
@@ -369,6 +373,45 @@ async def canvas_announcements(
 ) -> list[AnnouncementOut]:
     """Latest announcements across all Canvas-linked courses (or one)."""
     return await fetch_announcements(db, user.id, course_id, limit)
+
+
+class BackfillOut(BaseModel):
+    since: datetime | None  # start of the gap that was caught up
+    tasks: dict  # sync_canvas_tasks counts
+    announcements: list[AnnouncementOut]  # posted since `since`
+    notified: int  # of those, how many the poll had never pushed
+
+
+@router.post("/backfill", dependencies=[Depends(require_csrf)])
+async def canvas_backfill(
+    user: User = Depends(get_default_user), db: AsyncSession = Depends(get_db)
+) -> BackfillOut:
+    """Catch up on what Canvas couldn't be asked while it was out of reach: the
+    task + grade sync now (instead of on the next tick), and every
+    announcement posted since the gap began, with one push for those never
+    sent. Read-only toward Canvas like everything else."""
+    from manabi_server.api.tasks import sync_canvas_tasks
+    from manabi_server.services.canvas_backfill import backfill_push, missed_announcements
+    from manabi_server.services.push import send_to_all
+
+    app = await db.get(AppSettings, 1)
+    # Captured first: a good sync advances canvas_last_synced_at.
+    since = (app.canvas_backfill_since or app.canvas_last_synced_at) if app else None
+    tasks_result = await sync_canvas_tasks(db, user)  # a dead token fails here, gap kept
+    anns = await fetch_announcements(db, user.id, limit=100, since=since) if since else []
+    app = await db.get(AppSettings, 1)
+    notified = 0
+    if app is not None:
+        missed = missed_announcements(anns, app.last_announcement_id)
+        payload = backfill_push(missed)
+        if payload is not None:
+            await send_to_all(db, payload)
+            notified = len(missed)
+        if anns:
+            app.last_announcement_id = max(app.last_announcement_id or 0, *(a.id for a in anns))
+        app.canvas_backfill_since = None
+        await db.commit()
+    return BackfillOut(since=since, tasks=tasks_result, announcements=anns, notified=notified)
 
 
 IMPORTABLE_TYPES = (

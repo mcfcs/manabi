@@ -241,6 +241,8 @@ async def sync_canvas_tasks(db: AsyncSession, user: User) -> dict:
     Used by the endpoint AND the scheduler's auto-sync — the last-synced
     timestamp (advances only on success) and last error are recorded here
     so both paths share one bookkeeping code path."""
+    from manabi_server.services.canvas_backfill import mark_outage, settle_after_sync
+
     try:
         result = await _sync_canvas_tasks_inner(db, user)
     except Exception as exc:
@@ -248,12 +250,14 @@ async def sync_canvas_tasks(db: AsyncSession, user: User) -> dict:
         app = await db.get(AppSettings, 1)
         if app is not None:
             app.canvas_last_error = canvas_error_text(exc)[:500]
+            mark_outage(app)
             await db.commit()
         raise
     app = await db.get(AppSettings, 1)
     if app is not None:
         app.canvas_last_synced_at = datetime.now(UTC)
         app.canvas_last_error = None
+        settle_after_sync(app, app.canvas_last_synced_at)
         await db.commit()
     return result
 

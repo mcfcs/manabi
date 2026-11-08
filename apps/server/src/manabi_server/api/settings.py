@@ -1,6 +1,6 @@
 """App settings (single row): semester window, Google ICS feed, reminders."""
 
-from datetime import date, datetime
+from datetime import UTC, date, datetime
 
 from fastapi import APIRouter, Depends
 from manabi_core.models import AppSettings, GcalEvent
@@ -12,6 +12,7 @@ from manabi_server.api import canvas
 from manabi_server.config import get_settings
 from manabi_server.db import get_db
 from manabi_server.security import require_csrf
+from manabi_server.services.canvas_backfill import backfill_due, mark_outage
 
 router = APIRouter(prefix="/api/settings", tags=["settings"])
 
@@ -30,6 +31,8 @@ class SettingsOut(BaseModel):
     canvas_last_error: str | None
     canvas_token_source: str | None  # 'settings' | 'env' | None (no token)
     canvas_token_tail: str | None  # last chars of the Settings token — it is a secret
+    # Start of a Canvas outage over an hour long that Backfill hasn't caught up
+    canvas_backfill_since: datetime | None
     chat_autovoice: bool
     general_chat_model: str | None  # Ollama model for the general assistant
     narration_enabled: bool  # Steven narrates readings (auto-recorded after parsing)
@@ -71,6 +74,9 @@ def _out(row: AppSettings) -> SettingsOut:
         canvas_last_error=row.canvas_last_error,
         canvas_token_source=canvas.canvas_token_source(),
         canvas_token_tail=f"…{row.canvas_access_token[-4:]}" if row.canvas_access_token else None,
+        canvas_backfill_since=row.canvas_backfill_since
+        if backfill_due(row.canvas_backfill_since, datetime.now(UTC))
+        else None,
         chat_autovoice=row.chat_autovoice,
         general_chat_model=row.general_chat_model,
         narration_enabled=row.narration_enabled,
@@ -91,6 +97,8 @@ async def patch_settings(data: SettingsPatch, db: AsyncSession = Depends(get_db)
         if token:
             await canvas.check_canvas_token(token)  # refused here, not on every sync
         row.canvas_access_token = token or None
+        if row.canvas_last_error:
+            mark_outage(row)  # the scheduler's next good sync must not erase the gap
         row.canvas_last_error = None
     if data.semester_start is not None:
         row.semester_start = data.semester_start

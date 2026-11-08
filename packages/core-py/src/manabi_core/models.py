@@ -965,6 +965,9 @@ class AppSettings(Base):
     # Canvas token pasted in Settings; wins over .env. NULL = use .env. Never
     # sent to the browser (Settings shows the last four characters).
     canvas_access_token: Mapped[str | None] = mapped_column(Text)
+    # Last good sync before Canvas calls started failing; cleared by Backfill
+    # (or by the next good sync when the gap was under an hour). NULL = none owed.
+    canvas_backfill_since: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     # Auto-play Steven's voice for chat replies (default off; per-device toggle
     # in the chat UI overrides this for the session).
     chat_autovoice: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)

@@ -124,6 +124,7 @@ export function SettingsDialog({ onClose }: { onClose: () => void }) {
   const [semEnd, setSemEnd] = useState("");
   const [gcalUrl, setGcalUrl] = useState("");
   const [canvasToken, setCanvasToken] = useState("");
+  const [backfillNote, setBackfillNote] = useState<string | null>(null);
   const [pushState, setPushState] = useState<PushState | null>(null);
   const [pushNote, setPushNote] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -166,6 +167,29 @@ export function SettingsDialog({ onClose }: { onClose: () => void }) {
     onSuccess: (data) => {
       queryClient.setQueryData(["settings"], data);
       setCanvasToken("");
+    },
+  });
+
+  const backfill = useMutation({
+    mutationFn: () =>
+      api.post<{
+        tasks: { created: number; closed?: number; reopened?: number; grades_updated?: number };
+        announcements: unknown[];
+        notified: number;
+      }>("/api/canvas/backfill"),
+    onSuccess: (r) => {
+      const parts = [
+        `${r.tasks.created} new task${r.tasks.created === 1 ? "" : "s"}`,
+        r.tasks.closed ? `${r.tasks.closed} marked submitted` : "",
+        r.tasks.reopened ? `${r.tasks.reopened} reopened` : "",
+        r.tasks.grades_updated ? `${r.tasks.grades_updated} grades updated` : "",
+        `${r.announcements.length} announcement${r.announcements.length === 1 ? "" : "s"}` +
+          (r.notified ? ` (${r.notified} sent as a notification)` : ""),
+      ].filter(Boolean);
+      setBackfillNote(`Caught up: ${parts.join(", ")}.`);
+      for (const key of ["settings", "tasks", "announcements", "grades", "grades-overview"]) {
+        queryClient.invalidateQueries({ queryKey: [key] });
+      }
     },
   });
 
@@ -321,6 +345,41 @@ export function SettingsDialog({ onClose }: { onClose: () => void }) {
             {saveToken.error instanceof ApiError ? saveToken.error.message : "Couldn't save the token"}
           </p>
         )}
+        {s?.canvas_backfill_since && (
+          <>
+            <p className="settings-hint">
+              Canvas couldn't be read after{" "}
+              <b>
+                {new Date(s.canvas_backfill_since).toLocaleString(undefined, {
+                  month: "short",
+                  day: "numeric",
+                  hour: "numeric",
+                  minute: "2-digit",
+                })}
+              </b>
+              . Backfill syncs assignments and grades now and fetches every announcement
+              posted since then (one notification for the ones you never got).
+            </p>
+            <div className="settings-push-row">
+              <button
+                className="btn"
+                disabled={backfill.isPending}
+                onClick={() => {
+                  setBackfillNote(null);
+                  backfill.mutate();
+                }}
+              >
+                {backfill.isPending && <Loader2 size={14} className="spin" />} Backfill
+              </button>
+            </div>
+          </>
+        )}
+        {backfill.isError && (
+          <p className="error-text">
+            {backfill.error instanceof ApiError ? backfill.error.message : "Backfill failed"}
+          </p>
+        )}
+        {backfillNote && <p className="settings-hint">{backfillNote}</p>}
 
         <h3 className="settings-heading">Notifications</h3>
         <p className="settings-hint">

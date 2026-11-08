@@ -125,6 +125,23 @@ async def test_a_refused_token_is_not_saved(canvas_configured, monkeypatch, resp
     assert canvas._canvas_config()[1] == "test-token"  # override untouched
 
 
+async def test_a_new_token_over_a_failing_sync_keeps_the_gap_for_backfill(
+    canvas_configured, monkeypatch
+):
+    from datetime import UTC, datetime, timedelta
+
+    _canvas_answers(monkeypatch, httpx.Response(200, json={"id": 1}))
+    last_good = datetime(2026, 11, 6, 15, 56, 56, tzinfo=UTC)
+    row = _row(canvas_last_synced_at=last_good, canvas_last_error="Canvas token expired")
+    out = await settings_api.patch_settings(
+        settings_api.SettingsPatch(canvas_access_token="new-token"), db=FakeDB(row)
+    )
+    assert row.canvas_backfill_since == last_good and out.canvas_backfill_since == last_good
+
+    recent = _row(canvas_backfill_since=datetime.now(UTC) - timedelta(minutes=20))
+    assert settings_api._out(recent).canvas_backfill_since is None  # under an hour: no button
+
+
 async def test_clearing_the_token_falls_back_to_env(canvas_configured):
     canvas.set_token_override("pasted-token")
     row = _row(canvas_access_token="pasted-token")
