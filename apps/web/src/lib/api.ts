@@ -373,6 +373,10 @@ export interface SettingsOut {
   push_configured: boolean;
   canvas_last_synced_at: string | null;
   canvas_last_error: string | null;
+  /** Which token Canvas calls use: pasted in Settings, from .env, or none */
+  canvas_token_source: "settings" | "env" | null;
+  /** Last characters of the Settings token (the token itself never leaves the server) */
+  canvas_token_tail: string | null;
   chat_autovoice: boolean;
   general_chat_model: string | null;
   /** Blur every grade figure until it is clicked */

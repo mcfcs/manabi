@@ -962,6 +962,9 @@ class AppSettings(Base):
     last_announcement_id: Mapped[int | None] = mapped_column(BigInteger)
     canvas_last_synced_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     canvas_last_error: Mapped[str | None] = mapped_column(Text)
+    # Canvas token pasted in Settings; wins over .env. NULL = use .env. Never
+    # sent to the browser (Settings shows the last four characters).
+    canvas_access_token: Mapped[str | None] = mapped_column(Text)
     # Auto-play Steven's voice for chat replies (default off; per-device toggle
     # in the chat UI overrides this for the session).
     chat_autovoice: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)

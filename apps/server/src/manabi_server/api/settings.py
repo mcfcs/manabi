@@ -8,6 +8,7 @@ from pydantic import BaseModel
 from sqlalchemy import delete
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from manabi_server.api import canvas
 from manabi_server.config import get_settings
 from manabi_server.db import get_db
 from manabi_server.security import require_csrf
@@ -27,6 +28,8 @@ class SettingsOut(BaseModel):
     push_configured: bool  # VAPID keys present in .env
     canvas_last_synced_at: datetime | None
     canvas_last_error: str | None
+    canvas_token_source: str | None  # 'settings' | 'env' | None (no token)
+    canvas_token_tail: str | None  # last chars of the Settings token — it is a secret
     chat_autovoice: bool
     general_chat_model: str | None  # Ollama model for the general assistant
     narration_enabled: bool  # Steven narrates readings (auto-recorded after parsing)
@@ -37,6 +40,7 @@ class SettingsPatch(BaseModel):
     semester_start: date | None = None
     semester_end: date | None = None
     gcal_ics_url: str | None = None  # "" clears the feed
+    canvas_access_token: str | None = None  # "" clears (→ the .env token)
     class_reminders: bool | None = None
     chat_autovoice: bool | None = None
     general_chat_model: str | None = None  # "" clears (→ default model)
@@ -65,6 +69,8 @@ def _out(row: AppSettings) -> SettingsOut:
         push_configured=bool(env.vapid_public_key and env.vapid_private_key),
         canvas_last_synced_at=row.canvas_last_synced_at,
         canvas_last_error=row.canvas_last_error,
+        canvas_token_source=canvas.canvas_token_source(),
+        canvas_token_tail=f"…{row.canvas_access_token[-4:]}" if row.canvas_access_token else None,
         chat_autovoice=row.chat_autovoice,
         general_chat_model=row.general_chat_model,
         narration_enabled=row.narration_enabled,
@@ -80,6 +86,12 @@ async def read_settings(db: AsyncSession = Depends(get_db)) -> SettingsOut:
 @router.patch("", dependencies=[Depends(require_csrf)])
 async def patch_settings(data: SettingsPatch, db: AsyncSession = Depends(get_db)) -> SettingsOut:
     row = await get_app_settings(db)
+    if data.canvas_access_token is not None:
+        token = data.canvas_access_token.strip()
+        if token:
+            await canvas.check_canvas_token(token)  # refused here, not on every sync
+        row.canvas_access_token = token or None
+        row.canvas_last_error = None
     if data.semester_start is not None:
         row.semester_start = data.semester_start
     if data.semester_end is not None:
@@ -102,4 +114,6 @@ async def patch_settings(data: SettingsPatch, db: AsyncSession = Depends(get_db)
         if not url:
             await db.execute(delete(GcalEvent))
     await db.commit()
+    if data.canvas_access_token is not None:
+        canvas.set_token_override(row.canvas_access_token)  # only once it is saved
     return _out(row)

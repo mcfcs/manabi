@@ -52,10 +52,15 @@ from manabi_server.config import get_settings
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    from manabi_core.models import AppSettings
+
     from manabi_server import db as db_mod
     from manabi_server.services.scheduler import run_scheduler
 
     db_mod.get_engine()
+    async with db_mod._sessionmaker() as db:
+        row = await db.get(AppSettings, 1)
+        canvas.set_token_override(row.canvas_access_token if row else None)
     task = asyncio.create_task(run_scheduler(db_mod._sessionmaker))
     yield
     task.cancel()

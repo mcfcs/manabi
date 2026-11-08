@@ -123,6 +123,7 @@ export function SettingsDialog({ onClose }: { onClose: () => void }) {
   const [semStart, setSemStart] = useState("");
   const [semEnd, setSemEnd] = useState("");
   const [gcalUrl, setGcalUrl] = useState("");
+  const [canvasToken, setCanvasToken] = useState("");
   const [pushState, setPushState] = useState<PushState | null>(null);
   const [pushNote, setPushNote] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -154,6 +155,17 @@ export function SettingsDialog({ onClose }: { onClose: () => void }) {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["settings"] });
       queryClient.invalidateQueries({ queryKey: ["calendar"] });
+    },
+  });
+
+  // Its own mutation so a refused token is reported next to the field, not at
+  // the bottom of a long dialog.
+  const saveToken = useMutation({
+    mutationFn: (token: string) =>
+      api.patch<SettingsOut>("/api/settings", { canvas_access_token: token }),
+    onSuccess: (data) => {
+      queryClient.setQueryData(["settings"], data);
+      setCanvasToken("");
     },
   });
 
@@ -255,17 +267,60 @@ export function SettingsDialog({ onClose }: { onClose: () => void }) {
           )}
         </div>
 
-        <h3 className="settings-heading">Canvas tasks</h3>
+        <h3 className="settings-heading">Canvas</h3>
         <p className="settings-hint">
-          Assignments auto-sync every 10 minutes.
+          Assignments and grades auto-sync every 10 minutes.
           {" Last sync "}
           {s?.canvas_last_synced_at
-            ? new Date(s.canvas_last_synced_at).toLocaleTimeString()
+            ? new Date(s.canvas_last_synced_at).toLocaleString(undefined, {
+                month: "short",
+                day: "numeric",
+                hour: "numeric",
+                minute: "2-digit",
+              })
             : "never"}
           {s?.canvas_last_error && (
             <span className="error-text"> — {s.canvas_last_error}</span>
           )}
         </p>
+        <p className="settings-hint">
+          {s?.canvas_token_source === "settings" && `Using the token saved here (${s.canvas_token_tail}). `}
+          {s?.canvas_token_source === "env" && "Using the token from .env. "}
+          {s?.canvas_token_source === null && "No access token yet. "}
+          Make a new one in Canvas → Account → Settings → <b>New Access Token</b>.
+          It's checked with Canvas before it's saved and only used to read.
+        </p>
+        <div className="settings-gcal-row">
+          <input
+            type="password"
+            className="input"
+            placeholder="Canvas access token"
+            autoComplete="off"
+            value={canvasToken}
+            onChange={(e) => setCanvasToken(e.target.value)}
+          />
+          <button
+            className="btn"
+            disabled={!canvasToken.trim() || saveToken.isPending}
+            onClick={() => saveToken.mutate(canvasToken.trim())}
+          >
+            {saveToken.isPending ? <Loader2 size={14} className="spin" /> : "Save token"}
+          </button>
+          {s?.canvas_token_source === "settings" && (
+            <button
+              className="btn"
+              disabled={saveToken.isPending}
+              onClick={() => saveToken.mutate("")}
+            >
+              Use .env token
+            </button>
+          )}
+        </div>
+        {saveToken.isError && (
+          <p className="error-text">
+            {saveToken.error instanceof ApiError ? saveToken.error.message : "Couldn't save the token"}
+          </p>
+        )}
 
         <h3 className="settings-heading">Notifications</h3>
         <p className="settings-hint">

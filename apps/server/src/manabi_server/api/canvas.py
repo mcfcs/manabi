@@ -4,6 +4,7 @@ validation + ingestion path as manual uploads."""
 
 import asyncio
 from collections.abc import Awaitable, Iterable
+from datetime import datetime
 
 import httpx
 from fastapi import APIRouter, Depends, HTTPException
@@ -18,6 +19,7 @@ from manabi_server.config import get_settings
 from manabi_server.db import get_db
 from manabi_server.security import get_default_user, require_csrf
 from manabi_server.services.canvas_ingest import import_html_as_document
+from manabi_server.timeutil import to_manila
 
 router = APIRouter(prefix="/api/canvas", tags=["canvas"])
 
@@ -43,25 +45,68 @@ class ImportIn(BaseModel):
     extract_text: bool = True
 
 
+# A token pasted in Settings (app_settings.canvas_access_token) wins over the
+# .env one. Cached here because _canvas_config is sync and runs on every call:
+# the lifespan loads it and the settings PATCH replaces it.
+_token_override: str | None = None
+
+
+def set_token_override(token: str | None) -> None:
+    global _token_override
+    _token_override = token or None
+
+
+def canvas_token_source() -> str | None:
+    """'settings' | 'env' | None — which token Canvas calls use."""
+    if _token_override:
+        return "settings"
+    return "env" if get_settings().canvas_access_token else None
+
+
+def _canvas_base() -> str:
+    base = get_settings().canvas_base_url.rstrip("/")
+    if not base:
+        raise HTTPException(
+            status_code=409, detail="Canvas is not configured — set CANVAS_BASE_URL in .env"
+        )
+    return base
+
+
 def _canvas_config() -> tuple[str, str]:
-    settings = get_settings()
-    if not settings.canvas_base_url or not settings.canvas_access_token:
+    base = _canvas_base()
+    token = _token_override or get_settings().canvas_access_token
+    if not token:
         raise HTTPException(
             status_code=409,
-            detail="Canvas is not configured — set CANVAS_BASE_URL and "
-            "CANVAS_ACCESS_TOKEN in .env",
+            detail="Canvas is not configured — paste an access token in Settings",
         )
-    return settings.canvas_base_url.rstrip("/"), settings.canvas_access_token
+    return base, token
+
+
+def _expired_at(r: httpx.Response) -> datetime | None:
+    """Canvas's 401 for an expired token carries the moment:
+    {"errors":[{"message":"Expired access token.","expired_at":"…Z"}]}."""
+    try:
+        errors = r.json().get("errors") or []
+        raw = errors[0].get("expired_at") if errors else None
+        return datetime.fromisoformat(raw.replace("Z", "+00:00")) if raw else None
+    except (ValueError, AttributeError, TypeError):
+        return None
+
+
+def _auth_detail(expired_at: datetime | None) -> str:
+    if expired_at is None:
+        return "Canvas rejected the token — it may have expired"
+    at = to_manila(expired_at)
+    return f"Canvas token expired {at:%b} {at.day}, {at:%H:%M} — paste a new one in Settings"
 
 
 class CanvasAuthError(HTTPException):
     """Canvas rejected the token. Distinct from a per-tab 403 so _safe_get_all
     can swallow the latter and never the former."""
 
-    def __init__(self) -> None:
-        super().__init__(
-            status_code=502, detail="Canvas rejected the token — it may have expired"
-        )
+    def __init__(self, expired_at: datetime | None = None) -> None:
+        super().__init__(status_code=502, detail=_auth_detail(expired_at))
 
 
 class CanvasRateLimited(HTTPException):
@@ -166,12 +211,39 @@ async def _request(url: str, params: dict | None) -> httpx.Response:
             raise CanvasRateLimited()
         await asyncio.sleep(delay)
     if r.status_code == 401:
-        raise CanvasAuthError()
+        raise CanvasAuthError(_expired_at(r))
     if r.status_code >= 400:
         raise HTTPException(
             status_code=502, detail=f"Canvas error {r.status_code}: {r.text[:150]}"
         )
     return r
+
+
+async def check_canvas_token(token: str) -> None:
+    """Ask Canvas who the token belongs to before saving it, so a mistyped or
+    already-expired token is refused in Settings instead of failing every sync."""
+    try:
+        async with httpx.AsyncClient(
+            base_url=f"{_canvas_base()}/api/v1",
+            event_hooks={"request": [_read_only]},
+            headers={"Authorization": f"Bearer {token}"},
+            timeout=httpx.Timeout(20, connect=5),
+        ) as client:
+            r = await client.get("/users/self")
+    except httpx.HTTPError as exc:
+        raise HTTPException(
+            status_code=502, detail=f"Couldn't reach Canvas ({type(exc).__name__})"
+        ) from None
+    if r.status_code == 401:
+        expired = _expired_at(r)
+        raise HTTPException(
+            status_code=422,
+            detail="Canvas says this token expired"
+            if expired
+            else "Canvas rejected this token — check it was copied whole",
+        )
+    if r.status_code >= 400:
+        raise HTTPException(status_code=502, detail=f"Canvas error {r.status_code}")
 
 
 
