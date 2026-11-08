@@ -126,6 +126,10 @@ Workers cache settings — restart them after `.env` edits.
 
 ## Development
 
+> **AI coding agents:** follow [AGENTS.md](AGENTS.md) and [RULES.md](RULES.md) instead
+> of the manual commands below — services are (re)started only via `start-manabi.bat`,
+> and UI changes are tested with the `playwright-cli` skill ([docs/testing.md](docs/testing.md)).
+
 ```bash
 uv run --package manabi-server uvicorn manabi_server.main:app --reload --port 56690
 pnpm --filter web dev        # Vite on :5173, proxies /api to :56690

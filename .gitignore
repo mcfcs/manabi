@@ -29,6 +29,8 @@ Thumbs.db
 .idea/
 .vscode/
 /apps/web/shots
+# playwright-cli session snapshots / traces (agent UI testing)
+.playwright-cli/
 /StevenSound
 Benedict Kerkvliet - Everyday Politics in the Philippines, Introduction (Chapter 1) (1)_compressed.pdf
 /profile
