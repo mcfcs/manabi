@@ -66,3 +66,23 @@ GPU-worker window.
 `start-manabi.bat` health-checks the port and kills any process that
 listens on 56690 but does not answer `/api/health`. If the API window
 disappears but the port stays busy, just run the bat again.
+
+## Canvas token expired
+
+Symptom: Settings → Canvas (and Tasks) show "Canvas token expired <date> —
+paste a new one in Settings"; tasks, grades and announcement pushes stop.
+
+1. In Canvas: Account → Settings → **New Access Token** (copy it whole).
+2. Manabi Settings → Canvas → paste → **Save token**. It is checked with
+   Canvas (`GET /users/self`) first; a refused token is not saved. It is
+   stored in `app_settings.canvas_access_token` and wins over `.env`
+   (**Use .env token** clears it). No redeploy needed.
+3. Press **Backfill** (shown while an outage over an hour is owed): syncs
+   tasks + grades now and re-reads every announcement since the last good
+   sync, with one push for the ones never sent. The gap start is kept in
+   `app_settings.canvas_backfill_since`, so the scheduler's own recovery sync
+   doesn't erase it.
+
+Every Canvas call taking ~20 s and failing (an empty or `PoolTimeout` error)
+means the shared client's connection pool was exhausted — fixed in 818da21;
+the client now resets itself on a pool timeout.
