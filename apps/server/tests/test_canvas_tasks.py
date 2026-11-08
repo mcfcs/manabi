@@ -361,6 +361,63 @@ async def test_gather_limited_caps_concurrency_and_keeps_order():
     assert peak == 3
 
 
+async def test_a_cancelled_caller_never_cancels_the_http_request(monkeypatch):
+    # The live API sat on PoolTimeout for two days (stored as an empty error):
+    # Canvas calls cancelled mid-flight (gather_limited cancels the rest when one
+    # course fails) left their connections ACTIVE in httpcore's pool over TLS
+    # until all eight were gone. The request must run to completion instead.
+    import asyncio
+
+    seen = []
+
+    class SlowClient:
+        async def get(self, url, params=None):
+            try:
+                await asyncio.sleep(0.1)
+            except asyncio.CancelledError:
+                seen.append("cancelled")
+                raise
+            seen.append("finished")
+            return httpx.Response(200, json=[])
+
+    monkeypatch.setattr(canvas, "_get_client", lambda: SlowClient())
+    caller = asyncio.ensure_future(canvas._request("/x", None))
+    await asyncio.sleep(0.02)
+    caller.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await caller
+    await asyncio.sleep(0.15)
+    assert seen == ["finished"]
+
+
+async def test_an_exhausted_pool_resets_the_client(monkeypatch):
+    closed = []
+
+    class StuckClient:
+        is_closed = False
+
+        async def get(self, url, params=None):
+            raise httpx.PoolTimeout("")
+
+        async def aclose(self):
+            closed.append(True)
+
+    stuck = StuckClient()
+    monkeypatch.setattr(canvas, "_client", stuck)
+    monkeypatch.setattr(canvas, "_get_client", lambda: stuck)
+    with pytest.raises(canvas.HTTPException) as exc:
+        await canvas._request("/x", None)
+    assert exc.value.status_code == 503 and closed == [True]
+    assert canvas._client is None  # the next call builds a fresh pool
+
+
+def test_canvas_error_text_is_never_blank():
+    assert tasks.canvas_error_text(httpx.PoolTimeout("")) == "PoolTimeout"
+    assert tasks.canvas_error_text(canvas.CanvasRateLimited()) == (
+        "Canvas is rate-limiting requests — try again shortly"
+    )
+
+
 async def test_canvas_is_read_only(canvas_configured):
     # Owner's rule: Manabi never writes to Canvas. Enforced on the client.
     try:

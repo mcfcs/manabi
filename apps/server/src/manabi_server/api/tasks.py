@@ -225,6 +225,14 @@ def apply_canvas_done(task: StudyTask, a: dict, now: datetime) -> str | None:
     return None
 
 
+def canvas_error_text(exc: Exception) -> str:
+    """What Settings shows for a failed sync. httpx timeouts stringify to ""
+    (the PoolTimeout outage was recorded as a blank error for two days)."""
+    if isinstance(exc, HTTPException):
+        return str(exc.detail)
+    return str(exc) or type(exc).__name__
+
+
 async def sync_canvas_tasks(db: AsyncSession, user: User) -> dict:
     """Pull every assignment (with the student's submission) from every
     Canvas-linked course. Canvas stays the source of truth for its own items:
@@ -239,7 +247,7 @@ async def sync_canvas_tasks(db: AsyncSession, user: User) -> dict:
         await db.rollback()
         app = await db.get(AppSettings, 1)
         if app is not None:
-            app.canvas_last_error = str(exc)[:500]
+            app.canvas_last_error = canvas_error_text(exc)[:500]
             await db.commit()
         raise
     app = await db.get(AppSettings, 1)

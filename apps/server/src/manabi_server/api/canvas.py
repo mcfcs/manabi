@@ -126,12 +126,40 @@ def _is_rate_limited(r: httpx.Response) -> bool:
     return r.status_code == 403 and "rate limit exceeded" in r.text.lower()
 
 
+def _drain(task: asyncio.Task) -> None:
+    if not task.cancelled():
+        task.exception()  # retrieved: a failed orphan is not an asyncio warning
+
+
+async def _get_uncancelled(client: httpx.AsyncClient, url: str, params: dict | None):
+    """client.get that a cancelled caller cannot interrupt. Over TLS, httpcore
+    leaks a request cancelled mid-flight: its connection stays ACTIVE in the
+    pool for good. gather_limited cancels the other courses when one fails, so
+    two days of 401s used up all eight and every Canvas call then sat out the
+    20 s pool timeout. The orphaned request finishes and frees its connection."""
+    task = asyncio.ensure_future(client.get(url, params=params))
+    try:
+        return await asyncio.shield(task)
+    except asyncio.CancelledError:
+        task.add_done_callback(_drain)
+        raise
+
+
 async def _request(url: str, params: dict | None) -> httpx.Response:
     """GET through the shared client; retries a rate-limited response after
     1 s, 2 s and 4 s, then raises CanvasRateLimited. Auth/other errors raise."""
     client = _get_client()
     for delay in (*_RATE_LIMIT_BACKOFF, None):
-        r = await client.get(url, params=params)
+        try:
+            r = await _get_uncancelled(client, url, params)
+        except httpx.PoolTimeout:
+            # Connections are stuck in the pool (leaked before the fix above,
+            # or some path not yet known): start a fresh pool, not 20 s waits
+            # forever.
+            await aclose_canvas_client()
+            raise HTTPException(
+                status_code=503, detail="Canvas connections were stuck — reset; try again"
+            ) from None
         if not _is_rate_limited(r):
             break
         if delay is None:
