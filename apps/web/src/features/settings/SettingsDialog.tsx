@@ -5,6 +5,7 @@ import { Loader2 } from "lucide-react";
 
 import { Modal } from "../../components/Modal";
 import { api, type AiModelsOut, ApiError, type SettingsOut } from "../../lib/api";
+import { useSpritesAvailable, useStevenMode } from "../teacher/StevenSprite";
 import { NarrationBacklog } from "./NarrationBacklog";
 import {
   disablePush,
@@ -124,6 +125,8 @@ export function SettingsDialog({ onClose }: { onClose: () => void }) {
   const [semEnd, setSemEnd] = useState("");
   const [gcalUrl, setGcalUrl] = useState("");
   const [canvasToken, setCanvasToken] = useState("");
+  const sprites = useSpritesAvailable();
+  const [stevenMode, setStevenMode] = useStevenMode();
   const [backfillNote, setBackfillNote] = useState<string | null>(null);
   const [pushState, setPushState] = useState<PushState | null>(null);
   const [pushNote, setPushNote] = useState<string | null>(null);
@@ -500,6 +503,24 @@ export function SettingsDialog({ onClose }: { onClose: () => void }) {
           Blurs every percentage, letter and the QPI wherever they appear. Click a blurred
           figure to reveal just that one; it hides itself again on the next visit.
         </p>
+
+        {sprites !== false && (
+          <>
+            <h3 className="settings-heading">Teacher mode</h3>
+            <label className="event-weekly settings-reminders">
+              <input
+                type="checkbox"
+                checked={stevenMode}
+                onChange={(e) => setStevenMode(e.target.checked)}
+              />
+              Show Steven's pictures during lectures
+            </label>
+            <p className="settings-hint">
+              Off gives a text-only lecture; his voice still plays. Only applies on this
+              device, like the person button in a lecture's header.
+            </p>
+          </>
+        )}
 
         <h3 className="settings-heading">Readings</h3>
         <label className="event-weekly settings-reminders">

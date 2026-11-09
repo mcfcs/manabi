@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 
 import type { Face, Mouth, Pose } from "./spriteState";
 
@@ -55,25 +55,39 @@ export function useSpritesAvailable(): boolean | null {
 
 const MODE_KEY = "manabi-steven";
 
+function readStevenMode(): boolean {
+  try {
+    return localStorage.getItem(MODE_KEY) !== "0";
+  } catch {
+    return true;
+  }
+}
+
+// One value for the whole page: Settings and the lecture header both switch
+// it, and the open lecture behind the Settings dialog must follow at once.
+let stevenMode = readStevenMode();
+const modeSubs = new Set<() => void>();
+
+export function setStevenMode(on: boolean) {
+  try {
+    localStorage.setItem(MODE_KEY, on ? "1" : "0");
+  } catch {
+    // private mode: still applies for this visit
+  }
+  stevenMode = on;
+  modeSubs.forEach((cb) => cb());
+}
+
+function subscribeStevenMode(cb: () => void) {
+  modeSubs.add(cb);
+  return () => modeSubs.delete(cb);
+}
+
 /** Steven mode, per device: on unless switched off on this browser (a phone
  * can skip the sprites while the laptop keeps him). */
 export function useStevenMode(): [boolean, (on: boolean) => void] {
-  const [on, setOn] = useState(() => {
-    try {
-      return localStorage.getItem(MODE_KEY) !== "0";
-    } catch {
-      return true;
-    }
-  });
-  const set = (v: boolean) => {
-    try {
-      localStorage.setItem(MODE_KEY, v ? "1" : "0");
-    } catch {
-      // private mode: still applies for this visit
-    }
-    setOn(v);
-  };
-  return [on, set];
+  const on = useSyncExternalStore(subscribeStevenMode, () => stevenMode, () => true);
+  return [on, setStevenMode];
 }
 
 export function usePrefersReducedMotion(): boolean {
