@@ -123,10 +123,30 @@ Every change ships with evidence. Minimum per change:
 
 ## 8. Skills and tools
 
-- Installed globally (`~/.claude/skills`): `playwright-cli` (UI testing),
-  `evaluate-rag` and `write-judge-prompt` (RAG / LLM-output evaluation method,
-  guidance only).
-- Installing a new skill: read its SKILL.md first, reject anything that sends data
-  to third parties, then
+- **Use them.** When a task matches a row of the "Skills — which one when" table in
+  AGENTS.md, load that skill before starting the work. Where a skill disagrees with
+  these rules, these rules win (the overrides are listed under that table).
+- Project skills, tracked in `.claude/skills/`: `manabi-deploy` (RULES §3 as steps),
+  `manabi-generation-check` (docs/generation-checks.md + which skill at each step).
+  Keep them in sync when the bat or the procedure changes.
+- Installed user-wide (`~/.claude/skills`, lock: `~/.agents/.skill-lock.json`), all
+  reviewed as local guidance with no network calls:
+  - `microsoft/playwright-cli`: `playwright-cli` (UI testing).
+  - `ai-evals-course/evals-skills`: `evaluate-rag`, `write-judge-prompt`,
+    `write-code-eval`, `error-discovery`.
+  - `obra/superpowers`: `systematic-debugging`, `test-driven-development`,
+    `verification-before-completion`.
+  - `supabase/agent-skills`: `supabase-postgres-best-practices`.
+  - `vercel-labs/agent-skills`: `web-design-guidelines` — **pinned**: its SKILL.md
+    was edited to read a reviewed local `guidelines.md` instead of fetching its rules
+    from GitHub on every run. `npx skills update` reverts that; re-apply the pin.
+- Installing a new skill: read its SKILL.md and every bundled script first, reject
+  anything that sends data to third parties, needs a SaaS key, fetches its
+  instructions at run time unpinned, or has telemetry it can't disable, then
   `$env:DISABLE_TELEMETRY='1'; npx skills add <repo> --skill <name> -g -a claude-code -y`.
-  Install user-wide, not into the repo.
+  Install user-wide, not into the repo, and add it to the AGENTS.md table.
+- Considered and rejected (Nov 2026): superpowers `writing-plans` (worktrees, its
+  own commit style), mattpocock `tdd` (blocks on confirmations), the `fastapi` skill
+  (FastAPI Cloud / SQLModel advice), `react-doctor` (telemetry on by default),
+  `web-quality-audit` (PageSpeed/CrUX fallback sends URLs to Google), NVIDIA
+  `rag-eval` (API key), RAGAS-cloud / Arize / NotebookLM (send content out).

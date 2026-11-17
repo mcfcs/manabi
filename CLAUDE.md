@@ -13,8 +13,11 @@ Claude Code loads this file. The real instructions are shared with every other a
 - **Shells**: the PowerShell tool reaches the tailnet and Docker; the Bash tool is
   network-sandboxed. Use the Write/Edit tools for any file with backslashes,
   quotes or non-ASCII (see AGENTS.md gotchas).
-- **Skills**: `playwright-cli` for UI testing (docs/testing.md), `evaluate-rag` and
-  `write-judge-prompt` for RAG / LLM-output evaluation (docs/generation-checks.md).
+- **Skills**: before a task, check the "Skills — which one when" table in AGENTS.md
+  and load the matching skill with the Skill tool first — e.g. `manabi-deploy` after
+  any code commit, `systematic-debugging` before fixing a bug,
+  `verification-before-completion` before saying "done". RULES.md wins where a
+  skill disagrees (overrides under the table).
 - **Subagents**: use Explore for wide searches and general-purpose agents for
   research or parallel independent tasks; pass them RULES.md constraints and verify
   their results.

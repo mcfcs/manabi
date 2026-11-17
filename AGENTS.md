@@ -29,7 +29,7 @@ apps/server/        FastAPI API + CPU worker (Procrastinate "cpu" queue) + sched
     services/       scheduler.py (5-min ticks: push, gcal, canvas, letter),
                     narration.py, push.py, context.py …
     jobs/queue.py   task names + defer helpers
-  alembic/versions/ migrations (0001 … 0048)
+  alembic/versions/ migrations (0001 … 0050)
   tests/            pytest (also tests ai-worker modules via sys.path)
 apps/ai-worker/     GPU worker (Procrastinate "gpu" queue) — LLM + TTS tasks
   src/manabi_ai/
@@ -139,3 +139,47 @@ cmd /c "c:\Users\Gio\Documents\GitHub\manabi\start-manabi.bat --quiet"
 | Push, reminders, daily letter | `services/scheduler.py`, `api/assistant.py` |
 | Calendar semantics (sync/async marks) | `web/src/features/calendar/CalendarPage.tsx` (`meetingMode`), `scheduler.class_mode` |
 | Retrieval / RAG | `packages/core-py/src/manabi_core/retrieval.py`, `api/chat.py` |
+
+## Skills — which one when
+
+Agent skills hold procedures; load the matching one **before** starting the task
+(Claude Code: the Skill tool; other agents: read its `SKILL.md`). Project skills are
+tracked in `.claude/skills/`; the rest are installed user-wide in `~/.claude/skills`
+(sources and vetting in RULES.md §8). Where a skill and this repo's rules disagree,
+**RULES.md wins** — the overrides are listed below the table.
+
+| When | Skill |
+|---|---|
+| Any change to server, worker, core or web code is committed; "restart / redeploy" | `manabi-deploy` (project) |
+| Auditing a reading's summary / quiz / cards / lecture / narration; a generated output reported wrong; after touching prompts, validators, quizplan, extraction | `manabi-generation-check` (project) |
+| A bug, failing test or unexpected behaviour — before proposing a fix | `systematic-debugging` |
+| Implementing a feature or bug fix (write the failing test first) | `test-driven-development` |
+| About to say "done / fixed / passing", commit, or report to Gio | `verification-before-completion` |
+| Schema, Alembic migration, index, query, pool/locking or slow-query work | `supabase-postgres-best-practices` |
+| Reviewing UI code for accessibility, focus, touch, safe areas, theming | `web-design-guidelines` |
+| Checking anything a user sees in the real app | `playwright-cli` (recipes: docs/testing.md) |
+| Reviewing many generated outputs to find failure modes | `error-discovery` |
+| Turning a failure mode into a deterministic check (validators.py / quizplan.py) | `write-code-eval` |
+| A failure mode only interpretation can judge (LLM judge) | `write-judge-prompt` |
+| Retrieval quality (MRR / Recall@k) | `evaluate-rag` |
+| Visual redesign work | `frontend-design` (built in) — taste skills only if Gio asks for that style |
+
+Overrides for this repo:
+
+- **superpowers skills** (`systematic-debugging`, `test-driven-development`,
+  `verification-before-completion`): ignore their mentions of PRs, branches,
+  worktrees and other superpowers skills — commit straight to `main`, no attribution
+  (RULES §2). A regression test written after the fix counts when it is proven to
+  fail with the fix stashed (RULES §4). Generated-content and prompt work follow
+  `manabi-generation-check`, not TDD. `find-polluter.sh` is npm-only; for pytest,
+  bisect by running test files alone.
+- **`supabase-postgres-best-practices`**: plain Postgres 16 + pgvector — skip RLS,
+  auth and Supabase-platform advice (no auth here; the tailnet is the boundary).
+  Schema changes are numbered Alembic files + `models.py`.
+- **`web-design-guidelines`**: uses a pinned local copy of its rules (no fetching).
+  Skip its "Content & Copy" style rules (Title Case, avoid first person) — copy is
+  plain, in Gio's voice; skip "Hydration Safety" and `nuqs` (Vite SPA, no SSR);
+  Tailwind class names in it map to plain CSS here.
+- **`error-discovery`**: its review server binds to `127.0.0.1` only, loads no CDN
+  scripts, lives in the scratchpad and is never committed — course content stays on
+  this machine (RULES §6).
