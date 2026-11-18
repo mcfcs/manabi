@@ -3,14 +3,18 @@
 GET  /api/documents/{id}/narration          status, segments, readiness
 POST /api/documents/{id}/narration/prepare  (re)build the script and queue synthesis
 GET  /api/narration/segments/{id}/audio     one segment's MP3
+GET  /api/documents/{id}/narration/download the whole reading as one MP3
 DELETE /api/documents/{id}/narration
 """
 
 from __future__ import annotations
 
 import asyncio
+import unicodedata
+from urllib.parse import quote
 
 from fastapi import APIRouter, Depends, HTTPException, Response
+from fastapi.responses import FileResponse
 from manabi_core.models import (
     Course,
     Document,
@@ -43,6 +47,12 @@ from manabi_server.services.narration import (
     narratable,
     segment_rows,
 )
+from manabi_server.services.narration_export import (
+    NarrationNotReady,
+    download_filename,
+    ensure_mp3,
+)
+from manabi_server.storage import files
 
 router = APIRouter(prefix="/api", tags=["narration"])
 
@@ -305,6 +315,7 @@ async def delete_narration(
 ) -> dict:
     await db.execute(delete(Narration).where(Narration.document_id == doc.id))
     await db.commit()
+    files.delete_narration_downloads(doc.id)  # the cached MP3 has nothing left to match
     return {"ok": True}
 
 
@@ -330,6 +341,67 @@ async def segment_audio(
         content=row[0],
         media_type=row[1] or "audio/mpeg",
         headers={"Cache-Control": "private, max-age=31536000, immutable"},
+    )
+
+
+def attachment_disposition(filename: str) -> str:
+    """Both name forms (RFC 6266). Starlette sends only filename* for a name
+    with a space or accent, which older Android download managers ignore —
+    they save it as "download" or "download.bin"."""
+    fallback = (
+        unicodedata.normalize("NFKD", filename).encode("ascii", "ignore").decode().replace('"', "")
+    )
+    return f"attachment; filename=\"{fallback}\"; filename*=UTF-8''{quote(filename)}"
+
+
+async def _narration_and_course(
+    db: AsyncSession, doc: Document
+) -> tuple[Narration | None, str | None]:
+    """The reading's narration and its course code (the MP3's album tag)."""
+    narration = (
+        await db.execute(select(Narration).where(Narration.document_id == doc.id))
+    ).scalar_one_or_none()
+    code = (
+        await db.execute(
+            select(Course.code)
+            .join(Module, Module.course_id == Course.id)
+            .where(Module.id == doc.module_id)
+        )
+    ).scalar_one_or_none()
+    return narration, code
+
+
+@router.get("/documents/{document_id}/narration/download")
+async def download_narration(
+    doc: Document = Depends(_get_owned_document),
+    db: AsyncSession = Depends(get_db),
+) -> FileResponse:
+    """The whole reading as one MP3 to keep on a phone. Built from the stored
+    paragraphs on first request, then cached; FileResponse answers Range
+    requests, which iOS needs to play or save a large file."""
+    narration, course_code = await _narration_and_course(db, doc)
+    if narration is None:
+        raise HTTPException(status_code=404, detail="Steven hasn't recorded this reading")
+    try:
+        path = await ensure_mp3(
+            db,
+            narration_id=narration.id,
+            document_id=doc.id,
+            title=download_filename(doc.filename).removesuffix(".mp3"),
+            album=course_code,
+        )
+    except NarrationNotReady as exc:
+        raise HTTPException(
+            status_code=409,
+            detail=f"Steven is still recording — {exc.missing} paragraphs to go",
+        ) from None
+    return FileResponse(
+        path,
+        media_type="audio/mpeg",
+        headers={
+            "Content-Disposition": attachment_disposition(download_filename(doc.filename)),
+            "Cache-Control": "private, no-cache",
+        },
     )
 
 

@@ -39,6 +39,16 @@ def test_it_removes_every_directory_a_document_owns(storage):
         assert not files.resolve(rel).exists(), rel
 
 
+def test_the_downloadable_narration_goes_with_its_document(storage):
+    # narration-downloads/ holds the joined MP3 (up to ~75 MB a reading)
+    _touch("originals/ab/doc7.pdf")
+    _touch("narration-downloads/7-0123456789ab.mp3")
+    _touch("narration-downloads/70-0123456789ab.mp3")  # document 70, not 7
+    files.delete_files_for_documents([(7, "originals/ab/doc7.pdf")])
+    assert not files.resolve("narration-downloads/7-0123456789ab.mp3").exists()
+    assert files.resolve("narration-downloads/70-0123456789ab.mp3").exists()
+
+
 def test_a_shared_parse_cache_entry_is_left_alone(storage):
     # parse-cache is keyed by content hash and shared between identical
     # uploads; evicting it here would cost another document its cache.

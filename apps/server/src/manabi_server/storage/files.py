@@ -81,6 +81,17 @@ def write_atomic(rel_path: str, data: bytes) -> None:
     tmp.replace(target)
 
 
+# The whole narration of a reading as one MP3, `{document_id}-{key}.mp3`
+# (services/narration_export.py) — a cache, rebuilt on demand.
+NARRATION_DOWNLOADS = "narration-downloads"
+
+
+def delete_narration_downloads(document_id: int) -> None:
+    # "84-*" never matches document 841's "841-…"
+    for path in resolve(NARRATION_DOWNLOADS).glob(f"{document_id}-*.mp3"):
+        path.unlink(missing_ok=True)
+
+
 def delete_document_files(document_id: int, original_rel: str) -> None:
     """Every byte a document owns. `parse-cache/` is deliberately untouched: it
     is keyed by content hash and shared between identical uploads, so removing
@@ -89,6 +100,7 @@ def delete_document_files(document_id: int, original_rel: str) -> None:
         shutil.rmtree(resolve(rel), ignore_errors=True)
     resolve(original_rel).unlink(missing_ok=True)
     resolve(normalized_path(document_id)).unlink(missing_ok=True)
+    delete_narration_downloads(document_id)
 
 
 def delete_files_for_documents(rows: Iterable[tuple[int, str]]) -> int:

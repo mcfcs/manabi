@@ -3,6 +3,7 @@ import {
   AlertTriangle,
   ChevronDown,
   ChevronUp,
+  Download,
   Headphones,
   ListOrdered,
   Loader2,
@@ -471,6 +472,20 @@ export function NarrationBar({
           </>
         )}
 
+        {!notPrepared && !recording && data.ready_count === data.segment_count && (
+          // A real link, not fetch + blob: the phone's own download handling
+          // takes over (iOS download sheet / Android download manager), and a
+          // 100-minute reading never has to fit in the page's memory.
+          <a
+            className="icon-btn narration-download"
+            href={`/api/documents/${documentId}/narration/download`}
+            download
+            aria-label="Download the reading as one MP3"
+            title={`Download the whole reading as one MP3${total ? ` (${fmt(total)})` : ""}`}
+          >
+            <Download size={16} strokeWidth={1.75} />
+          </a>
+        )}
         {!notPrepared && (
           <button
             className="icon-btn"
