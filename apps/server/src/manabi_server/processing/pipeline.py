@@ -1041,14 +1041,19 @@ def _docling_page_heads(dl_doc) -> dict[int, list[str]]:
     from docling_core.types.doc import ContentLayer
 
     found: dict[int, list[tuple[float, str]]] = {}
-    for item, _level in dl_doc.iterate_items(included_content_layers={ContentLayer.FURNITURE}):
-        label = str(getattr(item, "label", "") or "").lower()
-        text = (getattr(item, "text", "") or "").strip()
-        prov = getattr(item, "prov", None)
-        if "page_header" not in label or not text or not prov:
-            continue
-        bb = getattr(prov[0], "bbox", None)
-        found.setdefault(prov[0].page_no, []).append((bb.t if bb is not None else 0.0, text))
+    try:
+        layer = {ContentLayer.FURNITURE}
+        for item, _level in dl_doc.iterate_items(included_content_layers=layer):
+            label = str(getattr(item, "label", "") or "").lower()
+            text = (getattr(item, "text", "") or "").strip()
+            prov = getattr(item, "prov", None)
+            if "page_header" not in label or not text or not prov:
+                continue
+            bb = getattr(prov[0], "bbox", None)
+            found.setdefault(prov[0].page_no, []).append((bb.t if bb is not None else 0.0, text))
+    except Exception:  # noqa: BLE001 — heads are a hint; never fail the parse over them
+        log.warning("could not read page headers", exc_info=True)
+        return {}
     return {p: [t for _top, t in sorted(rows, key=lambda r: -r[0])] for p, rows in found.items()}
 
 
