@@ -324,7 +324,7 @@ def _stage_structure(db: Session, doc: Document) -> None:
     )
     if doc.detected_layout in ("spread", "split"):
         # Before the running heads are stripped — they name the chapter's author.
-        foreign = _foreign_chapter_pages(parsed["elements"])
+        foreign = _foreign_chapter_pages(parsed["elements"], parsed.get("heads"))
         if foreign:
             log.info("doc %s: left out pages %s (neighbouring chapters)", doc.id, sorted(foreign))
             parsed["elements"] = [el for el in parsed["elements"] if el["page_no"] not in foreign]
@@ -558,61 +558,77 @@ def _strip_boilerplate(elements: list[dict]) -> list[dict]:
 
 
 _RUNNING_HEAD_SHARE = 0.3  # the chapter author's name tops a third of the pages
-_BYLINE = re.compile(r"^[A-Za-z][A-Za-z.\s'’-]{3,40}\*$")  # "TEMARIO C. RIVERA*"
+_BYLINE_MAX = 140  # a byline alone, or fused onto the end of the title heading
 
 
-def _foreign_chapter_pages(elements: list[dict]) -> set[int]:
+def _foreign_chapter_pages(
+    elements: list[dict], heads: dict[int, list[str]] | None = None
+) -> set[int]:
     """Pages of the neighbouring chapters in a scanned excerpt from an edited
     volume. A chapter's verso running head is its author's name, and its first
-    page carries a byline with a footnote mark ("TAKESHI KAWANAKA*"). The
-    reading starts at the byline that matches the running head: earlier pages
-    are the previous chapter's tail (Kawanaka's scan opened on John T. Sidel's
-    references). A later byline naming someone else opens the next chapter
-    (Temario C. Rivera's, on the scan's last page) — it and what follows go.
-    No dominant running head, or no matching byline: nothing is excluded."""
+    page carries a byline with a footnote mark ("TAKESHI KAWANAKA*" — alone, or
+    fused by OCR onto the end of the title heading). The reading starts at the
+    byline that matches the running head: earlier pages are the previous
+    chapter's tail (Kawanaka's scan opened on John T. Sidel's references). A
+    later byline naming someone else opens the next chapter (Temario C.
+    Rivera's, on the scan's last page) — it and what follows go. Running heads
+    come from Docling's page-header layer (`heads`), else the topmost line. No
+    dominant running head, or no matching byline: nothing is excluded."""
     from collections import Counter
     from difflib import SequenceMatcher
 
     def same(a: str, b: str) -> bool:
         return SequenceMatcher(None, a, b).ratio() >= MARGIN_REPEAT_SIMILARITY
 
+    heads = heads or {}
     by_page: dict[int, list[dict]] = {}
     for el in elements:
         if el.get("bbox"):
             by_page.setdefault(el["page_no"], []).append(el)
-    if len(by_page) < 5:
+    pages = set(by_page) | set(heads)
+    if len(pages) < 5:
         return set()
     tops = {
         p: sorted(items, key=lambda el: -el["bbox"]["t"])[:3] for p, items in by_page.items()
     }
 
-    # the running head: the most repeated topmost line (OCR variants folded)
-    heads = Counter()
-    for items in tops.values():
-        key = _margin_key(items[0].get("text") or "")
+    def head_key(p: int) -> str:
+        texts = [t for t in heads.get(p, []) if not re.fullmatch(r"\W*\d{1,3}\W*", t.strip())]
+        if not texts and p in tops:
+            texts = [tops[p][0].get("text") or ""]
+        return _margin_key(texts[0]) if texts else ""
+
+    # the running head: the most repeated head line (OCR variants folded)
+    counted = Counter()
+    for p in pages:
+        key = head_key(p)
         if len(key) >= 6:
-            match = next((h for h in heads if same(h, key)), key)
-            heads[match] += 1
-    if not heads:
+            counted[next((h for h in counted if same(h, key)), key)] += 1
+    if not counted:
         return set()
-    author, count = heads.most_common(1)[0]
-    if count < max(3, _RUNNING_HEAD_SHARE * len(by_page)):
+    author, count = counted.most_common(1)[0]
+    if count < max(3, _RUNNING_HEAD_SHARE * len(pages)):
         return set()
 
     bylines: dict[int, str] = {}
     for p, items in tops.items():
         for el in items:
             text = (el.get("text") or "").strip()
-            if _BYLINE.match(text) and 2 <= len(text.split()) <= 5:
+            if text.endswith("*") and len(text) <= _BYLINE_MAX and len(text.split()) >= 2:
                 bylines[p] = _margin_key(text)
                 break
-    own = next((p for p in sorted(bylines) if same(bylines[p], author)), None)
+
+    def names_author(byline: str) -> bool:
+        # the name ends the line, whatever title words came before it
+        return same(byline[-len(author):], author)
+
+    own = next((p for p in sorted(bylines) if names_author(bylines[p])), None)
     if own is None:
         return set()
-    foreign = {p for p in by_page if p < own}
-    nxt = next((p for p in sorted(bylines) if p > own and not same(bylines[p], author)), None)
+    foreign = {p for p in pages if p < own}
+    nxt = next((p for p in sorted(bylines) if p > own and not names_author(bylines[p])), None)
     if nxt is not None:
-        foreign |= {p for p in by_page if p >= nxt}
+        foreign |= {p for p in pages if p >= nxt}
     return foreign
 
 
@@ -930,7 +946,8 @@ def _build_converter(full_page_ocr: bool):
 #   v4: partial Docling conversions are recovered page by page (and never
 #       cached); Docling `code` labels are kept as element type "code".
 #   v5: OCR without RapidOCR's angle classifier (it flipped upright lines).
-_PARSE_CACHE_VERSION = 5
+#   v6: page headers (running heads) kept beside the elements as "heads".
+_PARSE_CACHE_VERSION = 6
 
 # A page "has text" in the PDF layer when PyMuPDF finds at least this many
 # words on it; such a page must never end up with zero text elements.
@@ -1016,6 +1033,25 @@ def _docling_elements(dl_doc) -> tuple[list[dict], dict[int, str], set[int]]:
     return elements, titles, pages_seen
 
 
+def _docling_page_heads(dl_doc) -> dict[int, list[str]]:
+    """Running heads per page, top line first. Docling files them as page
+    headers in the furniture layer, which the body iteration above never sees
+    — the chapter author's name there is what tells a scanned excerpt's own
+    pages from the neighbouring chapters' (_foreign_chapter_pages)."""
+    from docling_core.types.doc import ContentLayer
+
+    found: dict[int, list[tuple[float, str]]] = {}
+    for item, _level in dl_doc.iterate_items(included_content_layers={ContentLayer.FURNITURE}):
+        label = str(getattr(item, "label", "") or "").lower()
+        text = (getattr(item, "text", "") or "").strip()
+        prov = getattr(item, "prov", None)
+        if "page_header" not in label or not text or not prov:
+            continue
+        bb = getattr(prov[0], "bbox", None)
+        found.setdefault(prov[0].page_no, []).append((bb.t if bb is not None else 0.0, text))
+    return {p: [t for _top, t in sorted(rows, key=lambda r: -r[0])] for p, rows in found.items()}
+
+
 def _pages_with_text(elements: list[dict]) -> set[int]:
     return {int(el["page_no"]) for el in elements if (el.get("text") or "").strip()}
 
@@ -1080,6 +1116,7 @@ def _docling_parse(source: Path, cache_key: str | None = None) -> dict:
                 "elements": raw["elements"],
                 "titles": {int(k): v for k, v in raw["titles"].items()},
                 "pages": set(raw["pages"]),
+                "heads": {int(k): v for k, v in raw.get("heads", {}).items()},
             }
         except Exception:  # noqa: BLE001 — corrupt cache → re-parse
             log.warning("parse cache unreadable, re-parsing: %s", cache_path)
@@ -1103,6 +1140,7 @@ def _docling_parse(source: Path, cache_key: str | None = None) -> dict:
     converter = _get_converter(full_page_ocr=is_scan)
     result = _convert_locked(converter, source)
     elements, titles, pages_seen = _docling_elements(result.document)
+    heads = _docling_page_heads(result.document)
 
     status = _status_name(result)
     unresolved: set[int] = set()
@@ -1133,11 +1171,14 @@ def _docling_parse(source: Path, cache_key: str | None = None) -> dict:
                 page_failed = _status_name(retry) not in ("", "success")
                 r_elements, r_titles, r_seen = _docling_elements(retry.document)
                 r_elements = [el for el in r_elements if int(el["page_no"]) == page_no]
+                r_heads = _docling_page_heads(retry.document).get(page_no)
             except Exception:  # noqa: BLE001 — a page retry must never fail the parse
                 log.exception("docling retry of page %s failed for %s", page_no, source.name)
-                r_elements, r_titles, r_seen = [], {}, set()
+                r_elements, r_titles, r_seen, r_heads = [], {}, set(), None
             if any((el.get("text") or "").strip() for el in r_elements):
                 elements = [el for el in elements if int(el["page_no"]) != page_no] + r_elements
+                if r_heads:
+                    heads[page_no] = r_heads
                 pages_seen |= {page_no} | r_seen
                 if page_no in r_titles:
                     titles.setdefault(page_no, r_titles[page_no])
@@ -1174,6 +1215,7 @@ def _docling_parse(source: Path, cache_key: str | None = None) -> dict:
                         "elements": elements,
                         "titles": titles,
                         "pages": sorted(pages_seen),
+                        "heads": heads,
                     }
                 ),
                 encoding="utf-8",
@@ -1187,7 +1229,7 @@ def _docling_parse(source: Path, cache_key: str | None = None) -> dict:
             sorted(unresolved)[:20],
         )
 
-    return {"elements": elements, "titles": titles, "pages": pages_seen}
+    return {"elements": elements, "titles": titles, "pages": pages_seen, "heads": heads}
 
 
 def _is_index_header(columns) -> bool:

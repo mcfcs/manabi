@@ -191,3 +191,48 @@ def test_without_a_running_head_nothing_is_excluded():
     els = [_el(p, 600, f"Body of page {p}. " * 10) for p in range(1, 12)]
     els.append(_el(9, 680, "SOMEONE ELSE*", "heading"))
     assert pipeline._foreign_chapter_pages(els) == set()
+
+
+def test_heads_from_the_page_header_layer_and_a_byline_fused_to_the_title():
+    # Doc 85 as re-extracted: Docling files running heads as page headers (not
+    # body), joins Kawanaka's byline onto the title, and keeps Rivera's alone.
+    els = [el for el in _anthology_pages() if not (
+        el["bbox"]["t"] >= 740 or el["text"].endswith("*") or el["type"] == "heading"
+    )]
+    els += [
+        _el(2, 720, "The Robredo Style: Philippine Local Politics in Transition "
+            "TakesHi Kawanaka*", "heading"),
+        _el(32, 720, "The State and Industrial Transformation: Comparative and Local "
+            "Insights", "heading"),
+        _el(32, 700, "TEMARIO C. RIVeRa*"),
+    ]
+    heads = {1: ["John T. Sidel", "40"]}
+    for p in range(3, 32):
+        heads[p] = [str(39 + p), "Takeshi Kawanaka" if p % 2 else "The Robre tle Piliine"]
+    assert pipeline._foreign_chapter_pages(els, heads) == {1, 32}
+
+
+def test_page_headers_are_read_from_doclings_furniture_layer():
+    from docling_core.types.doc import (
+        BoundingBox,
+        ContentLayer,
+        DocItemLabel,
+        DoclingDocument,
+        ProvenanceItem,
+        Size,
+    )
+
+    doc = DoclingDocument(name="t")
+    doc.add_page(page_no=3, size=Size(width=330, height=545))
+
+    def prov(t):
+        return ProvenanceItem(
+            page_no=3, bbox=BoundingBox(l=40, t=t, r=300, b=t - 12), charspan=(0, 1)
+        )
+
+    doc.add_text(label=DocItemLabel.PAGE_HEADER, text="42", prov=prov(530),
+                 content_layer=ContentLayer.FURNITURE)
+    doc.add_text(label=DocItemLabel.PAGE_HEADER, text="Takeshi Kawanaka", prov=prov(528),
+                 content_layer=ContentLayer.FURNITURE)
+    doc.add_text(label=DocItemLabel.TEXT, text="Body text.", prov=prov(400))
+    assert pipeline._docling_page_heads(doc) == {3: ["42", "Takeshi Kawanaka"]}
