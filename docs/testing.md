@@ -77,6 +77,25 @@ npx --no-install playwright cli eval "document.querySelectorAll('.quiz-question 
 
 PowerShell: quote URLs containing `&`, or use `--%` (see the skill's notes).
 
+### Recipe: iPhone engine and downloads
+
+WebKit is installed (Nov 2026) for checks on the iOS engine:
+
+```powershell
+npx --no-install playwright cli open --browser=webkit --mobile http://127.0.0.1:56690/documents/84
+```
+
+- Clicking a download link prints `Downloaded file <name> to .playwright-cli\…` in
+  the click's events: that confirms the browser treated it as a download and which
+  name it saved under. Delete the file afterwards (narrations are tens of MB).
+- This Windows WebKit build **cannot decode MP3** (`<audio>` error 4 even for the
+  segment clips a real iPhone plays), so it can't judge audio. Check an MP3's
+  length the way iOS reads it: the Xing/Info header's frame count (frames × 1152
+  / sample rate), or `ffprobe`. It also can't show iOS's installed-app (standalone)
+  download sheet — that needs a real phone.
+- Some state persists per reading (e.g. the Listen bar's open/closed): a click
+  may close what an earlier session opened. Check before assuming it failed.
+
 ### Side effects to avoid
 
 The app is Gio's real data. Opening pages is safe. These are not:
