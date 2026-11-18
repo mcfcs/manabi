@@ -110,3 +110,43 @@ def test_untimed_word_times_stay_sql_null():
     from manabi_core.models import NarrationSegment
 
     assert NarrationSegment.__table__.c.word_times.type.none_as_null is True
+
+
+# ── Scanned book spreads (Kawanaka, "The Robredo Style", Nov 18, 2026) ──────
+
+
+def test_an_asterisk_footnote_is_not_read_and_does_not_break_the_sentence():
+    rows = [
+        (1, "paragraph", "It is not so difficult to assume that urbanization transforms "
+         "the political pattern as"),
+        (1, "paragraph", '* Kawanaka, Takeshi. 1998. "The Robredo Style: Philippine Local '
+         'Politics in Transition." Kasarinlan 13 (3): 5–36.'),
+        (2, "paragraph", "it does the socioeconomic situation of both constituency and the "
+         "political elite."),
+    ]
+    assert _texts(rows) == [
+        "It is not so difficult to assume that urbanization transforms the political "
+        "pattern as it does the socioeconomic situation of both constituency and the "
+        "political elite."
+    ]
+
+
+def test_garbled_ocr_sentences_are_not_read():
+    # Doc 85's narration as first scripted: lines from a curled page corner.
+    rows = [
+        (12, "paragraph", "Robredo i ften en i ah n t t he et . Past mayors were not as "
+         "open to contact."),
+        (14, "paragraph", "Iev t Ma Od's ues sn Po Nag C Marc 17, 1998."),
+    ]
+    assert _texts(rows) == ["Past mayors were not as open to contact."]
+
+
+def test_clean_prose_with_short_words_and_abbreviations_is_kept():
+    rows = [
+        (3, "paragraph", "The first organizations were Lakas ng Kababaihan and the "
+         "Barangay People's Organization, e.g. in Sabang, i.e. near the river."),
+        (3, "paragraph", "Interview with Mr. Aton Nabua, Officer, Lingkod Barangay Office, "
+         "Naga City, August 18, 1997."),
+        (4, "paragraph", "The LDP and the PDP-Laban fielded candidates in the 1992 elections."),
+    ]
+    assert len(_texts(rows)) == 3

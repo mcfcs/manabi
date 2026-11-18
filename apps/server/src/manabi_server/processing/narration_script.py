@@ -479,6 +479,52 @@ def _looks_like_title(text: str) -> bool:
     return 0 < len(words) <= 9 and all(w[0].isupper() or w.lower() in _TITLE_SMALL for w in words)
 
 
+# A footnote marked with a symbol ("* Kawanaka, Takeshi. 1998…") — never body
+# prose. Numbered notes can't be told from numbered lists here, so only symbols.
+_SYMBOL_FOOTNOTE = re.compile(r"^[*†‡§¶]\s?\S")
+
+# Short words that are real (English, plus the Filipino in Gio's readings: "Lakas
+# ng Kababaihan"); any other 1–2 letter fragment in a sentence is OCR debris.
+_SHORT_WORDS_TEXT = (
+    "a i an as at be by do go he if in is it me my no of on or so to up us we am ok oh "
+    "ad ah eh ha hi ho id lo mr ms dr st vs co et al pp ii iv vi xi xv un de la le el di "
+    "da du y o ng sa na ni si ay ko mo ka ba po pa ug"
+)
+_SHORT_WORDS = frozenset(_SHORT_WORDS_TEXT.split())
+_WORD = re.compile(r"[A-Za-z][A-Za-z'’]*")
+_DOTTED_ABBREV = re.compile(r"\b(?:[A-Za-z]\.){2,}")  # e.g., i.e., a.k.a., U.S.
+_SENTENCE_END = re.compile(r"(?<=[.!?…])\s+")
+# Calibrated on every narration stored (Nov 2026, ~3,400 sentences): clean prose
+# never reached 0.30; Kawanaka's curled-page lines scored 0.30–0.36.
+GARBLED_SHARE = 0.30
+_GARBLED_MIN_WORDS = 4
+
+
+def _junk_word(tok: str) -> bool:
+    t = tok.strip("'’")
+    low = t.lower()
+    if len(t) <= 2:
+        return low not in _SHORT_WORDS and not t.isupper()  # "UN", "LDP" are fine
+    if not re.search(r"[aeiouy]", low):
+        return not t.isupper()
+    # a case flip inside a word: "aoViaual" (not McArthur / DeGuzman)
+    flipped = re.search(r"[a-z][A-Z][a-z]", t)
+    return bool(flipped) and not re.match(r"(?:Mc|Mac|De|Di|La|Le)[A-Z]", t)
+
+
+def garbled(sentence: str) -> bool:
+    """OCR debris from a curled or smudged part of a scan: 'Robredo i ften en i ah
+    n t t he et.' Shown on the page image, but not worth reading aloud."""
+    words = _WORD.findall(_DOTTED_ABBREV.sub(" ", sentence))
+    if len(words) < _GARBLED_MIN_WORDS:
+        return False
+    return sum(_junk_word(w) for w in words) / len(words) >= GARBLED_SHARE
+
+
+def drop_garbled(text: str) -> str:
+    return " ".join(s for s in _SENTENCE_END.split(text) if not garbled(s)).strip()
+
+
 def build_script_from_elements(rows: list[tuple[int, str, str]]) -> Script:
     """Script from the extracted elements (page_no, element_type, text) — the
     text the viewer shows. For a scanned PDF the layout pass has no text layer
@@ -496,6 +542,8 @@ def build_script_from_elements(rows: list[tuple[int, str, str]]) -> Script:
         text = re.sub(r"\s+", " ", (text or "")).strip()
         if kind is None or not text or not re.search(r"[A-Za-z]", text):
             continue  # a lone page or note number would glue onto the next line
+        if _SYMBOL_FOOTNOTE.match(text):
+            continue  # and the sentence it interrupted joins up across the page
         if kind == "heading" and _REFERENCE_HEADINGS.match(text.rstrip(". ")):
             break
         prev = merged[-1] if merged else None
@@ -514,6 +562,7 @@ def build_script_from_elements(rows: list[tuple[int, str, str]]) -> Script:
         merged.append([page_no, kind, text])
     segments: list[Segment] = []
     for page_no, kind, text in merged:
+        text = drop_garbled(text)
         spoken = to_spoken(text, kind)
         if word_count(spoken) == 0 or (kind != "heading" and word_count(spoken) < 3):
             continue  # page numbers and OCR scraps
