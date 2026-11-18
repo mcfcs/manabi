@@ -322,6 +322,12 @@ def _stage_structure(db: Session, doc: Document) -> None:
     parsed["elements"] = _fix_reading_order(
         parsed["elements"], aggressive_columns=doc.detected_layout == "spread"
     )
+    if doc.detected_layout in ("spread", "split"):
+        # Before the running heads are stripped — they name the chapter's author.
+        foreign = _foreign_chapter_pages(parsed["elements"])
+        if foreign:
+            log.info("doc %s: left out pages %s (neighbouring chapters)", doc.id, sorted(foreign))
+            parsed["elements"] = [el for el in parsed["elements"] if el["page_no"] not in foreign]
     parsed["elements"] = _strip_boilerplate(parsed["elements"])
     if doc.detected_layout in ("spread", "split"):
         # Running heads on scanned books OCR differently each page, defeating
@@ -549,6 +555,65 @@ def _strip_boilerplate(elements: list[dict]) -> list[dict]:
         len(per_page),
     )
     return kept
+
+
+_RUNNING_HEAD_SHARE = 0.3  # the chapter author's name tops a third of the pages
+_BYLINE = re.compile(r"^[A-Za-z][A-Za-z.\s'’-]{3,40}\*$")  # "TEMARIO C. RIVERA*"
+
+
+def _foreign_chapter_pages(elements: list[dict]) -> set[int]:
+    """Pages of the neighbouring chapters in a scanned excerpt from an edited
+    volume. A chapter's verso running head is its author's name, and its first
+    page carries a byline with a footnote mark ("TAKESHI KAWANAKA*"). The
+    reading starts at the byline that matches the running head: earlier pages
+    are the previous chapter's tail (Kawanaka's scan opened on John T. Sidel's
+    references). A later byline naming someone else opens the next chapter
+    (Temario C. Rivera's, on the scan's last page) — it and what follows go.
+    No dominant running head, or no matching byline: nothing is excluded."""
+    from collections import Counter
+    from difflib import SequenceMatcher
+
+    def same(a: str, b: str) -> bool:
+        return SequenceMatcher(None, a, b).ratio() >= MARGIN_REPEAT_SIMILARITY
+
+    by_page: dict[int, list[dict]] = {}
+    for el in elements:
+        if el.get("bbox"):
+            by_page.setdefault(el["page_no"], []).append(el)
+    if len(by_page) < 5:
+        return set()
+    tops = {
+        p: sorted(items, key=lambda el: -el["bbox"]["t"])[:3] for p, items in by_page.items()
+    }
+
+    # the running head: the most repeated topmost line (OCR variants folded)
+    heads = Counter()
+    for items in tops.values():
+        key = _margin_key(items[0].get("text") or "")
+        if len(key) >= 6:
+            match = next((h for h in heads if same(h, key)), key)
+            heads[match] += 1
+    if not heads:
+        return set()
+    author, count = heads.most_common(1)[0]
+    if count < max(3, _RUNNING_HEAD_SHARE * len(by_page)):
+        return set()
+
+    bylines: dict[int, str] = {}
+    for p, items in tops.items():
+        for el in items:
+            text = (el.get("text") or "").strip()
+            if _BYLINE.match(text) and 2 <= len(text.split()) <= 5:
+                bylines[p] = _margin_key(text)
+                break
+    own = next((p for p in sorted(bylines) if same(bylines[p], author)), None)
+    if own is None:
+        return set()
+    foreign = {p for p in by_page if p < own}
+    nxt = next((p for p in sorted(bylines) if p > own and not same(bylines[p], author)), None)
+    if nxt is not None:
+        foreign |= {p for p in by_page if p >= nxt}
+    return foreign
 
 
 MARGIN_REPEAT_TEXT_MAX = 60  # running heads / page numbers are short

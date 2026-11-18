@@ -141,3 +141,53 @@ def test_running_heads_and_page_numbers_go_but_real_headings_stay():
     assert "The Robredo Style: Philippine Local Politics in Transition" not in kept
     assert not any(t.strip().isdigit() for t in kept)
     assert sum("Body text of page" in t for t in kept) == 6  # body untouched
+
+
+# ── 5. the neighbouring chapters' pages at either end ─────────────────────
+
+
+def _anthology_pages():
+    """Book pages as the scan shows them (OCR variants included): p40 is the end
+    of John T. Sidel's chapter, p41 opens Kawanaka's, p71 opens Rivera's."""
+    els = [
+        _el(1, 760, "John T. Sidel"), _el(1, 740, "40"),
+        _el(1, 600, "Wolters, William. 1984. Politics, Patronage, and Class Conflict in "
+            "Central Luzon. Quezon City: New Day Publications."),
+        _el(2, 720, "The Robredo Style:", "heading"),
+        _el(2, 700, "Philippine Local Politics in Transition", "heading"),
+        _el(2, 680, "TaKeSHI KaWaNakA*", "heading"),
+        _el(2, 600, "Local politics has been considered as one of the main areas of concern."),
+    ]
+    for p in range(3, 31):
+        if p % 2:  # verso: the author's name; recto: the title, often garbled
+            els.append(_el(p, 760, "Takeshi Kawanaka"))
+        else:
+            els.append(_el(p, 760, "The Robre tle Piliine lca Polics ini n ransition"))
+        els += [_el(p, 740, str(39 + p)), _el(p, 600, f"Body of page {39 + p}. " * 10)]
+    els += [
+        _el(31, 760, "Takeshi Kawanaka"), _el(31, 740, "70"),
+        _el(31, 600, "Wolters, Willem. 1984. Politics, Patronage, and Class Conflict."),
+        _el(32, 720, "The State and Industrial Transformation:", "heading"),
+        _el(32, 700, "Comparative and Local Insights", "heading"),
+        _el(32, 680, "TEMARIO C. RIVeRA*", "heading"),
+        _el(32, 600, "In the industrialization projects of the developing societies, the "
+            "state has played a leading and decisive role."),
+        _el(32, 60, "71"),
+    ]
+    return els
+
+
+def test_the_neighbouring_chapters_pages_are_found():
+    assert pipeline._foreign_chapter_pages(_anthology_pages()) == {1, 32}
+
+
+def test_a_reading_that_starts_on_its_own_opener_loses_nothing():
+    els = [el for el in _anthology_pages() if el["page_no"] not in (1, 32)]
+    assert pipeline._foreign_chapter_pages(els) == set()
+
+
+def test_without_a_running_head_nothing_is_excluded():
+    # a scan with no repeating author head (lecture notes, a single article)
+    els = [_el(p, 600, f"Body of page {p}. " * 10) for p in range(1, 12)]
+    els.append(_el(9, 680, "SOMEONE ELSE*", "heading"))
+    assert pipeline._foreign_chapter_pages(els) == set()
