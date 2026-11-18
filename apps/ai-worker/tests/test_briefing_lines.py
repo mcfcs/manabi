@@ -33,3 +33,12 @@ def test_a_bare_shouted_title_still_passes_the_filter():
 
 def test_a_single_letter_is_not_a_word():
     assert _briefing_line("x") is False
+
+
+def test_the_prompt_carries_no_day_description_to_copy():
+    # Nov 18 opened a free Wednesday with "a six straight hours of classes" —
+    # the prompt's own example phrase, copied word for word.
+    from manabi_ai import prompts
+
+    assert "six straight hours" not in prompts.DAILY_BRIEFING_PROMPT
+    assert "'Today' line" in prompts.DAILY_BRIEFING_PROMPT

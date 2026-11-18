@@ -5,7 +5,7 @@ outside the prompt: schema-constrained decoding, source-id resolution against
 the job's scope, and post-hoc support scoring.
 """
 
-PROMPT_VERSION = "v13"  # v13: a question's table is its whole dataset; audit solves from it
+PROMPT_VERSION = "v14"  # v14: the letter's day shape comes from the Today line, no example to copy
 
 _GROUNDING = """RULES — follow strictly:
 - Use ONLY the numbered SOURCE MATERIAL. Do not add outside knowledge.
@@ -1078,8 +1078,9 @@ DAILY_BRIEFING_PROMPT = (
     " is not.\n\n"
     "Produce, in Steven's voice:\n"
     "- greeting: one short line naming the weekday/date naturally, with intent"
-    " (not just 'good morning'). You may characterise the SHAPE of the day"
-    " ('six straight hours', 'one class and a long evening') but never list it.\n"
+    " (not just 'good morning'). You may characterise the SHAPE of TODAY, taken"
+    " only from the context's 'Today' line — a free day is a free day — but never"
+    " list it, and never describe tomorrow's classes as today's.\n"
     "- due_soon: at most 2 short lines, and ONLY on what is genuinely overdue or"
     " due today. Anything further out is not urgent enough to mention. Write"
     " full sentences naming the item — never a bare title on its own. If nothing"
