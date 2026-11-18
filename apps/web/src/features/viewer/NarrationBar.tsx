@@ -488,7 +488,7 @@ export function NarrationBar({
         )}
         {!notPrepared && (
           <button
-            className="icon-btn"
+            className="icon-btn narration-rerecord"
             aria-label="Re-record this reading"
             title="Replace the saved audio using the current voice settings"
             disabled={recording || prepare.isPending || !data.voice_available}

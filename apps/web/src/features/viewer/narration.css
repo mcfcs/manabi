@@ -205,6 +205,21 @@
     flex-basis: 100%;
     order: 3;
   }
+  /* Download and Re-record are rare: a short line under the prompter, so the
+     playback row keeps fitting at 390 px (they pushed close onto a row of its
+     own). */
+  .narration-download,
+  .narration-rerecord {
+    order: 4;
+  }
+  .narration-download,
+  .narration-rerecord:not(.narration-download + .narration-rerecord) {
+    margin-left: auto;
+  }
+  .narration-rerecord {
+    width: 34px;
+    height: 34px;
+  }
   .narration-close {
     margin-left: auto;
   }
