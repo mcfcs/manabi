@@ -28,6 +28,16 @@ Generation cites chunk ids; re-extracting later orphans those citations. So:
   every distinctive name/phrase from step 0 findable.
 - Page text (`document_pages.text_html`) for the viewer; known residuals: swapped
   OCR lines inside a paragraph, glued footnote markers, lost "fi" ligatures.
+- Scanned book spreads (photos of an open book, no text layer — Kerkvliet,
+  Quimpo, Kawanaka) are split into book pages before OCR since Nov 2026
+  (`detected_layout = 'split'`; older uploads still say `'spread'` = left whole).
+  Check: page count doubled, each page's running head and page number gone,
+  real headings kept ("Notes", the title), and the neighbouring chapters' pages
+  (another author's running head before the reading's byline; a later byline
+  naming someone else) left out of the elements — `pipeline._foreign_chapter_pages`.
+- Curled page corners OCR as debris; Steven skips sentences scored as garbled
+  (`narration_script.garbled`, threshold calibrated on all stored narrations)
+  and `*` footnotes. The extracted text keeps them — the page image is the truth.
 - To re-extract: `POST /api/documents/{id}/retry`. Docling output is cached by
   content hash in `storage/parse-cache/` — delete that file if the fix changes the
   parse itself (e.g. OCR on/off).
