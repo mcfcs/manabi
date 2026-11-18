@@ -553,42 +553,76 @@ def _strip_boilerplate(elements: list[dict]) -> list[dict]:
 
 MARGIN_REPEAT_TEXT_MAX = 60  # running heads / page numbers are short
 MARGIN_REPEAT_PAGE_RATIO = 0.4  # …and appear on a large fraction of pages
+# A head's OCR variants ("Takeshi Kawanaka" / "TakeshiKawanak a") match; a title
+# line that merely shares words with the recto head does not ("Philippine Local
+# Politics in Transition" vs the full title scores 0.82).
+MARGIN_REPEAT_SIMILARITY = 0.9
+_MARGIN_DEPTH = 2  # a split book page's head and its page number are 2 lines
+
+
+def _margin_key(text: str) -> str:
+    return re.sub(r"[^a-z]", "", text.lower())
 
 
 def _strip_margin_repeats(elements: list[dict]) -> list[dict]:
-    """Drop the top-most and/or bottom-most short element on each page when that
-    position repeats across the document — running heads and page numbers on
-    scanned books. Position-based, so it catches OCR variants that exact-text
-    boilerplate stripping misses. Spread-gated by the caller (never PPTX)."""
+    """Drop running heads and page numbers on scanned books: short lines at the
+    top or bottom of a page whose text also sits in another page's margin (OCR
+    variants allowed), or that are bare page numbers. Position alone used to
+    decide, and once exact-repeat stripping had taken a page's head, the next
+    line up went instead: Kawanaka (Nov 2026) lost its title line, two section
+    headings and "Notes" — so its endnotes were narrated. Spread-gated by the
+    caller (never PPTX)."""
+    from difflib import SequenceMatcher
+
     by_page: dict[int, list[dict]] = {}
     for el in elements:
         by_page.setdefault(el["page_no"], []).append(el)
     if len(by_page) < 5:
         return elements
 
-    top_ids: set[int] = set()
-    bottom_ids: set[int] = set()
-    top_hits = bottom_hits = 0
-    for items in by_page.values():
+    # per page: the outermost short lines at the top and at the bottom
+    top: dict[int, list[dict]] = {}
+    bottom: dict[int, list[dict]] = {}
+    for page_no, items in by_page.items():
         boxed = [el for el in items if el.get("bbox")]
         if len(boxed) < 3:
             continue
         # bottom-left origin: larger t = higher on the page
-        topmost = max(boxed, key=lambda el: el["bbox"]["t"])
-        bottommost = min(boxed, key=lambda el: el["bbox"]["t"])
-        if len(topmost.get("text") or "") <= MARGIN_REPEAT_TEXT_MAX:
-            top_ids.add(id(topmost))
-            top_hits += 1
-        if len(bottommost.get("text") or "") <= MARGIN_REPEAT_TEXT_MAX:
-            bottom_ids.add(id(bottommost))
-            bottom_hits += 1
+        ordered = sorted(boxed, key=lambda el: -el["bbox"]["t"])
+        for edge, outer in ((top, ordered), (bottom, ordered[::-1])):
+            short = [
+                el
+                for el in outer[:_MARGIN_DEPTH]
+                if len(el.get("text") or "") <= MARGIN_REPEAT_TEXT_MAX
+            ]
+            if short:
+                edge[page_no] = short
+
+    def repeats(el: dict, page_no: int, edge: dict[int, list[dict]]) -> bool:
+        key = _margin_key(el.get("text") or "")
+        if len(key) < 3:
+            return False
+        return any(
+            SequenceMatcher(None, key, _margin_key(other.get("text") or "")).ratio()
+            >= MARGIN_REPEAT_SIMILARITY
+            for p, others in edge.items()
+            if p != page_no
+            for other in others
+        )
 
     pages = len(by_page)
     strip: set[int] = set()
-    if top_hits / pages >= MARGIN_REPEAT_PAGE_RATIO:
-        strip |= top_ids
-    if bottom_hits / pages >= MARGIN_REPEAT_PAGE_RATIO:
-        strip |= bottom_ids
+    for edge in (top, bottom):
+        voted = len(edge) / pages >= MARGIN_REPEAT_PAGE_RATIO
+        for page_no, cands in edge.items():
+            for el in cands:
+                # A bare page number goes wherever it sits — a chapter opener
+                # prints its number at the foot, alone ("41"). 1–3 digits, so a
+                # year on a line of its own is never taken for one.
+                if re.fullmatch(r"\W*\d{1,3}\W*", (el.get("text") or "").strip()) or (
+                    voted and repeats(el, page_no, edge)
+                ):
+                    strip.add(id(el))
     if not strip:
         return elements
     kept = [el for el in elements if id(el) not in strip]
