@@ -931,7 +931,7 @@ export function DocumentViewer({
             // When actually split, the logical page number no longer maps to the
             // original PDF's page — open the original without a jump.
             src={
-              d.page_layout === "spread"
+              d.page_layout === "spread" || d.detected_layout === "split"
                 ? `/api/documents/${documentId}/original?inline=1`
                 : `/api/documents/${documentId}/original?inline=1#page=${page}`
             }

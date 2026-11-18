@@ -436,7 +436,9 @@ export interface DocumentOut {
   page_count: number | null;
   ai_included: boolean;
   page_layout: "auto" | "single" | "spread";
-  detected_layout: "single" | "spread" | null;
+  /** "split" = a scanned two-page spread the pipeline cut into book pages
+   * itself; "spread" = detected but left whole (older uploads) or opted in */
+  detected_layout: "single" | "spread" | "split" | null;
   job_id: number | null;
   progress_pct: number | null;
   progress_note: string | null;

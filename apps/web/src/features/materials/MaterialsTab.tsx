@@ -40,6 +40,14 @@ function StatusChip({ doc }: { doc: DocumentOut }) {
               <Columns2 size={11} strokeWidth={1.75} /> split
             </span>
           )}
+          {doc.page_layout === "auto" && doc.detected_layout === "split" && (
+            <span
+              className="chip-spread"
+              title="Two-page scan — split into single book pages automatically"
+            >
+              <Columns2 size={11} strokeWidth={1.75} /> split
+            </span>
+          )}
           {doc.page_layout !== "spread" && doc.detected_layout === "spread" && (
             <span
               className="chip-spread"

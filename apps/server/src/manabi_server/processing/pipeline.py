@@ -157,10 +157,12 @@ def _ensure_normalized_pdf(doc: Document) -> str:
                  share one coordinate space and region overlays stay aligned;
       'orig'   — no normalization; extraction reads the untouched upload;
       'na'     — not a PDF.
-    Under 'auto' we detect spreads and record `detected_layout` as a UI hint but
-    never cut the file automatically. The tag (not `detected_layout`) keys the
-    parse cache so an uncut auto-detected spread and an opted-in split — which
-    read different source bytes — never collide."""
+    Under 'auto' a detected spread is cut too: native-text PDFs return before
+    detection, so only scans get here — photos of an open book (Kawanaka, Nov
+    2026), where OCR over the whole 2-up photo dropped letters, mixed the two
+    book pages and gave one page number to both. 'single' still overrides. The
+    tag (not `detected_layout`) keys the parse cache so an uncut and a split
+    parse of the same upload — different source bytes — never collide."""
     if doc.kind != DocumentKind.pdf:
         return "na"
     from manabi_server.processing import layout
@@ -195,14 +197,16 @@ def _ensure_normalized_pdf(doc: Document) -> str:
         if not force and layout.has_native_text(src):
             return _finish_no_split(src, "single")
         is_spread_detected, gutters = layout.detect_spread(src)
-        if not force:
-            # 'auto' → only hint; the user cuts explicitly via the layout control.
-            return _finish_no_split(src, "spread" if is_spread_detected else "single")
-        # Opted in: guarantee a cut on every page (centre where no clean gutter).
+        if not force and not is_spread_detected:
+            return _finish_no_split(src, "single")
+        # Opted in, or a scanned spread under 'auto': guarantee a cut on every
+        # page (centre where no clean gutter).
         gutters = [
             g if g is not None else pg.rect.width / 2 for g, pg in zip(gutters, src, strict=False)
         ]
-        doc.detected_layout = "spread"
+        # "split" = we cut it ourselves (auto); "spread" stays the opt-in mark and
+        # the hint on older auto docs that were never cut (Kerkvliet, Quimpo).
+        doc.detected_layout = "spread" if force else "split"
         out = layout.split_spread_pdf(src, gutters)
         try:
             target.parent.mkdir(parents=True, exist_ok=True)
@@ -211,7 +215,7 @@ def _ensure_normalized_pdf(doc: Document) -> str:
             tmp.replace(target)
         finally:
             out.close()
-    log.info("split doc %s into portrait pages (user-selected spread)", doc.id)
+    log.info("split doc %s into portrait pages (%s spread)", doc.id, doc.page_layout)
     return "spread"
 
 
@@ -319,7 +323,7 @@ def _stage_structure(db: Session, doc: Document) -> None:
         parsed["elements"], aggressive_columns=doc.detected_layout == "spread"
     )
     parsed["elements"] = _strip_boilerplate(parsed["elements"])
-    if doc.detected_layout == "spread":
+    if doc.detected_layout in ("spread", "split"):
         # Running heads on scanned books OCR differently each page, defeating
         # exact-repeat stripping — remove them by position instead.
         parsed["elements"] = _strip_margin_repeats(parsed["elements"])
